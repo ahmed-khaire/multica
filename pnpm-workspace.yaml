@@ -1,3 +1,12 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+catalog:
+  react: "19.2.3"
+  react-dom: "19.2.3"
+  "@types/react": "^19"
+  "@types/react-dom": "^19"
+  "@types/node": "^25.0.10"
+  typescript: "^5.9.3"
+  zustand: "^5.0.0"

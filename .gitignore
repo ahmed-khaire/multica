@@ -2,3 +2,22 @@ node_modules
 dist
 *.log
 .DS_Store
+
+# build outputs
+.next
+out
+.turbo
+build
+dist-electron
+release
+*.tsbuildinfo
+
+# env
+.env*
+
+# platform specific
+*.dmg
+*.app
+*.apk
+*.ipa
+monorepo.md
