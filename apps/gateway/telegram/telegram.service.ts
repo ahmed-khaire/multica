@@ -9,7 +9,7 @@
 
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { OnModuleInit } from "@nestjs/common";
-import { Bot, webhookCallback } from "grammy";
+import { Bot, InputFile, webhookCallback } from "grammy";
 import type { Context } from "grammy";
 import { v7 as uuidv7 } from "uuid";
 import { parseConnectionCode } from "@multica/store/connection";
@@ -118,6 +118,46 @@ export class TelegramService implements OnModuleInit {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to send Telegram message: deviceId=${deviceId}, error=${message}`);
+    }
+  }
+
+  /** Send a file (photo/document/video/audio) to a Telegram user */
+  private async sendFileToTelegram(
+    telegramUserId: string,
+    data: Buffer,
+    type: string,
+    caption?: string,
+    filename?: string,
+  ): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = Number(telegramUserId);
+    const inputFile = new InputFile(data, filename);
+    const extra = caption ? { caption: caption.slice(0, 1024) } : {};
+
+    try {
+      switch (type) {
+        case "photo":
+          await this.bot.api.sendPhoto(chatId, inputFile, extra);
+          break;
+        case "video":
+          await this.bot.api.sendVideo(chatId, inputFile, extra);
+          break;
+        case "audio":
+          await this.bot.api.sendAudio(chatId, inputFile, extra);
+          break;
+        case "voice":
+          await this.bot.api.sendVoice(chatId, inputFile, extra);
+          break;
+        case "document":
+        default:
+          await this.bot.api.sendDocument(chatId, inputFile, extra);
+          break;
+      }
+      this.logger.debug(`Sent ${type} to Telegram: telegramUserId=${telegramUserId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to send ${type} to Telegram: telegramUserId=${telegramUserId}, error=${message}`);
     }
   }
 
@@ -387,6 +427,26 @@ export class TelegramService implements OnModuleInit {
             return;
           }
 
+          return;
+        }
+
+        // Send file — Hub agent wants to send a file to the Telegram user
+        if (msg.action === "send_file") {
+          const payload = msg.payload as {
+            data?: string;
+            type?: string;
+            caption?: string;
+            filename?: string;
+          };
+          if (payload?.data) {
+            void this.sendFileToTelegram(
+              telegramUserId,
+              Buffer.from(payload.data, "base64"),
+              payload.type ?? "document",
+              payload.caption,
+              payload.filename,
+            );
+          }
           return;
         }
 
