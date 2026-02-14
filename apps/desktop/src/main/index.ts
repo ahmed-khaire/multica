@@ -199,17 +199,19 @@ app.whenReady().then(async () => {
 
   createWindow()
 
-  // Set up device confirmation flow, auth, and tray (requires window)
-  if (win) {
-    setupDeviceConfirmation(win)
-    setAuthMainWindow(win)
-    createTray(win)
-  }
-
   // Initialize auto-updater
   const forceDevUpdate = process.env.FORCE_DEV_UPDATE === 'true'
   updater = createUpdater(forceDevUpdate)
   updater.setMainWindow(() => win)
+
+  // Set up device confirmation flow, auth, and tray (requires window)
+  if (win) {
+    setupDeviceConfirmation(win)
+    setAuthMainWindow(win)
+    createTray(win, {
+      onCheckForUpdates: () => updater.checkForUpdates(),
+    })
+  }
 
   // Auto-check for updates in production (or when forced in dev)
   const isDev = !!VITE_DEV_SERVER_URL

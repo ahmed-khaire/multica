@@ -11,12 +11,18 @@ import { getCurrentHub, getDefaultAgent } from './ipc/hub.js'
 let tray: Tray | null = null
 let mainWindowRef: BrowserWindow | null = null
 let statusInterval: ReturnType<typeof setInterval> | null = null
+let checkForUpdatesFn: (() => void) | null = null
+
+export interface TrayOptions {
+  onCheckForUpdates?: () => void
+}
 
 /**
  * Create the system tray and start status polling.
  */
-export function createTray(window: BrowserWindow): void {
+export function createTray(window: BrowserWindow, options?: TrayOptions): void {
   mainWindowRef = window
+  checkForUpdatesFn = options?.onCheckForUpdates ?? null
 
   // Use dedicated tray icon (asterisk shape matching MulticaIcon).
   // On macOS, Electron auto-picks trayTemplate.png / trayTemplate@2x.png
@@ -47,6 +53,7 @@ export function destroyTray(): void {
     tray = null
   }
   mainWindowRef = null
+  checkForUpdatesFn = null
 }
 
 function showMainWindow(): void {
@@ -63,9 +70,11 @@ function updateTrayMenu(): void {
 
   let agentStatus = 'Initializing'
   let hubStatus = 'Disconnected'
+  let gatewayUrl = ''
 
   if (hub) {
     hubStatus = hub.connectionState === 'connected' ? 'Connected' : 'Disconnected'
+    gatewayUrl = hub.url
   }
 
   if (agent && !agent.closed) {
@@ -80,22 +89,31 @@ function updateTrayMenu(): void {
 
   tray.setToolTip(`Multica - Agent: ${agentStatus}`)
 
-  const menu = Menu.buildFromTemplate([
+  const template: Electron.MenuItemConstructorOptions[] = [
     { label: `Agent: ${agentStatus}`, enabled: false },
     { label: `Hub: ${hubStatus}`, enabled: false },
-    { type: 'separator' },
-    {
-      label: 'Show Main Window',
-      click: showMainWindow,
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit Multica',
-      click: () => {
-        app.quit()
-      },
-    },
-  ])
+  ]
 
-  tray.setContextMenu(menu)
+  if (gatewayUrl) {
+    template.push({ label: `Gateway: ${gatewayUrl}`, enabled: false })
+  }
+
+  template.push(
+    { type: 'separator' },
+    { label: 'Show Main Window', click: showMainWindow },
+    { type: 'separator' },
+    { label: `Version ${app.getVersion()}`, enabled: false },
+  )
+
+  if (checkForUpdatesFn) {
+    const fn = checkForUpdatesFn
+    template.push({ label: 'Check for Updates', click: () => fn() })
+  }
+
+  template.push(
+    { type: 'separator' },
+    { label: 'Quit Multica', accelerator: 'CommandOrControl+Q', click: () => app.quit() },
+  )
+
+  tray.setContextMenu(Menu.buildFromTemplate(template))
 }
