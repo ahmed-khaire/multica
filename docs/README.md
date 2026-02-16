@@ -21,6 +21,7 @@ Project-intro and architecture explanation docs are intentionally omitted.
 ## P2 (Benchmarks / Specialized)
 
 1. `docs/e2e-finance-benchmark.md`
+2. `docs/web-tools-policy-optimization.md`
 
 ## Regeneration Rule
 
