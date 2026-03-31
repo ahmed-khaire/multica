@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Bot, CalendarDays, ChevronRight, Maximize2, Minimize2, UserMinus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -62,6 +63,7 @@ function PillButton({
 // ---------------------------------------------------------------------------
 
 export function CreateIssueModal({ onClose, data }: { onClose: () => void; data?: Record<string, unknown> | null }) {
+  const router = useRouter();
   const workspaceName = useWorkspaceStore((s) => s.workspace?.name);
   const members = useWorkspaceStore((s) => s.members);
   const agents = useWorkspaceStore((s) => s.agents);
@@ -125,6 +127,12 @@ export function CreateIssueModal({ onClose, data }: { onClose: () => void; data?
       useIssueStore.getState().addIssue(issue);
       clearDraft();
       onClose();
+      toast.success(`${issue.identifier} created`, {
+        action: {
+          label: "View issue",
+          onClick: () => router.push(`/issues/${issue.id}`),
+        },
+      });
     } catch {
       toast.error("Failed to create issue");
     } finally {
