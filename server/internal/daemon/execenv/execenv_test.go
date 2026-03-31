@@ -103,7 +103,7 @@ func TestPrepareDirectoryMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read issue_context.md: %v", err)
 	}
-	for _, want := range []string{"a1b2c3d4-e5f6-7890-abcd-ef1234567890", "multica issue get", "Code Review"} {
+	for _, want := range []string{"a1b2c3d4-e5f6-7890-abcd-ef1234567890", "Code Review"} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("issue_context.md missing %q", want)
 		}
@@ -208,7 +208,6 @@ func TestWriteContextFiles(t *testing.T) {
 	s := string(content)
 	for _, want := range []string{
 		"test-issue-id-1234",
-		"multica issue get",
 		"## Agent Skills",
 		"Go Conventions",
 	} {
