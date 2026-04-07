@@ -143,6 +143,7 @@ build:
 test:
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	cd server && go run ./cmd/migrate up
 	cd server && go test ./...
 
 # Database
