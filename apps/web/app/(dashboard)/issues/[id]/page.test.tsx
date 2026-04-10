@@ -297,11 +297,6 @@ vi.mock("@/features/editor", () => ({
   }),
 }));
 
-// Mock Markdown renderer
-vi.mock("@/components/markdown", () => ({
-  Markdown: ({ children }: { children: string }) => <div>{children}</div>,
-}));
-
 // Mock api (core queries/mutations use @multica/core/api, some components use @/platform/api)
 
 const mockApiObj = vi.hoisted(() => ({
