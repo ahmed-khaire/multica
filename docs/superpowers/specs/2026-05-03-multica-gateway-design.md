@@ -6,7 +6,7 @@ Status: approved architecture, awaiting written spec review
 
 ## Goal
 
-Build the first milestone of the Multica Gateway: a hosted, enterprise-managed model gateway inside the existing Multica Go server. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic observed according to workspace policy.
+Build the first milestone of the Multica Gateway and Observer dashboard: a hosted, enterprise-managed model gateway inside the existing Multica Go server, plus native AgentOps-inspired tracking and visualization. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic, sessions, LLM calls, agents, spans, tools, logs, metrics, and costs observed according to workspace policy.
 
 The product-facing name is **Observer Gateway** when explaining what it does. Commands, API routes, UI navigation, and code should use the shorter name **Gateway**.
 
@@ -33,6 +33,16 @@ AgentOps provides the observability model to emulate:
 - metrics;
 - costs;
 - replay/debug views.
+
+The AgentOps v2 documentation expands the target dashboard surface beyond raw telemetry. The useful concepts for Multica are:
+
+- an insights dashboard for aggregate stability, usage, cost, and error trends;
+- session drilldown with a session drawer/list, execution duration, LLM calls as chat history, event breakdowns, and a waterfall-style timeline;
+- session overview across all recorded sessions;
+- automatic LLM call tracking;
+- named agent tracking for multi-agent workflows;
+- trace list/detail, timeline, tree, and analytics views;
+- span details for LLM calls, tools, operations, and tasks.
 
 Milestone 1 should not vendor the AgentOps app into Multica. The AgentOps Python SDK is MIT, but the cloned AgentOps app includes license material that needs review before any hosted enterprise product reuse. The safer design is to implement native Multica telemetry tables, APIs, and UI using AgentOps-like concepts.
 
@@ -61,7 +71,8 @@ Milestone 1 includes:
 - admin default backend plus optional `provider:model` routing prefix;
 - workspace capture policy with default `redacted_content`;
 - PostgreSQL telemetry storage;
-- minimal telemetry read API for recorded gateway requests and traces;
+- AgentOps-inspired tracking for sessions/traces, spans, LLM calls, tools, agents, operations, logs, metrics, and costs;
+- Observer dashboard views for session overview, session drilldown, LLM calls, agent tracking, and dashboard visualizations;
 - minimal Settings -> Gateway UI;
 - Claude OAuth/subscription backend type present from day one as `claude-oauth`;
 - internal telemetry interface that can later export to OTLP or ClickHouse.
@@ -75,8 +86,8 @@ Milestone 1 excludes:
 - per-user Claude OAuth accounts;
 - ClickHouse storage;
 - OTLP export;
-- full AgentOps dashboard parity;
-- rich trace replay UI;
+- pixel-for-pixel AgentOps dashboard cloning;
+- full AgentOps SDK auto-instrumentation parity for every supported Python/TypeScript framework;
 - full Dario shim/MCP/sub-agent feature parity;
 - broad automated strategy generation from observed behavior.
 
@@ -84,7 +95,7 @@ Those are later phases.
 
 ## Architecture
 
-The milestone 1 gateway has five main units.
+The milestone 1 gateway has seven main units.
 
 1. **Gateway HTTP surface**
 
@@ -137,6 +148,16 @@ The milestone 1 gateway has five main units.
 5. **Telemetry recorder**
 
    The recorder persists AgentOps-like records to PostgreSQL. The gateway should write telemetry through an internal interface rather than directly coupling all request code to SQL. The first implementation is PostgreSQL. Later implementations may dual-export to OTLP or ClickHouse without changing gateway routing code.
+
+6. **Trace ingestion API**
+
+   Gateway traffic creates LLM spans automatically. For agent/tool/operation spans that are not visible from provider-compatible HTTP traffic, Multica also needs a small first-party ingestion API. This API accepts Multica/AgentOps-shaped trace and span payloads from internal Multica agents, future SDKs, and enterprise apps.
+
+   Milestone 1 should support enough ingestion to record named agents, tools, operations, workflows, and custom logs. It does not need to auto-instrument every external framework SDK.
+
+7. **Observer dashboard**
+
+   Add a workspace-level Gateway dashboard area in the shared frontend. Settings -> Gateway remains the configuration surface. The Gateway dashboard is the operational observability surface: overview, sessions, LLM calls, agents, and visualizations.
 
 ## Routing Model
 
@@ -199,6 +220,147 @@ The gateway must:
 - close response bodies and drain only where required by the selected backend adapter.
 
 The telemetry recorder may finalize the request after the stream ends. If final upstream usage data is unavailable, it should record token counts as zero or estimated with a clear `usage_source` field.
+
+## Observer Tracking Model
+
+Multica should port AgentOps tracking concepts into native tables and UI, using OpenTelemetry-style naming where practical. The goal is compatibility of concepts and data shape, not a license-sensitive copy of the AgentOps app.
+
+Trace/session fields:
+
+- trace/session ID;
+- root span ID;
+- workspace ID;
+- user ID;
+- optional Multica agent ID and task ID;
+- trace name;
+- service name;
+- tags;
+- start/end timestamps;
+- duration;
+- status/end state;
+- span count;
+- error count;
+- total cost;
+- resource attributes when supplied by an SDK or internal runtime.
+
+Span fields:
+
+- span ID;
+- parent span ID;
+- span name;
+- span kind;
+- service name;
+- start/end timestamps;
+- duration;
+- status code and message;
+- attributes JSON;
+- resource attributes JSON;
+- events;
+- links.
+
+Supported span kinds should match the AgentOps set where useful:
+
+- `workflow`
+- `session`
+- `task`
+- `operation`
+- `agent`
+- `tool`
+- `llm`
+- `chain`
+- `text`
+- `guardrail`
+- `http`
+- `unknown`
+
+LLM call attributes:
+
+- provider/system;
+- request model;
+- response model;
+- request type;
+- max tokens;
+- temperature;
+- top-p/top-k;
+- seed;
+- stop sequences;
+- streaming flag;
+- prompt messages;
+- completion messages;
+- completion chunks;
+- response ID;
+- finish reason;
+- stop reason;
+- prompt tokens;
+- completion tokens;
+- total tokens;
+- cache creation input tokens;
+- cache read input tokens;
+- reasoning tokens;
+- streaming token count;
+- prompt cost;
+- completion cost;
+- total cost;
+- time to first token;
+- time to generate;
+- streaming duration;
+- streaming chunk count.
+
+Message and tool-call attributes:
+
+- prompt role/content/type/speaker;
+- request tool ID/type/name/description/arguments;
+- completion ID/type/role/content/finish reason/speaker;
+- completion tool-call ID/type/status/name/description/arguments;
+- completion annotations where available.
+
+Agent attributes:
+
+- agent ID;
+- agent name;
+- role;
+- available models;
+- available tools;
+- handoffs;
+- source agent;
+- destination agent;
+- reasoning summary when supplied.
+
+Tool attributes:
+
+- tool ID;
+- tool name;
+- description;
+- parameters/input;
+- result/output;
+- status;
+- duration.
+
+Operation, HTTP, log, and error attributes:
+
+- operation name;
+- operation version;
+- entity input/output;
+- HTTP method, URL, route, status code, user agent, and request ID;
+- error type and message;
+- log severity, body, timestamp, and attributes.
+
+Metrics:
+
+- token usage histograms by input/output/cache/reasoning token type;
+- operation duration histograms;
+- exception counters;
+- generation choice counters;
+- aggregate success/failure/indeterminate token and cost totals.
+
+Capture source rules:
+
+- Gateway-generated traffic always creates a trace/session and at least one `llm` span.
+- Gateway should group requests into an existing session when clients provide an accepted session header such as `X-Multica-Session-ID` or `X-Multica-Trace-ID`.
+- Existing Multica agent/runtime context should attach `X-Agent-ID` and `X-Task-ID` when available, producing agent/task linkage.
+- External tools that cannot set custom headers still get user/workspace/session/LLM tracking, but named agent tracking will be limited.
+- The trace ingestion API is the path for explicit agent, tool, operation, workflow, and log spans from internal agents, future SDKs, and enterprise apps.
+- Captured content fields must obey the workspace capture policy before persistence.
 
 ## Authentication And Keys
 
@@ -264,35 +426,55 @@ The CLI should use existing config resolution for `--server-url`, `--workspace-i
 
 ## UI Design
 
-Add a minimal Settings -> Gateway tab in `packages/views/settings`.
+Add two UI surfaces.
 
-The tab should include:
+1. **Settings -> Gateway**
 
-- backend list;
-- default backend selector;
-- capture policy selector;
-- generated key instructions;
-- current user key status;
-- examples for OpenAI and Anthropic environment variables.
+   This remains the configuration surface in `packages/views/settings`.
 
-Admin-only controls:
+   The tab should include:
 
-- add backend;
-- update backend;
-- disable/delete backend;
-- set default backend;
-- change capture policy.
+   - backend list;
+   - default backend selector;
+   - capture policy selector;
+   - generated key instructions;
+   - current user key status;
+   - examples for OpenAI and Anthropic environment variables.
 
-Member controls:
+   Admin-only controls:
 
-- view instructions;
-- create/revoke their own gateway key.
+   - add backend;
+   - update backend;
+   - disable/delete backend;
+   - set default backend;
+   - change capture policy.
+
+   Member controls:
+
+   - view instructions;
+   - create/revoke their own gateway key.
+
+2. **Gateway dashboard**
+
+   Add a workspace-level Gateway dashboard area in `packages/views/gateway` and wire it into both web and desktop navigation. Use user-facing explanatory copy such as "Observer Gateway captures model traffic according to workspace policy."
+
+   The first dashboard milestone includes:
+
+   - **Overview**: aggregate sessions, LLM calls, tokens, cost, latency, error rate, top models, top backends, and trend charts for the selected date range.
+   - **Sessions**: paginated session drawer/list with search, filters, duration, status, total cost, span count, LLM call count, tool count, agent count, and last activity.
+   - **Session Drilldown**: metadata panel, chat-history view for LLM prompts/completions when policy permits, event breakdown by span kind, waterfall/timeline, tree view, and selected-span details.
+   - **LLM Calls**: table of model calls with backend, model, user, agent, token counts, cost, latency, streaming flag, finish reason, and error status.
+   - **Agents**: named-agent view showing agent spans, models used, tools used, handoffs/coordination when supplied, task linkage, error rate, latency, token usage, and cost.
+   - **Visualizations**: timeline/waterfall, hierarchical tree, and graph view for span parent/child relationships.
+
+   Content visibility must match the capture policy. `metadata_only` should still render useful timings, status, costs, and counts, but prompt/completion/tool bodies should appear as unavailable due to workspace policy.
 
 The UI must stay in shared packages where possible:
 
 - shared API client and types in `packages/core`;
-- Gateway tab component in `packages/views/settings`;
-- app routes remain the existing web/desktop Settings route.
+- Gateway settings component in `packages/views/settings`;
+- Gateway dashboard pages/components in `packages/views/gateway`;
+- web and desktop only provide route wiring/navigation adapters.
 
 ## Capture Policy
 
@@ -351,9 +533,19 @@ Telemetry:
   - workspace ID;
   - user ID;
   - optional agent ID/task ID if present in request metadata;
+  - trace ID;
+  - root span ID;
+  - name;
   - client protocol;
   - client tool hint;
-  - started/ended timestamps.
+  - service name;
+  - tags;
+  - status/end state;
+  - started/ended timestamps;
+  - duration;
+  - span count;
+  - error count;
+  - total cost.
 - `gateway_request`
   - session ID;
   - backend ID;
@@ -371,19 +563,72 @@ Telemetry:
   - provider/backend;
   - model;
   - input/output/cache token counts;
+  - reasoning token counts;
+  - streaming token counts;
   - usage source;
-  - cost fields.
+  - prompt/completion/total cost;
+  - response ID;
+  - finish/stop reason;
+  - time to first token;
+  - streaming duration;
+  - streaming chunk count.
 - `gateway_span`
   - session/request parent;
+  - trace ID;
+  - span ID;
+  - parent span ID;
   - span type;
+  - span kind;
   - name;
+  - service name;
+  - status code/message;
   - start/end timestamps;
-  - attributes JSON.
+  - duration;
+  - attributes JSON;
+  - resource attributes JSON.
 - `gateway_event`
   - session/request/span;
   - event type;
   - redacted payload JSON;
   - timestamp.
+- `gateway_span_link`
+  - trace ID;
+  - span ID;
+  - linked trace ID;
+  - linked span ID;
+  - attributes JSON.
+- `gateway_log`
+  - session/request/span;
+  - severity;
+  - body;
+  - attributes JSON;
+  - timestamp.
+- `gateway_agent_observation`
+  - session/span parent;
+  - agent ID;
+  - agent name;
+  - role;
+  - models;
+  - tools;
+  - handoff source/destination;
+  - reasoning summary.
+- `gateway_tool_observation`
+  - session/span parent;
+  - tool ID;
+  - tool name;
+  - description;
+  - parameters;
+  - result;
+  - status;
+  - duration.
+- `gateway_metric_rollup`
+  - workspace ID;
+  - date/time bucket;
+  - user/backend/model/agent dimensions;
+  - token counts;
+  - cost totals;
+  - latency aggregates;
+  - request/error counts.
 - `gateway_model_pricing`
   - provider/backend type;
   - model pattern;
@@ -467,6 +712,7 @@ Backend:
 - add gateway routes in `server/cmd/server/router.go`;
 - add handler methods under `server/internal/handler`;
 - add core gateway package under `server/internal/gateway`;
+- add dashboard query service under the gateway package or a focused handler-adjacent service;
 - add migrations under `server/migrations`;
 - add sqlc queries under `server/pkg/db/queries`;
 - regenerate db code with `make sqlc`.
@@ -480,13 +726,20 @@ Frontend:
 
 - add Gateway types and API client methods under `packages/core`;
 - add Settings -> Gateway tab under `packages/views/settings`;
-- use existing Settings route in web and desktop.
+- add Gateway dashboard views under `packages/views/gateway`;
+- add a web route and desktop route for the Gateway dashboard.
 
-Telemetry read API:
+Tracking and dashboard APIs:
 
-- `GET /api/gateway/requests` lists recent gateway requests for the current workspace with filters for user, backend, model, status, and time range.
-- `GET /api/gateway/requests/{id}` returns one request with its spans, model call, and events after applying the same capture policy that governed storage.
-- These read APIs are enough for verification and future UI work, but milestone 1 does not build a full trace replay dashboard.
+- `POST /api/gateway/traces` ingests explicit trace/span/log payloads from Multica agents, future SDKs, and enterprise apps.
+- `GET /api/gateway/overview` returns aggregate dashboard metrics for the selected time range.
+- `GET /api/gateway/sessions` lists sessions/traces with filters for user, agent, backend, model, status, tags, and time range.
+- `GET /api/gateway/sessions/{id}` returns session metadata, summary metrics, and root span details.
+- `GET /api/gateway/sessions/{id}/spans` returns all spans, events, links, logs, model calls, agent observations, and tool observations needed for drilldown visualizations.
+- `GET /api/gateway/llm-calls` lists model calls with filters for backend, model, user, agent, status, and time range.
+- `GET /api/gateway/agents` returns named-agent metrics, agent span summaries, model usage, tool usage, handoffs, and task linkage.
+- `GET /api/gateway/requests` remains useful for low-level gateway request debugging.
+- Read APIs must apply workspace membership checks and must not expose captured content that was not stored under the active capture policy.
 
 ## Testing Strategy
 
@@ -503,7 +756,15 @@ Backend tests:
 - Anthropic streaming passthrough;
 - OpenAI-to-Anthropic translation;
 - Anthropic-to-OpenAI translation;
-- telemetry writes for success, upstream failure, and client disconnect where practical.
+- telemetry writes for success, upstream failure, and client disconnect where practical;
+- generated trace/session, span, model-call, event, log, agent, and tool records;
+- explicit trace ingestion validation and authorization;
+- dashboard overview aggregations;
+- session list filtering and pagination;
+- session drilldown data shape;
+- LLM call filtering and cost/token aggregation;
+- agent tracking summaries and handoff/tool/model aggregation;
+- capture-policy enforcement on dashboard read APIs.
 
 CLI tests:
 
@@ -514,6 +775,11 @@ CLI tests:
 Frontend tests:
 
 - Settings -> Gateway renders for workspace members;
+- Gateway dashboard Overview renders aggregate metrics and charts;
+- Sessions view renders list/search/filter states;
+- Session Drilldown renders metadata, timeline/waterfall, tree, and selected-span details;
+- LLM Calls view renders model call table and handles redacted/hidden content;
+- Agents view renders named agents, tools, handoffs, and metrics;
 - admin-only controls are hidden or disabled for non-admins;
 - backend list and policy selector use workspace-scoped query keys;
 - mutations invalidate Gateway queries.
@@ -525,7 +791,9 @@ Manual verification:
 - configure `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`;
 - run an Anthropic Messages request with and without streaming;
 - verify telemetry appears in PostgreSQL;
-- verify policy changes alter captured payloads.
+- verify policy changes alter captured payloads;
+- verify Overview, Sessions, Session Drilldown, LLM Calls, and Agents views show the recorded traffic;
+- verify an explicit trace-ingestion payload can create agent/tool/operation spans not visible from gateway-only traffic.
 
 ## Rollout
 
@@ -534,9 +802,11 @@ Manual verification:
 3. Implement OpenAI-compatible routing and streaming.
 4. Implement Anthropic-compatible routing and streaming.
 5. Implement telemetry recorder and capture policy.
-6. Add Settings -> Gateway.
-7. Add `claude-oauth` adapter boundary and first implementation choice.
-8. Run end-to-end checks with real SDK clients.
+6. Implement trace ingestion and dashboard query APIs.
+7. Add Settings -> Gateway.
+8. Add Gateway dashboard views: Overview, Sessions, Session Drilldown, LLM Calls, Agents, and visualizations.
+9. Add `claude-oauth` adapter boundary and first implementation choice.
+10. Run end-to-end checks with real SDK clients and explicit trace-ingestion payloads.
 
 The implementation plan should keep OpenAI-compatible routing and Anthropic-compatible routing separable enough to test independently.
 
@@ -567,6 +837,16 @@ Credential handling:
 - Admin-managed provider keys and Claude OAuth tokens are sensitive.
 - Mitigation: encrypted storage or secret references, masked outputs, strict RBAC, and audit metadata.
 
+Dashboard scope:
+
+- Adding session drilldown, overview, LLM calls, agent tracking, and visualizations makes milestone 1 meaningfully larger.
+- Mitigation: build dashboard APIs and views from the same trace/span model, keep visualizations focused, and defer framework-specific visualizers beyond generic agent/tool/LLM handling.
+
+Agent attribution:
+
+- Some external tools will not let users add custom headers or explicit trace metadata.
+- Mitigation: always track workspace/user/session/LLM metadata, attach Multica agent/task IDs where available, infer only conservative client/tool hints, and use explicit trace ingestion for named-agent accuracy.
+
 ## Implementation Planning Defaults
 
 These decisions are locked for the first implementation plan unless the written spec review changes them:
@@ -576,4 +856,27 @@ These decisions are locked for the first implementation plan unless the written 
 - The first `claude-oauth` implementation is sidecar-backed through the adapter interface.
 - Cross-protocol tool support covers text, tool definitions, tool calls, tool results, and streaming deltas for those shapes.
 - Pricing lives in `gateway_model_pricing`; unknown prices produce null cost values.
-- Milestone 1 includes minimal telemetry read APIs, but not a full trace replay UI.
+- Milestone 1 includes AgentOps-inspired dashboard APIs and UI for Overview, Sessions, Session Drilldown, LLM Calls, Agents, and generic timeline/tree/graph visualizations.
+- Milestone 1 records the concrete AgentOps-style fields listed in the Observer Tracking Model section, using native Multica storage and capture policy.
+
+## References Reviewed
+
+- AgentOps dashboard documentation: `https://docs.agentops.ai/v2/usage/dashboard-info`
+- AgentOps LLM tracking documentation: `https://docs.agentops.ai/v2/usage/tracking-llm-calls`
+- AgentOps agent tracking documentation: `https://docs.agentops.ai/v2/usage/tracking-agents`
+- AgentOps trace documentation: `https://docs.agentops.ai/v2/concepts/traces`
+- AgentOps span documentation: `https://docs.agentops.ai/v2/concepts/spans`
+- Local AgentOps SDK semantic conventions:
+  - `agentops/agentops/semconv/span_attributes.py`
+  - `agentops/agentops/semconv/span_kinds.py`
+  - `agentops/agentops/semconv/agent.py`
+  - `agentops/agentops/semconv/tool.py`
+  - `agentops/agentops/semconv/message.py`
+- Local AgentOps dashboard data shapes:
+  - `agentops/app/dashboard/types/ISpan.ts`
+  - `agentops/app/dashboard/types/ITrace.ts`
+  - `agentops/app/dashboard/components/charts/bar-chart/span-processing.ts`
+  - `agentops/app/dashboard/app/(with-layout)/traces/_components/use-trace-stats.ts`
+- Local AgentOps storage/cost references:
+  - `agentops/app/api/sql/otel_traces_improved.sql`
+  - `agentops/app/opentelemetry-collector/builder/costs/__init__.py`
