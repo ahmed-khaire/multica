@@ -6,9 +6,11 @@ Status: approved architecture, awaiting written spec review
 
 ## Goal
 
-Build the first milestone of the Multica Gateway, Observer dashboard, and AI governance platform: a hosted, enterprise-managed model gateway inside the existing Multica Go server, plus native AgentOps-inspired tracking, visualization, governance, compliance evidence, and third-party AI risk management. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic, sessions, LLM calls, agents, spans, tools, logs, metrics, costs, policy decisions, and risk signals observed according to workspace policy.
+Build the first milestone of the Multica Gateway, Observer dashboard, and AI governance platform: a hosted, enterprise-managed model gateway inside the existing Multica Go server, plus native AgentOps-inspired tracking, visualization, governance, compliance evidence, third-party AI risk management, and lightweight SDK/OTLP ingestion for enterprise apps and agents. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic, application workflows, sessions, LLM calls, agents, spans, tools, guardrails, logs, artifacts, metrics, costs, policy decisions, and risk signals observed according to workspace policy.
 
 The product-facing name is **Observer Gateway** when explaining what it does. Commands, API routes, UI navigation, and code should use the shorter name **Gateway**.
+
+Milestone 1 should be treated as a full enterprise AI control plane, not only a model proxy. The gateway is the mandatory model boundary, while the lightweight SDK/OTLP layer is the application and agent runtime boundary. The first SDK milestone is intentionally small: trace context propagation, gateway header injection, manual span/log/artifact submission, and OTLP-compatible trace submission. Deep auto-instrumentation for popular frameworks comes later.
 
 ## Background
 
@@ -74,12 +76,19 @@ Milestone 1 includes:
 - workspace capture policy with default `redacted_content`;
 - PostgreSQL telemetry storage;
 - AgentOps-inspired tracking for sessions/traces, spans, LLM calls, tools, agents, operations, logs, metrics, and costs;
+- lightweight TypeScript and Python SDKs for trace context, gateway header injection, explicit spans, logs, artifacts, and policy context;
+- OTLP-compatible trace ingestion for apps that already use OpenTelemetry;
+- enterprise application, environment, deployment, service, workflow, and external-agent inventory linked to gateway telemetry;
+- correlation headers so gateway-created LLM spans attach to SDK-created app, workflow, agent, tool, and guardrail spans;
 - Observer dashboard views for session overview, session drilldown, LLM calls, agent tracking, and dashboard visualizations;
+- Observer dashboard views for applications, environments, workflows, tools, guardrails, logs, and artifacts;
 - AI governance inventory for AI systems, agents, models, tools, data domains, users, providers, and third-party backends;
 - policy enforcement for approved providers/models/tools, capture levels, sensitive-data handling, budget thresholds, human-approval requirements, and blocked actions;
+- policy evaluation for both gateway model calls and SDK/OTLP-reported app, agent, tool, guardrail, approval, and artifact events;
 - continuous compliance evidence collection from gateway telemetry, configuration changes, policy decisions, approvals, incidents, and audit logs;
 - third-party AI risk register for provider/backends such as OpenAI, Anthropic, Groq, OpenRouter, local models, Claude OAuth pools, and enterprise-added tools;
 - governance dashboard for risk posture, policy violations, exceptions, third-party exposure, compliance evidence status, and behavioral insights;
+- governance intelligence for compliance posture, app/agent risk scoring, policy friction, behavior drift, alerts, evidence recommendations, and control gaps;
 - minimal Settings -> Gateway UI;
 - Claude OAuth/subscription backend type present from day one as `claude-oauth`;
 - internal telemetry interface that can later export to OTLP or ClickHouse.
@@ -92,9 +101,10 @@ Milestone 1 excludes:
 - per-user provider BYOK;
 - per-user Claude OAuth accounts;
 - ClickHouse storage;
-- OTLP export;
+- warehouse/ClickHouse export;
 - pixel-for-pixel AgentOps dashboard cloning;
 - full AgentOps SDK auto-instrumentation parity for every supported Python/TypeScript framework;
+- deep framework-specific auto-instrumentation beyond the lightweight SDK, OTLP ingest, and manual decorators/span helpers;
 - legal certification, regulatory attestation, or compliance sign-off without human governance review;
 - complete GRC suite parity with mature vendor risk, contract lifecycle, procurement, and audit-management platforms;
 - full Dario shim/MCP/sub-agent feature parity;
@@ -104,7 +114,7 @@ Those are later phases.
 
 ## Architecture
 
-The milestone 1 gateway has nine main units.
+The milestone 1 gateway has eleven main units.
 
 1. **Gateway HTTP surface**
 
@@ -160,21 +170,40 @@ The milestone 1 gateway has nine main units.
 
 6. **Trace ingestion API**
 
-   Gateway traffic creates LLM spans automatically. For agent/tool/operation spans that are not visible from provider-compatible HTTP traffic, Multica also needs a small first-party ingestion API. This API accepts Multica/AgentOps-shaped trace and span payloads from internal Multica agents, future SDKs, and enterprise apps.
+   Gateway traffic creates LLM spans automatically. For agent/tool/operation spans that are not visible from provider-compatible HTTP traffic, Multica also needs a small first-party ingestion API. This API accepts Multica/AgentOps-shaped trace and span payloads from internal Multica agents, lightweight SDKs, OTLP exporters, and enterprise apps.
 
-   Milestone 1 should support enough ingestion to record named agents, tools, operations, workflows, and custom logs. It does not need to auto-instrument every external framework SDK.
+   Milestone 1 should support enough ingestion to record named apps, environments, deployments, workflows, agents, tools, guardrails, operations, approvals, artifacts, and custom logs. It does not need to auto-instrument every external framework SDK.
 
-7. **Observer dashboard**
+7. **Lightweight SDK and OTLP ingestion layer**
+
+   Add minimal TypeScript and Python SDKs that help enterprise developers use the gateway and submit runtime telemetry without adopting a large framework. The SDKs should:
+
+   - create or join trace/session context;
+   - inject accepted `X-Multica-*` headers into OpenAI-compatible and Anthropic-compatible SDK calls that target Gateway;
+   - expose small span helpers for apps, workflows, agents, operations, tools, guardrails, approvals, logs, and artifacts;
+   - submit spans to the trace ingestion API;
+   - optionally export OpenTelemetry spans to a Multica OTLP-compatible endpoint;
+   - fail open for app execution by default while surfacing export failures locally.
+
+   This layer is not a full AgentOps SDK clone. It is the minimum runtime context layer required for a first-release enterprise control plane.
+
+8. **Application and runtime inventory resolver**
+
+   Gateway and SDK telemetry should resolve into first-class application inventory records. The resolver links raw telemetry to applications, services, environments, deployments, owners, business use cases, AI systems, data domains, providers, models, tools, MCP servers, and external agents.
+
+   This resolver may create draft inventory records when new app/service identifiers appear. Admins can later classify ownership, risk, intended purpose, approval state, and data domains in the Governance UI.
+
+9. **Observer dashboard**
 
    Add a workspace-level Gateway dashboard area in the shared frontend. Settings -> Gateway remains the configuration surface. The Gateway dashboard is the operational observability surface: overview, sessions, LLM calls, agents, and visualizations.
 
-8. **Governance and policy engine**
+10. **Governance and policy engine**
 
    Add a policy layer that evaluates each gateway request, trace-ingestion payload, backend change, and high-risk agent/tool action against workspace governance rules. The first implementation should be deterministic and explainable: rules, decisions, reasons, enforcement action, actor, resource, and evidence references are all persisted.
 
    The policy engine should support `allow`, `warn`, `require_approval`, `redact`, `route_to_backend`, and `block` decisions. It should not rely on opaque AI judgment for hard enforcement in milestone 1.
 
-9. **Risk and compliance evidence service**
+11. **Risk and compliance evidence service**
 
    Add services for AI inventory, third-party risk records, control mappings, policy exceptions, incidents, and evidence bundles. These services use Gateway telemetry as continuous evidence and expose dashboard/API views for governance users. They should map evidence to frameworks, but must present that mapping as compliance support rather than legal certification.
 
@@ -378,13 +407,104 @@ Capture source rules:
 - Gateway should group requests into an existing session when clients provide an accepted session header such as `X-Multica-Session-ID` or `X-Multica-Trace-ID`.
 - Existing Multica agent/runtime context should attach `X-Agent-ID` and `X-Task-ID` when available, producing agent/task linkage.
 - External tools that cannot set custom headers still get user/workspace/session/LLM tracking, but named agent tracking will be limited.
-- The trace ingestion API is the path for explicit agent, tool, operation, workflow, and log spans from internal agents, future SDKs, and enterprise apps.
+- The trace ingestion API is the path for explicit app, agent, tool, guardrail, operation, workflow, artifact, and log spans from internal agents, lightweight SDKs, OTLP exporters, and enterprise apps.
 - Captured content fields must obey the workspace capture policy before persistence.
+
+## Enterprise App And Agent Observability Layer
+
+Gateway-only capture is not enough for enterprise application governance. The Gateway sees model-boundary facts: model, provider, prompt, completion, usage, latency, cost, streaming state, error state, and gateway policy decisions. It cannot reliably know the full application workflow, tool execution results, RAG retrieval path, memory reads/writes, app-side guardrail outcomes, human approvals, runtime exceptions, logs, artifacts, or non-gateway model calls unless the application reports them.
+
+Milestone 1 therefore adds a new design layer on top of the Gateway:
+
+1. **Gateway captures LLM calls automatically.**
+
+   Every OpenAI-compatible or Anthropic-compatible Gateway request creates a session/trace when none is supplied and at least one `llm` span. It records the gateway request, model call, routing decision, capture policy, usage, cost, latency, policy decisions, and upstream errors.
+
+2. **SDK/OTLP ingest captures app, agent, workflow, tool, guardrail, log, and artifact telemetry.**
+
+   Enterprise apps can use a small SDK or OTLP-compatible exporter to submit runtime spans. The first SDK milestone should be intentionally narrow:
+
+   - start or join traces;
+   - generate and propagate trace/session/span IDs;
+   - inject Gateway correlation headers;
+   - submit explicit spans for app, workflow, agent, operation, tool, guardrail, approval, HTTP, and task work;
+   - submit logs and artifact references;
+   - record errors without crashing the host app;
+   - respect local capture controls before sending content.
+
+   The SDK should not attempt deep automatic instrumentation of every popular framework in milestone 1. Later releases can add framework adapters for OpenAI Agents, LangChain, LangGraph, CrewAI, Agno, Google ADK, LiteLLM, LlamaIndex, MCP clients, and provider SDKs.
+
+3. **Inventory maps telemetry to apps, owners, environments, AI systems, providers, data domains, and use cases.**
+
+   Telemetry should attach to an application/service identity, environment, deployment, owner, business use case, AI system, data domain, provider/backend, model, tool/MCP server, and end-user context when available. Unknown identifiers should create draft inventory records rather than being silently ignored. Draft records become governance work items for admins to classify.
+
+4. **Policy engine evaluates both gateway calls and app/agent actions.**
+
+   Policies should evaluate gateway requests before upstream calls, and SDK/OTLP events as they arrive. This lets Multica enforce or flag:
+
+   - unapproved production apps using AI;
+   - unapproved providers, models, tools, or MCP servers;
+   - sensitive data sent to restricted third parties;
+   - high-autonomy agents without approval;
+   - high-risk tool/action events;
+   - missing human approval evidence;
+   - stale third-party reviews;
+   - direct provider calls reported by SDK instrumentation instead of Gateway.
+
+   Gateway enforcement can block before model execution. SDK-reported events may be post-fact evidence unless the host app asks Multica for a pre-action policy decision. The SDK should support both patterns: fire-and-forget telemetry and explicit `evaluatePolicy` calls for high-risk actions.
+
+5. **Governance intelligence turns traces and decisions into compliance posture, risk scoring, evidence, alerts, and recommendations.**
+
+   The intelligence layer should compute explainable app and agent posture from recorded evidence. Milestone 1 should use deterministic and transparent scoring inputs, not opaque compliance claims. Examples:
+
+   - app risk score based on approval state, environment, data domains, autonomy, third-party exposure, policy violations, and incident history;
+   - agent risk score based on tool permissions, model/provider usage, action success/error rate, approval coverage, exception count, and behavior drift;
+   - control evidence coverage for NIST AI RMF, ISO/IEC 42001, EU AI Act concepts, NIST CSF, NIST SP 800-161, and OWASP LLM risk categories;
+   - alerts for new production apps, unknown tools, sudden provider changes, sensitive-data movement, repeated policy exceptions, cost anomalies, and stale vendor reviews;
+   - recommendations for policy changes, missing inventory classifications, evidence gaps, and candidate enterprise-approved skills.
+
+### Correlation Headers
+
+Gateway should accept these headers from SDKs, internal Multica agents, and enterprise apps:
+
+- `X-Multica-Trace-ID`
+- `X-Multica-Session-ID`
+- `X-Multica-Parent-Span-ID`
+- `X-Multica-App-ID`
+- `X-Multica-Service-Name`
+- `X-Multica-Environment`
+- `X-Multica-Deployment-ID`
+- `X-Multica-AI-System-ID`
+- `X-Multica-Agent-ID`
+- `X-Multica-Workflow-ID`
+- `X-Multica-End-User-ID`
+- `X-Multica-Use-Case`
+- `X-Multica-Data-Domains`
+- `X-Multica-Tool-Hint`
+
+The Gateway should store these values as request metadata, resource attributes, and span attributes after validation. It should not trust user-supplied IDs blindly for authorization. Workspace membership, gateway key ownership, configured ingest keys, and explicit app registration still gate writes.
+
+### Milestone 1 SDK Scope
+
+The first SDKs should be small enough to ship alongside Gateway Milestone 1:
+
+- TypeScript package for Node apps;
+- Python package for Python apps;
+- context object with trace/session/span IDs;
+- helpers for Gateway client configuration and header injection;
+- `startTrace`, `endTrace`, `span`, `log`, `artifact`, and `evaluatePolicy` primitives;
+- OTLP-compatible trace submission option;
+- local queue with bounded retry and flush-on-exit;
+- capture-level controls that default to metadata/redacted behavior;
+- examples for OpenAI SDK, Anthropic SDK, and a custom agent workflow.
+
+Later SDK phases add deeper auto-instrumentation. The milestone 1 contract should be stable enough that future framework adapters emit the same trace/span shapes rather than creating a parallel telemetry model.
 
 ## Governance And Compliance Platform
 
 The governance layer turns Gateway observations into an enterprise AI control plane. It should continuously answer:
 
+- which enterprise applications and services are using AI;
 - what AI systems, agents, models, providers, tools, data domains, and users exist in the workspace;
 - which third parties are being used and for what purpose;
 - whether usage complies with workspace policy;
@@ -406,6 +526,7 @@ This is not legal advice and must not be presented as automatic compliance certi
 
 Governance inventory:
 
+- enterprise applications, services, environments, deployments, and owners;
 - AI systems and business use cases;
 - Multica agents and enterprise-created agents;
 - model/provider backends;
@@ -578,9 +699,12 @@ Add three UI surfaces.
    - backend list;
    - default backend selector;
    - capture policy selector;
+   - registered application and ingest-key list;
+   - SDK/OTLP setup instructions;
    - generated key instructions;
    - current user key status;
-   - examples for OpenAI and Anthropic environment variables.
+   - examples for OpenAI and Anthropic environment variables;
+   - examples for `X-Multica-*` correlation headers.
 
    Admin-only controls:
 
@@ -588,7 +712,9 @@ Add three UI surfaces.
    - update backend;
    - disable/delete backend;
    - set default backend;
-   - change capture policy.
+   - change capture policy;
+   - create/revoke application ingest keys;
+   - approve or archive draft application inventory records.
 
    Member controls:
 
@@ -602,10 +728,13 @@ Add three UI surfaces.
    The first dashboard milestone includes:
 
    - **Overview**: aggregate sessions, LLM calls, tokens, cost, latency, error rate, top models, top backends, and trend charts for the selected date range.
+   - **Applications**: app/service inventory from SDK/OTLP telemetry, owners, environments, deployments, AI systems, data domains, usage, risk status, and last activity.
    - **Sessions**: paginated session drawer/list with search, filters, duration, status, total cost, span count, LLM call count, tool count, agent count, and last activity.
    - **Session Drilldown**: metadata panel, chat-history view for LLM prompts/completions when policy permits, event breakdown by span kind, waterfall/timeline, tree view, and selected-span details.
    - **LLM Calls**: table of model calls with backend, model, user, agent, token counts, cost, latency, streaming flag, finish reason, and error status.
    - **Agents**: named-agent view showing agent spans, models used, tools used, handoffs/coordination when supplied, task linkage, error rate, latency, token usage, and cost.
+   - **Workflows and Tools**: workflow, operation, tool, MCP server, guardrail, approval, and external action spans with status, duration, policy decisions, inputs/outputs when permitted, and linked artifacts/logs.
+   - **Logs and Artifacts**: app/agent logs, artifact references, file metadata, retention state, capture policy state, and linked traces/spans.
    - **Visualizations**: timeline/waterfall, hierarchical tree, and graph view for span parent/child relationships.
 
    Content visibility must match the capture policy. `metadata_only` should still render useful timings, status, costs, and counts, but prompt/completion/tool bodies should appear as unavailable due to workspace policy.
@@ -617,7 +746,7 @@ Add three UI surfaces.
    The first governance milestone includes:
 
    - **Risk Overview**: policy violations, exceptions, incidents, risk score trends, third-party exposure, sensitive-data movement, high-risk agent activity, and evidence coverage.
-   - **AI Inventory**: AI systems, agents, models, providers, tools, MCP servers, data domains, owners, intended purposes, autonomy levels, risk classifications, and approval state.
+   - **AI Inventory**: applications, services, environments, deployments, AI systems, agents, models, providers, tools, MCP servers, data domains, owners, intended purposes, autonomy levels, risk classifications, and approval state.
    - **Policies**: approved/restricted/blocked providers, models, tools, data classes, budget limits, human-approval rules, routing rules, and capture policies.
    - **Third-Party Risk**: provider and tool risk records, review status, evidence links, approved use cases, data categories, next review dates, and active exceptions.
    - **Evidence**: framework/control mapping, evidence bundles, policy decisions, audit logs, incidents, approvals, and exportable reports.
@@ -706,12 +835,67 @@ Configuration:
   - evidence references;
   - timestamp.
 
+Application and ingest inventory:
+
+- `gateway_application`
+  - workspace ID;
+  - stable app key supplied by SDK/OTLP or generated as draft;
+  - display name;
+  - service name;
+  - owner user/member or team reference;
+  - business use case;
+  - linked AI system ID;
+  - approval state;
+  - risk tier;
+  - data domains;
+  - created/updated timestamps.
+- `gateway_application_environment`
+  - workspace ID;
+  - application ID;
+  - environment name such as `development`, `staging`, or `production`;
+  - region/hosting notes;
+  - capture policy override if allowed;
+  - approval state;
+  - last observed timestamp.
+- `gateway_deployment`
+  - workspace ID;
+  - application ID;
+  - environment ID;
+  - deployment ID or version;
+  - git SHA/build ID when supplied;
+  - release owner;
+  - started/ended timestamps;
+  - resource attributes JSON.
+- `gateway_ingest_key`
+  - workspace ID;
+  - application ID;
+  - key hash;
+  - encrypted key value or secret reference;
+  - key prefix;
+  - allowed environments;
+  - revoked timestamp;
+  - last used timestamp;
+  - created timestamp.
+- `gateway_artifact`
+  - workspace ID;
+  - session/span parent;
+  - application ID;
+  - artifact type;
+  - display name;
+  - URI or attachment reference;
+  - content hash;
+  - size bytes;
+  - capture policy used;
+  - metadata JSON;
+  - created timestamp.
+
 Telemetry:
 
 - `gateway_session`
   - workspace ID;
   - user ID;
   - optional agent ID/task ID if present in request metadata;
+  - optional application/environment/deployment IDs when supplied or resolved;
   - trace ID;
   - root span ID;
   - name;
@@ -728,6 +912,7 @@ Telemetry:
 - `gateway_request`
   - session ID;
   - backend ID;
+  - optional application/environment/deployment IDs;
   - route;
   - method;
   - model requested;
@@ -753,6 +938,7 @@ Telemetry:
   - streaming chunk count.
 - `gateway_span`
   - session/request parent;
+  - optional application/environment/deployment IDs;
   - trace ID;
   - span ID;
   - parent span ID;
@@ -778,6 +964,7 @@ Telemetry:
   - attributes JSON.
 - `gateway_log`
   - session/request/span;
+  - optional application ID;
   - severity;
   - body;
   - attributes JSON;
@@ -800,10 +987,19 @@ Telemetry:
   - result;
   - status;
   - duration.
+- `gateway_guardrail_observation`
+  - session/span parent;
+  - guardrail ID/name;
+  - guardrail type;
+  - input/output references;
+  - decision;
+  - reason code;
+  - severity;
+  - duration.
 - `gateway_metric_rollup`
   - workspace ID;
   - date/time bucket;
-  - user/backend/model/agent dimensions;
+  - user/backend/model/agent/application/environment dimensions;
   - token counts;
   - cost totals;
   - latency aggregates;
@@ -893,6 +1089,8 @@ Governance:
 
 Existing `runtime_usage` and `task_usage` should not be overloaded for gateway telemetry. They track Multica agent-runtime usage. Gateway traffic is a broader enterprise observability surface and needs separate tables.
 
+If the initial Gateway foundation migration has already landed without the application/environment/deployment/artifact/ingest-key entities above, add them in the telemetry-ingest phase as a forward migration. Do not rewrite an applied foundation migration in an active branch.
+
 ## Cost Tracking
 
 Milestone 1 should store token counts and cost columns, but can start with a conservative pricing registry.
@@ -981,6 +1179,7 @@ Backend:
 - add gateway routes in `server/cmd/server/router.go`;
 - add handler methods under `server/internal/handler`;
 - add core gateway package under `server/internal/gateway`;
+- add trace ingestion, OTLP ingestion, application inventory resolution, and policy-evaluation services under `server/internal/gateway` or focused subpackages;
 - add dashboard query service under the gateway package or a focused handler-adjacent service;
 - add governance policy/risk/evidence services under the gateway package or a dedicated `server/internal/governance` package;
 - add migrations under `server/migrations`;
@@ -1001,22 +1200,36 @@ Frontend:
 - add Governance dashboard views under `packages/views/gateway` or `packages/views/governance`;
 - add web routes and desktop routes for the Gateway and Governance dashboards.
 
+SDKs and ingestion:
+
+- add a TypeScript SDK package under `packages/` so Node apps can create trace context, inject Gateway headers, submit spans/logs/artifacts, and call policy evaluation;
+- add a small Python SDK under a dedicated `sdks/python/` tree or equivalent package boundary;
+- keep SDK state local and dependency-light: context, IDs, headers, bounded queue, JSON/OTLP submission, and capture controls;
+- add examples for OpenAI SDK, Anthropic SDK, a custom workflow, explicit tool spans, guardrail spans, and artifact references;
+- add `/api/gateway/otlp/v1/traces` or an equivalent OTLP-compatible ingest route for apps that already emit OpenTelemetry.
+
 Tracking and dashboard APIs:
 
-- `POST /api/gateway/traces` ingests explicit trace/span/log payloads from Multica agents, future SDKs, and enterprise apps.
+- `POST /api/gateway/traces` ingests explicit trace/span/log/artifact payloads from Multica agents, lightweight SDKs, OTLP adapters, and enterprise apps.
+- `POST /api/gateway/otlp/v1/traces` accepts OTLP-compatible trace payloads and maps them into the same session/span model.
+- `POST /api/gateway/policy/evaluate` evaluates high-risk app, agent, workflow, tool, guardrail, approval, or artifact actions before the host app executes them.
+- `GET/POST/PATCH /api/gateway/applications` manages application registration, draft application resolution, owners, environments, and deployment metadata.
 - `GET /api/gateway/overview` returns aggregate dashboard metrics for the selected time range.
 - `GET /api/gateway/sessions` lists sessions/traces with filters for user, agent, backend, model, status, tags, and time range.
 - `GET /api/gateway/sessions/{id}` returns session metadata, summary metrics, and root span details.
 - `GET /api/gateway/sessions/{id}/spans` returns all spans, events, links, logs, model calls, agent observations, and tool observations needed for drilldown visualizations.
 - `GET /api/gateway/llm-calls` lists model calls with filters for backend, model, user, agent, status, and time range.
 - `GET /api/gateway/agents` returns named-agent metrics, agent span summaries, model usage, tool usage, handoffs, and task linkage.
+- `GET /api/gateway/applications/{id}/traces` lists traces and spans linked to one app/service/environment/deployment.
+- `GET /api/gateway/workflows` lists workflow, tool, guardrail, approval, and operation spans across applications and agents.
+- `GET /api/gateway/artifacts` lists artifact references with policy-safe metadata and links to traces/spans.
 - `GET /api/gateway/requests` remains useful for low-level gateway request debugging.
 - Read APIs must apply workspace membership checks and must not expose captured content that was not stored under the active capture policy.
 
 Governance APIs:
 
 - `GET /api/governance/overview` returns risk posture, policy violations, third-party exposure, exception status, and evidence coverage.
-- `GET/POST/PATCH /api/governance/inventory` manages AI systems, agents, models, tools, data domains, intended purpose, owners, and risk classification.
+- `GET/POST/PATCH /api/governance/inventory` manages applications, services, environments, deployments, AI systems, agents, models, tools, data domains, intended purpose, owners, and risk classification.
 - `GET/POST/PATCH /api/governance/policies` manages deterministic policy rules, versions, enforcement modes, and enabled state.
 - `GET /api/governance/policy-decisions` lists explainable policy decisions with filters by user, agent, model, backend, tool, decision, and time range.
 - `GET/POST/PATCH /api/governance/third-parties` manages provider/tool risk records, review status, evidence links, approved use cases, and exceptions.
@@ -1043,6 +1256,14 @@ Backend tests:
 - telemetry writes for success, upstream failure, and client disconnect where practical;
 - generated trace/session, span, model-call, event, log, agent, and tool records;
 - explicit trace ingestion validation and authorization;
+- OTLP trace ingestion mapping into gateway sessions/spans;
+- SDK correlation headers attaching gateway-created LLM spans to app/workflow/agent parent spans;
+- application ingest-key authentication, revocation, and allowed-environment checks;
+- draft application inventory creation for unknown app/service identifiers;
+- application/environment/deployment inventory resolution from gateway headers and SDK/OTLP resources;
+- artifact and log ingestion with capture-policy enforcement;
+- guardrail, approval, and high-risk tool/action policy evaluation from SDK-submitted events;
+- pre-action `evaluatePolicy` returning allow, warn, require approval, redact, route, and block decisions;
 - dashboard overview aggregations;
 - session list filtering and pagination;
 - session drilldown data shape;
@@ -1067,13 +1288,17 @@ CLI tests:
 Frontend tests:
 
 - Settings -> Gateway renders for workspace members;
+- Settings -> Gateway renders SDK/OTLP setup, application ingest keys, and correlation-header examples;
 - Gateway dashboard Overview renders aggregate metrics and charts;
+- Applications view renders apps, owners, environments, deployments, AI systems, risk status, and last activity;
 - Sessions view renders list/search/filter states;
 - Session Drilldown renders metadata, timeline/waterfall, tree, and selected-span details;
 - LLM Calls view renders model call table and handles redacted/hidden content;
 - Agents view renders named agents, tools, handoffs, and metrics;
+- Workflows and Tools views render operation/tool/guardrail/approval spans and linked policy decisions;
+- Logs and Artifacts views render policy-safe metadata and link back to traces/spans;
 - Governance Risk Overview renders posture, violations, exceptions, incidents, and evidence coverage;
-- AI Inventory renders systems, agents, providers, models, tools, owners, and risk classifications;
+- AI Inventory renders applications, services, environments, deployments, systems, agents, providers, models, tools, owners, and risk classifications;
 - Policies view renders rules, enforcement modes, versions, and decision history;
 - Third-Party Risk view renders provider/tool reviews, evidence links, and active exceptions;
 - Evidence view renders control mappings and export states;
@@ -1088,6 +1313,10 @@ Manual verification:
 - configure `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`;
 - run an Anthropic Messages request with and without streaming;
 - verify telemetry appears in PostgreSQL;
+- run the lightweight SDK example and verify Gateway LLM calls attach to the SDK-created parent trace;
+- send an OTLP-compatible trace payload and verify it maps to Gateway sessions/spans;
+- create an application ingest key, submit app/workflow/tool/guardrail spans, and verify app inventory resolution;
+- submit a log and artifact reference and verify capture policy controls visibility;
 - verify policy changes alter captured payloads;
 - verify Overview, Sessions, Session Drilldown, LLM Calls, and Agents views show the recorded traffic;
 - verify an explicit trace-ingestion payload can create agent/tool/operation spans not visible from gateway-only traffic;
@@ -1101,15 +1330,18 @@ Manual verification:
 2. Implement management APIs and CLI commands.
 3. Implement OpenAI-compatible routing and streaming.
 4. Implement Anthropic-compatible routing and streaming.
-5. Implement telemetry recorder and capture policy.
-6. Implement governance policy engine, policy-decision logging, and enforcement hooks.
-7. Implement trace ingestion and dashboard query APIs.
-8. Implement governance inventory, third-party risk, exceptions, incidents, evidence, and export APIs.
-9. Add Settings -> Gateway.
-10. Add Gateway dashboard views: Overview, Sessions, Session Drilldown, LLM Calls, Agents, and visualizations.
-11. Add Governance dashboard views: Risk Overview, AI Inventory, Policies, Third-Party Risk, Evidence, and Insights.
-12. Add `claude-oauth` adapter boundary and first implementation choice.
-13. Run end-to-end checks with real SDK clients, explicit trace-ingestion payloads, and governance policy scenarios.
+5. Implement telemetry recorder, capture policy, and correlation-header capture.
+6. Add application/environment/deployment/artifact/ingest-key schema extensions if they were not included in the foundation migration.
+7. Implement trace ingestion, OTLP-compatible ingestion, application inventory resolution, and pre-action policy evaluation APIs.
+8. Implement lightweight TypeScript and Python SDKs for trace context, Gateway header injection, span/log/artifact submission, and `evaluatePolicy`.
+9. Implement governance policy engine, policy-decision logging, and enforcement hooks for gateway and SDK/OTLP events.
+10. Implement dashboard query APIs for gateway traffic, application telemetry, workflows/tools/guardrails/logs/artifacts, and governance.
+11. Implement governance inventory, third-party risk, exceptions, incidents, evidence, recommendations, and export APIs.
+12. Add Settings -> Gateway, including SDK/OTLP setup and application ingest-key management.
+13. Add Gateway dashboard views: Overview, Applications, Sessions, Session Drilldown, LLM Calls, Agents, Workflows/Tools, Logs/Artifacts, and visualizations.
+14. Add Governance dashboard views: Risk Overview, AI Inventory, Policies, Third-Party Risk, Evidence, Insights, alerts, and recommendations.
+15. Add `claude-oauth` adapter boundary and first implementation choice.
+16. Run end-to-end checks with real SDK clients, OTLP payloads, explicit trace-ingestion payloads, correlated Gateway LLM calls, and governance policy scenarios.
 
 The implementation plan should keep OpenAI-compatible routing and Anthropic-compatible routing separable enough to test independently.
 
@@ -1133,7 +1365,27 @@ Content capture:
 Telemetry volume:
 
 - PostgreSQL is fine for milestone 1, but high-volume enterprise traffic may outgrow it.
-- Mitigation: write through a telemetry interface and keep the future OTLP/ClickHouse path open.
+- Mitigation: write through a telemetry interface and keep the future warehouse/ClickHouse export path open.
+
+SDK adoption:
+
+- Some enterprise apps may only configure Gateway base URLs and never install the SDK.
+- Mitigation: Gateway still provides automatic LLM call capture, while SDK setup should be minimal, copy-pasteable, and useful even without framework adapters.
+
+Telemetry spoofing:
+
+- App/service/agent headers and SDK payloads are user-controlled inputs.
+- Mitigation: require workspace-scoped gateway keys or ingest keys, validate IDs against registered inventory where possible, create draft records for unknown identifiers, and never use headers alone for authorization.
+
+Direct provider bypass:
+
+- Apps can call providers directly and avoid Gateway enforcement.
+- Mitigation: use SDK/OTLP telemetry to detect reported direct calls, compare observed provider usage with approved Gateway backends, and surface bypass risk in Governance.
+
+Framework instrumentation scope:
+
+- Full auto-instrumentation for every popular agent framework can delay the first release.
+- Mitigation: ship the small SDK and OTLP ingest first, define stable span semantics, and add framework adapters incrementally after Milestone 1.
 
 Credential handling:
 
@@ -1181,6 +1433,10 @@ These decisions are locked for the first implementation plan unless the written 
 - Pricing lives in `gateway_model_pricing`; unknown prices produce null cost values.
 - Milestone 1 includes AgentOps-inspired dashboard APIs and UI for Overview, Sessions, Session Drilldown, LLM Calls, Agents, and generic timeline/tree/graph visualizations.
 - Milestone 1 records the concrete AgentOps-style fields listed in the Observer Tracking Model section, using native Multica storage and capture policy.
+- Milestone 1 includes the lightweight SDK/OTLP enterprise app and agent observability layer as part of the first release control plane.
+- The first SDK scope is trace context, Gateway header injection, manual spans, logs, artifacts, bounded submission, capture controls, and `evaluatePolicy`.
+- Deep auto-instrumentation for OpenAI Agents, LangChain, LangGraph, CrewAI, Agno, Google ADK, LiteLLM, LlamaIndex, MCP clients, and provider SDKs is deferred until after Milestone 1.
+- If existing Gateway foundation work has already created base telemetry and governance tables, the telemetry-ingest phase should add application, environment, deployment, artifact, guardrail, and ingest-key extensions in a new migration.
 - Milestone 1 includes governance APIs and UI for AI inventory, deterministic policies, explainable policy decisions, third-party risk, exceptions, incidents, evidence, and insights.
 - Governance framework mappings support NIST AI RMF, NIST AI 600-1, ISO/IEC 42001, EU AI Act concepts, NIST CSF, NIST SP 800-161, and OWASP LLM risk categories as evidence/control mappings, not automatic certification.
 

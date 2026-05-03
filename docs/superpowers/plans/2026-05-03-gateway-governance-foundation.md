@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the shared PostgreSQL schema, query layer, encryption helpers, gateway key primitives, and deterministic policy evaluator that the Multica Gateway, Observer telemetry, and AI governance platform will use.
+**Goal:** Build the shared PostgreSQL schema, query layer, encryption helpers, gateway key primitives, and deterministic policy evaluator that the Multica Gateway, Observer telemetry, SDK/OTLP enterprise observability layer, and AI governance platform will use.
 
-**Architecture:** This is the first plan in the Gateway plan set. It creates the durable model and small domain packages under `server/internal/gateway`, without adding provider-compatible routing, CLI commands, dashboard UI, or Claude OAuth sidecar code. Subsequent plans can build streaming gateway routes, management APIs, telemetry ingestion, dashboard views, governance APIs, and CLI commands on top of these stable primitives.
+**Architecture:** This is the first plan in the Gateway plan set. It creates the durable model and small domain packages under `server/internal/gateway`, without adding provider-compatible routing, CLI commands, dashboard UI, SDK packages, OTLP ingest, or Claude OAuth sidecar code. Subsequent plans can build streaming gateway routes, management APIs, SDK/OTLP telemetry ingestion, application inventory resolution, dashboard views, governance APIs, and CLI commands on top of these stable primitives.
 
 **Tech Stack:** Go 1.26, PostgreSQL, sqlc, pgx/v5, AES-256-GCM, `crypto/rand`, existing `server/internal/auth.HashToken`, existing `server/pkg/redact`.
 
@@ -17,12 +17,14 @@ The approved spec covers multiple independent product surfaces. Keep the work sp
 1. `2026-05-03-gateway-governance-foundation.md`: schema, sqlc queries, secrets, gateway key primitives, deterministic policy evaluator.
 2. Gateway management API and `multica gateway` CLI commands.
 3. OpenAI-compatible and Anthropic-compatible hosted gateway routing with streaming.
-4. PostgreSQL telemetry recorder and explicit trace ingestion API.
-5. Gateway dashboard APIs and shared frontend views for Overview, Sessions, Drilldown, LLM Calls, Agents, and visualizations.
-6. Governance APIs and shared frontend views for inventory, policy decisions, third-party risk, exceptions, incidents, evidence, and insights.
+4. Gateway telemetry recorder, explicit trace ingestion API, OTLP-compatible ingest, application/environment/deployment/artifact extensions, app inventory resolver, and lightweight TypeScript/Python SDKs for context, headers, spans, logs, artifacts, and pre-action policy evaluation.
+5. Gateway dashboard APIs and shared frontend views for Overview, Applications, Sessions, Drilldown, LLM Calls, Agents, Workflows/Tools, Logs/Artifacts, and visualizations.
+6. Governance APIs and shared frontend views for application and AI-system inventory, policy decisions, third-party risk, exceptions, incidents, evidence, app/agent risk scoring, alerts, recommendations, and insights.
 7. `claude-oauth` adapter boundary with sidecar-backed first implementation.
 
 This plan produces working, testable backend foundation code. It intentionally stops before HTTP routing and UI wiring so those pieces can depend on generated database types and domain packages that already compile.
+
+Milestone 1 now treats the SDK-based enterprise app and agent observability layer as part of the first release control plane. The existing foundation migration covers the base gateway/session/span/log/agent/tool/governance shape. If the implementation branch already contains migration `036_gateway_foundation`, the Phase 4 telemetry-ingest plan should add application, environment, deployment, artifact, guardrail, and ingest-key tables in a new migration rather than rewriting the applied foundation migration.
 
 ## File Structure
 

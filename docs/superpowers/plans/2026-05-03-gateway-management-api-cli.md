@@ -23,6 +23,8 @@ This plan implements Phase 2 only:
 
 This plan does not implement hosted model proxy routes (`/v1/...`), Anthropic-compatible proxy routes, streaming proxy behavior, AgentOps-style trace ingestion, dashboard UI, governance UI, or the Claude OAuth sidecar. Those phases depend on the management surface produced here.
 
+Milestone 1 now includes a lightweight SDK/OTLP enterprise app and agent observability layer, but this Phase 2 plan remains scoped to Gateway management. SDK context propagation, ingest keys, OTLP-compatible ingestion, application inventory resolution, artifact/log submission, and pre-action policy evaluation start in the telemetry-ingest phase after hosted routing exists.
+
 ## API Contract
 
 All routes require `Authorization: Bearer <token>`. All routes require workspace membership through `X-Workspace-ID` or `workspace_id`. Admin routes additionally require workspace role `owner` or `admin`.
