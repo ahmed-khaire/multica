@@ -42,20 +42,18 @@ const (
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	dbURL := os.Getenv("DATABASE_URL")
+	dbURL, explicitDBURL := os.LookupEnv("DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
-		fmt.Printf("Skipping integration tests: could not connect to database: %v\n", err)
-		os.Exit(0)
+		exitForDatabaseUnavailable(explicitDBURL, "could not connect to database", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		fmt.Printf("Skipping integration tests: database not reachable: %v\n", err)
 		pool.Close()
-		os.Exit(0)
+		exitForDatabaseUnavailable(explicitDBURL, "database not reachable", err)
 	}
 
 	testPool = pool
@@ -94,6 +92,16 @@ func TestMain(m *testing.M) {
 	testServer.Close()
 	pool.Close()
 	os.Exit(code)
+}
+
+func exitForDatabaseUnavailable(explicitDBURL bool, message string, err error) {
+	if explicitDBURL {
+		fmt.Printf("Integration tests failed: %s: %v\n", message, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Skipping integration tests: %s: %v\n", message, err)
+	os.Exit(0)
 }
 
 func setupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, string, error) {
@@ -502,6 +510,7 @@ func TestGatewayRouterBackendAdminFlow(t *testing.T) {
 
 	resp := authRequest(t, "POST", "/api/gateway/backends", map[string]any{
 		"provider": "local",
+		"slug":     "local-router-admin-flow",
 		"key":      "test-local-key",
 		"base_url": "http://127.0.0.1:11434/v1",
 	})
@@ -510,7 +519,20 @@ func TestGatewayRouterBackendAdminFlow(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", resp.StatusCode, body)
 	}
-	resp.Body.Close()
+
+	var created map[string]any
+	readJSON(t, resp, &created)
+	if _, ok := created["encrypted_credential"]; ok {
+		t.Fatalf("create backend response leaked encrypted_credential: %#v", created)
+	}
+	if _, ok := created["key"]; ok {
+		t.Fatalf("create backend response leaked key: %#v", created)
+	}
+	createdID, _ := created["id"].(string)
+	createdSlug, _ := created["slug"].(string)
+	if createdID == "" && createdSlug == "" {
+		t.Fatalf("create backend response did not include id or slug: %#v", created)
+	}
 
 	resp = authRequest(t, "GET", "/api/gateway/backends", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -524,10 +546,20 @@ func TestGatewayRouterBackendAdminFlow(t *testing.T) {
 	if len(backends) == 0 {
 		t.Fatal("expected at least one gateway backend")
 	}
+	foundCreated := false
 	for _, backend := range backends {
 		if _, ok := backend["encrypted_credential"]; ok {
 			t.Fatalf("backend response leaked encrypted_credential: %#v", backend)
 		}
+		if createdID != "" && backend["id"] == createdID {
+			foundCreated = true
+		}
+		if createdSlug != "" && backend["slug"] == createdSlug {
+			foundCreated = true
+		}
+	}
+	if !foundCreated {
+		t.Fatalf("gateway backend list did not contain created backend id=%q slug=%q: %#v", createdID, createdSlug, backends)
 	}
 }
 
@@ -535,17 +567,64 @@ func TestGatewayRouterBackendAdminOnly(t *testing.T) {
 	setGatewaySecret(t)
 	memberToken := createGatewayMemberToken(t)
 
-	resp := authRequestWithToken(t, "POST", "/api/gateway/backends", map[string]any{
-		"provider": "local",
-		"key":      "member-key",
-		"base_url": "http://127.0.0.1:11434/v1",
-	}, memberToken, testWorkspaceID)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("member CreateGatewayBackend: expected 403, got %d", resp.StatusCode)
+	adminRoutes := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{
+			name:   "create backend",
+			method: "POST",
+			path:   "/api/gateway/backends",
+			body: map[string]any{
+				"provider": "local",
+				"key":      "member-key",
+				"base_url": "http://127.0.0.1:11434/v1",
+			},
+		},
+		{
+			name:   "update backend",
+			method: "PATCH",
+			path:   "/api/gateway/backends/00000000-0000-0000-0000-000000000000",
+			body: map[string]any{
+				"base_url": "http://127.0.0.1:11434/v1",
+			},
+		},
+		{
+			name:   "delete backend",
+			method: "DELETE",
+			path:   "/api/gateway/backends/00000000-0000-0000-0000-000000000000",
+		},
+		{
+			name:   "set default",
+			method: "POST",
+			path:   "/api/gateway/default",
+			body: map[string]any{
+				"backend_slug": "local",
+			},
+		},
+		{
+			name:   "update policy",
+			method: "POST",
+			path:   "/api/gateway/policy",
+			body: map[string]any{
+				"capture_policy": "metadata_only",
+			},
+		},
 	}
 
-	resp = authRequestWithToken(t, "GET", "/api/gateway/backends", nil, memberToken, testWorkspaceID)
+	for _, tc := range adminRoutes {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := authRequestWithToken(t, tc.method, tc.path, tc.body, memberToken, testWorkspaceID)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%s %s: expected 403, got %d", tc.method, tc.path, resp.StatusCode)
+			}
+		})
+	}
+
+	resp := authRequestWithToken(t, "GET", "/api/gateway/backends", nil, memberToken, testWorkspaceID)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("member ListGatewayBackends: expected 200, got %d", resp.StatusCode)
