@@ -631,9 +631,219 @@ func TestGatewayRouterBackendAdminOnly(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyRequiresGatewayKey(t *testing.T) {
+	resp, err := http.Post(testServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"gpt-test"}`))
+	if err != nil {
+		t.Fatalf("gateway proxy request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+func TestGatewayProxyOpenAIChatCompletionsRoutesToDefaultBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyRouterKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("upstream path = %s, want /v1/chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer router-openai-key" {
+			t.Errorf("Authorization = %q, want upstream key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-router",
+			"object":  "chat.completion",
+			"model":   "gpt-router",
+			"choices": []any{},
+			"usage": map[string]any{
+				"prompt_tokens":     1,
+				"completion_tokens": 2,
+				"total_tokens":      3,
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyRouterBackend(t, "local", "router-openai-proxy", upstream.URL+"/v1", "router-openai-key")
+
+	resp := gatewayProxyRequest(t, http.MethodPost, "/v1/chat/completions", gatewayKey, map[string]any{
+		"model":    "gpt-router",
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	}, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode proxy response: %v", err)
+	}
+	if body["id"] != "chatcmpl-router" {
+		t.Fatalf("response body = %#v", body)
+	}
+}
+
+func TestGatewayProxyAnthropicMessagesRoutesToDefaultBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyRouterKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("upstream path = %s, want /v1/messages", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "router-anthropic-key" {
+			t.Errorf("x-api-key = %q, want upstream key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "msg_router",
+			"type":    "message",
+			"role":    "assistant",
+			"model":   "claude-router",
+			"content": []any{},
+			"usage": map[string]any{
+				"input_tokens":  1,
+				"output_tokens": 2,
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyRouterBackend(t, "anthropic", "router-anthropic-proxy", upstream.URL, "router-anthropic-key")
+
+	resp := gatewayProxyRequest(t, http.MethodPost, "/v1/messages", gatewayKey, map[string]any{
+		"model":      "claude-router",
+		"max_tokens": 64,
+		"messages":   []map[string]string{{"role": "user", "content": "hello"}},
+	}, map[string]string{
+		"x-api-key":         gatewayKey,
+		"anthropic-version": "2023-06-01",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode proxy response: %v", err)
+	}
+	if body["id"] != "msg_router" {
+		t.Fatalf("response body = %#v", body)
+	}
+}
+
+func TestGatewayProxyStreamingPassThrough(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyRouterKey(t)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, chunk := range []string{"data: one\n\n", "data: two\n\n"} {
+			_, _ = w.Write([]byte(chunk))
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyRouterBackend(t, "local", "router-stream-proxy", upstream.URL+"/v1", "router-stream-key")
+
+	resp := gatewayProxyRequest(t, http.MethodPost, "/v1/chat/completions", gatewayKey, map[string]any{
+		"model":    "gpt-router",
+		"stream":   true,
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	}, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "data: one\n\ndata: two\n\n" {
+		t.Fatalf("stream body = %q", string(body))
+	}
+}
+
 func setGatewaySecret(t *testing.T) {
 	t.Helper()
 	t.Setenv("MULTICA_GATEWAY_SECRET_KEY", base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
+}
+
+func createGatewayProxyRouterKey(t *testing.T) string {
+	t.Helper()
+	resp := authRequest(t, http.MethodPost, "/api/gateway/key", nil)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("CreateGatewayUserKey: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var result struct {
+		Key string `json:"key"`
+	}
+	readJSON(t, resp, &result)
+	if result.Key == "" {
+		t.Fatal("gateway key is empty")
+	}
+	return result.Key
+}
+
+func createGatewayProxyRouterBackend(t *testing.T, provider, slug, baseURL, key string) {
+	t.Helper()
+	resp := authRequest(t, http.MethodPost, "/api/gateway/backends", map[string]any{
+		"provider":    provider,
+		"slug":        slug,
+		"key":         key,
+		"base_url":    baseURL,
+		"set_default": true,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("CreateGatewayBackend(%s): expected 201, got %d: %s", slug, resp.StatusCode, body)
+	}
+	resp.Body.Close()
+}
+
+func gatewayProxyRequest(t *testing.T, method, path, gatewayKey string, body any, headers map[string]string) *http.Response {
+	t.Helper()
+	var bodyReader io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		bodyReader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, testServer.URL+path, bodyReader)
+	if err != nil {
+		t.Fatalf("failed to create gateway proxy request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if _, ok := headers["x-api-key"]; !ok {
+		req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("gateway proxy request failed: %v", err)
+	}
+	return resp
 }
 
 func createGatewayMemberToken(t *testing.T) string {

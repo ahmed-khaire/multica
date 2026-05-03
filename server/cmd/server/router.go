@@ -69,7 +69,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Request-ID", "X-Agent-ID", "X-Task-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Request-ID", "X-Agent-ID", "X-Task-ID", "x-api-key", "anthropic-version"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -91,6 +91,13 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 	r.Post("/auth/send-code", h.SendCode)
 	r.Post("/auth/verify-code", h.VerifyCode)
 	r.Post("/auth/google", h.GoogleLogin)
+
+	// Hosted Gateway provider-compatible routes authenticate with Multica gateway keys.
+	r.Route("/v1", func(r chi.Router) {
+		r.Get("/models", h.GatewayModels)
+		r.Post("/chat/completions", h.GatewayOpenAIChatCompletions)
+		r.Post("/messages", h.GatewayAnthropicMessages)
+	})
 
 	// Daemon API routes (all require a valid token)
 	r.Route("/api/daemon", func(r chi.Router) {
