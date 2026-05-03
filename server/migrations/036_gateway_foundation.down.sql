@@ -1,0 +1,25 @@
+DROP TABLE IF EXISTS ai_audit_log;
+DROP TABLE IF EXISTS ai_incident;
+DROP TABLE IF EXISTS ai_policy_exception;
+DROP TABLE IF EXISTS ai_evidence;
+DROP TABLE IF EXISTS ai_control_mapping;
+DROP TABLE IF EXISTS ai_third_party_risk;
+DROP TABLE IF EXISTS ai_system_inventory;
+DROP TABLE IF EXISTS gateway_policy_decision;
+DROP TABLE IF EXISTS gateway_model_pricing;
+DROP TABLE IF EXISTS gateway_metric_rollup;
+DROP TABLE IF EXISTS gateway_tool_observation;
+DROP TABLE IF EXISTS gateway_agent_observation;
+DROP TABLE IF EXISTS gateway_log;
+DROP TABLE IF EXISTS gateway_span_link;
+DROP TABLE IF EXISTS gateway_event;
+DROP TABLE IF EXISTS gateway_span;
+DROP TABLE IF EXISTS gateway_model_call;
+DROP TABLE IF EXISTS gateway_request;
+DROP TABLE IF EXISTS gateway_session;
+DROP TABLE IF EXISTS gateway_policy;
+DROP TABLE IF EXISTS gateway_user_key;
+ALTER TABLE IF EXISTS gateway_workspace_settings
+    DROP CONSTRAINT IF EXISTS gateway_workspace_settings_default_backend_fk;
+DROP TABLE IF EXISTS gateway_backend;
+DROP TABLE IF EXISTS gateway_workspace_settings;
