@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,6 +163,11 @@ func cleanupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) erro
 // Helper to make authenticated requests
 func authRequest(t *testing.T, method, path string, body any) *http.Response {
 	t.Helper()
+	return authRequestWithToken(t, method, path, body, testToken, testWorkspaceID)
+}
+
+func authRequestWithToken(t *testing.T, method, path string, body any, token, workspaceID string) *http.Response {
+	t.Helper()
 	var bodyReader io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -172,8 +178,8 @@ func authRequest(t *testing.T, method, path string, body any) *http.Response {
 		t.Fatalf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Workspace-ID", workspaceID)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -440,6 +446,150 @@ func TestInvalidJWT(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- Gateway through full router ----
+
+func TestGatewayRoutesRequireAuth(t *testing.T) {
+	paths := []string{"/api/gateway/status", "/api/gateway/key", "/api/gateway/backends"}
+
+	for _, path := range paths {
+		resp, err := http.Get(testServer.URL + path)
+		if err != nil {
+			t.Fatalf("request to %s failed: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: expected 401, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestGatewayRouterKeyFlow(t *testing.T) {
+	setGatewaySecret(t)
+
+	resp := authRequest(t, "POST", "/api/gateway/key", nil)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("CreateGatewayUserKey: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var result struct {
+		Key             string `json:"key"`
+		OpenAIBaseURL   string `json:"openai_base_url"`
+		OpenAIAPIKey    string `json:"openai_api_key"`
+		AnthropicAPIKey string `json:"anthropic_api_key"`
+	}
+	readJSON(t, resp, &result)
+
+	if result.Key == "" {
+		t.Fatal("expected non-empty gateway key")
+	}
+	if result.OpenAIAPIKey != result.Key {
+		t.Fatalf("openai_api_key = %q, want key", result.OpenAIAPIKey)
+	}
+	if result.AnthropicAPIKey != result.Key {
+		t.Fatalf("anthropic_api_key = %q, want key", result.AnthropicAPIKey)
+	}
+	if !strings.HasSuffix(result.OpenAIBaseURL, "/v1") {
+		t.Fatalf("openai_base_url = %q, want suffix /v1", result.OpenAIBaseURL)
+	}
+}
+
+func TestGatewayRouterBackendAdminFlow(t *testing.T) {
+	setGatewaySecret(t)
+
+	resp := authRequest(t, "POST", "/api/gateway/backends", map[string]any{
+		"provider": "local",
+		"key":      "test-local-key",
+		"base_url": "http://127.0.0.1:11434/v1",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = authRequest(t, "GET", "/api/gateway/backends", nil)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("ListGatewayBackends: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var backends []map[string]any
+	readJSON(t, resp, &backends)
+	if len(backends) == 0 {
+		t.Fatal("expected at least one gateway backend")
+	}
+	for _, backend := range backends {
+		if _, ok := backend["encrypted_credential"]; ok {
+			t.Fatalf("backend response leaked encrypted_credential: %#v", backend)
+		}
+	}
+}
+
+func TestGatewayRouterBackendAdminOnly(t *testing.T) {
+	setGatewaySecret(t)
+	memberToken := createGatewayMemberToken(t)
+
+	resp := authRequestWithToken(t, "POST", "/api/gateway/backends", map[string]any{
+		"provider": "local",
+		"key":      "member-key",
+		"base_url": "http://127.0.0.1:11434/v1",
+	}, memberToken, testWorkspaceID)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("member CreateGatewayBackend: expected 403, got %d", resp.StatusCode)
+	}
+
+	resp = authRequestWithToken(t, "GET", "/api/gateway/backends", nil, memberToken, testWorkspaceID)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("member ListGatewayBackends: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func setGatewaySecret(t *testing.T) {
+	t.Helper()
+	t.Setenv("MULTICA_GATEWAY_SECRET_KEY", base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
+}
+
+func createGatewayMemberToken(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	email := "gateway-member-integration@multica.ai"
+	cleanup := func() {
+		testPool.Exec(ctx, `DELETE FROM member WHERE user_id IN (SELECT id FROM "user" WHERE email = $1)`, email)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+	}
+
+	cleanup()
+	t.Cleanup(cleanup)
+
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email)
+		VALUES ($1, $2)
+		RETURNING id
+	`, "Gateway Member", email).Scan(&userID); err != nil {
+		t.Fatalf("failed to create gateway member user: %v", err)
+	}
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role)
+		VALUES ($1, $2, 'member')
+	`, testWorkspaceID, userID); err != nil {
+		t.Fatalf("failed to create gateway member: %v", err)
+	}
+
+	token, err := generateTestJWT(userID, email, "Gateway Member")
+	if err != nil {
+		t.Fatalf("failed to generate member JWT: %v", err)
+	}
+	return token
 }
 
 // ---- Issues CRUD through full router ----

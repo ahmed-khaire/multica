@@ -163,6 +163,26 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
 
+			// Gateway
+			r.Route("/api/gateway", func(r chi.Router) {
+				r.Get("/status", h.GatewayStatus)
+				r.Get("/settings", h.GetGatewaySettings)
+				r.Get("/backends", h.ListGatewayBackends)
+				r.Get("/key", h.GetGatewayUserKey)
+				r.Post("/key", h.CreateGatewayUserKey)
+				r.Get("/keys", h.ListGatewayUserKeys)
+				r.Post("/keys/{id}/revoke", h.RevokeGatewayUserKey)
+
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
+					r.Post("/backends", h.CreateGatewayBackend)
+					r.Patch("/backends/{id}", h.UpdateGatewayBackend)
+					r.Delete("/backends/{id}", h.DeleteGatewayBackend)
+					r.Post("/default", h.SetGatewayDefaultBackend)
+					r.Post("/policy", h.UpdateGatewayPolicy)
+				})
+			})
+
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
 				r.Get("/search", h.SearchIssues)
