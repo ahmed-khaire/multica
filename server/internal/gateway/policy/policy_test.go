@@ -129,3 +129,59 @@ func TestEvaluateRedactsMatchingTool(t *testing.T) {
 		t.Fatalf("expected redact, got %s", got.Action)
 	}
 }
+
+func TestEvaluateIgnoresInvalidAction(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate([]Rule{{
+		ID:         "invalid-block",
+		Action:     Action("blok"),
+		ReasonCode: "invalid_action",
+		Match: Match{
+			Providers: []string{"openrouter"},
+		},
+	}}, Request{Provider: "openrouter"})
+
+	if got.Action != ActionAllow {
+		t.Fatalf("expected allow, got %s", got.Action)
+	}
+	if len(got.MatchedRules) != 0 {
+		t.Fatalf("expected no matched rules, got %#v", got.MatchedRules)
+	}
+}
+
+func TestEvaluateInvalidActionDoesNotOverrideValidDecision(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate([]Rule{
+		{
+			ID:         "warn-model",
+			Action:     ActionWarn,
+			ReasonCode: "model_warning",
+			Match: Match{
+				Models: []string{"gpt-4.1"},
+			},
+		},
+		{
+			ID:         "invalid-block",
+			Action:     Action("blok"),
+			ReasonCode: "invalid_action",
+			Match: Match{
+				Models: []string{"gpt-4.1"},
+			},
+		},
+	}, Request{Model: "gpt-4.1"})
+
+	if got.Action != ActionWarn {
+		t.Fatalf("expected warn, got %s", got.Action)
+	}
+	if got.ReasonCode != "model_warning" {
+		t.Fatalf("reason mismatch: %q", got.ReasonCode)
+	}
+	if len(got.MatchedRules) != 1 {
+		t.Fatalf("expected one matched rule, got %d", len(got.MatchedRules))
+	}
+	if got.MatchedRules[0].ID != "warn-model" {
+		t.Fatalf("expected valid rule to be preserved, got %#v", got.MatchedRules)
+	}
+}

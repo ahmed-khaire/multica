@@ -50,6 +50,9 @@ func Evaluate(rules []Rule, req Request) Decision {
 	decision := Decision{Action: ActionAllow}
 
 	for _, rule := range rules {
+		if !validAction(rule.Action) {
+			continue
+		}
 		if !matches(rule.Match, req) {
 			continue
 		}
@@ -64,6 +67,15 @@ func Evaluate(rules []Rule, req Request) Decision {
 	}
 
 	return decision
+}
+
+func validAction(action Action) bool {
+	switch action {
+	case ActionAllow, ActionWarn, ActionRedact, ActionRouteToBackend, ActionRequireApproval, ActionBlock:
+		return true
+	default:
+		return false
+	}
 }
 
 func matches(m Match, req Request) bool {
