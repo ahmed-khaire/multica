@@ -26,3 +26,4 @@ ALTER TABLE IF EXISTS gateway_workspace_settings
 DROP TABLE IF EXISTS gateway_backend;
 DROP TABLE IF EXISTS gateway_workspace_settings;
 DROP INDEX IF EXISTS idx_gateway_agent_workspace_id;
+DROP INDEX IF EXISTS idx_gateway_agent_task_queue_agent_id_id;

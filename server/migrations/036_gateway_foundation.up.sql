@@ -97,6 +97,8 @@ CREATE TABLE gateway_session (
     error_count INT NOT NULL DEFAULT 0,
     total_cost NUMERIC(18, 8),
     resource_attributes JSONB NOT NULL DEFAULT '{}',
+    CONSTRAINT gateway_session_task_requires_agent
+        CHECK (task_id IS NULL OR agent_id IS NOT NULL),
     UNIQUE (workspace_id, trace_id)
 );
 
@@ -521,6 +523,8 @@ CREATE TABLE ai_audit_log (
 CREATE INDEX idx_ai_audit_log_workspace_created
     ON ai_audit_log(workspace_id, created_at DESC);
 
+CREATE UNIQUE INDEX idx_gateway_agent_task_queue_agent_id_id
+    ON agent_task_queue(agent_id, id);
 CREATE UNIQUE INDEX idx_gateway_agent_workspace_id
     ON agent(workspace_id, id);
 CREATE UNIQUE INDEX idx_gateway_backend_workspace_id
@@ -542,7 +546,9 @@ ALTER TABLE gateway_workspace_settings
 
 ALTER TABLE gateway_session
     ADD CONSTRAINT gateway_session_agent_workspace_fk
-    FOREIGN KEY (workspace_id, agent_id) REFERENCES agent(workspace_id, id);
+    FOREIGN KEY (workspace_id, agent_id) REFERENCES agent(workspace_id, id),
+    ADD CONSTRAINT gateway_session_agent_task_fk
+    FOREIGN KEY (agent_id, task_id) REFERENCES agent_task_queue(agent_id, id) ON DELETE SET NULL (task_id);
 
 ALTER TABLE gateway_request
     ADD CONSTRAINT gateway_request_session_workspace_fk
