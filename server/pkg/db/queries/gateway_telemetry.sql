@@ -114,3 +114,32 @@ INSERT INTO gateway_tool_observation (
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
+
+-- name: UpsertGatewayMetricRollup :one
+INSERT INTO gateway_metric_rollup (
+    workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id,
+    prompt_tokens, completion_tokens, cache_tokens, reasoning_tokens, total_cost,
+    request_count, error_count, latency_p50_ms, latency_p95_ms, latency_p99_ms
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+ON CONFLICT (workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id)
+DO UPDATE SET
+    prompt_tokens = EXCLUDED.prompt_tokens,
+    completion_tokens = EXCLUDED.completion_tokens,
+    cache_tokens = EXCLUDED.cache_tokens,
+    reasoning_tokens = EXCLUDED.reasoning_tokens,
+    total_cost = EXCLUDED.total_cost,
+    request_count = EXCLUDED.request_count,
+    error_count = EXCLUDED.error_count,
+    latency_p50_ms = EXCLUDED.latency_p50_ms,
+    latency_p95_ms = EXCLUDED.latency_p95_ms,
+    latency_p99_ms = EXCLUDED.latency_p99_ms
+RETURNING *;
+
+-- name: ListGatewayMetricRollups :many
+SELECT * FROM gateway_metric_rollup
+WHERE workspace_id = $1
+  AND bucket_start >= @since::timestamptz
+  AND bucket_width = $3
+ORDER BY bucket_start DESC
+LIMIT $2;

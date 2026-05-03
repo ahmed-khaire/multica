@@ -704,6 +704,67 @@ func (q *Queries) GetGatewaySession(ctx context.Context, arg GetGatewaySessionPa
 	return i, err
 }
 
+const listGatewayMetricRollups = `-- name: ListGatewayMetricRollups :many
+SELECT id, workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id, prompt_tokens, completion_tokens, cache_tokens, reasoning_tokens, total_cost, request_count, error_count, latency_p50_ms, latency_p95_ms, latency_p99_ms, created_at FROM gateway_metric_rollup
+WHERE workspace_id = $1
+  AND bucket_start >= $4::timestamptz
+  AND bucket_width = $3
+ORDER BY bucket_start DESC
+LIMIT $2
+`
+
+type ListGatewayMetricRollupsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	BucketWidth string             `json:"bucket_width"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+func (q *Queries) ListGatewayMetricRollups(ctx context.Context, arg ListGatewayMetricRollupsParams) ([]GatewayMetricRollup, error) {
+	rows, err := q.db.Query(ctx, listGatewayMetricRollups,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.BucketWidth,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayMetricRollup{}
+	for rows.Next() {
+		var i GatewayMetricRollup
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.BucketStart,
+			&i.BucketWidth,
+			&i.UserID,
+			&i.BackendID,
+			&i.Model,
+			&i.AgentID,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.CacheTokens,
+			&i.ReasoningTokens,
+			&i.TotalCost,
+			&i.RequestCount,
+			&i.ErrorCount,
+			&i.LatencyP50Ms,
+			&i.LatencyP95Ms,
+			&i.LatencyP99Ms,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGatewaySessions = `-- name: ListGatewaySessions :many
 SELECT id, workspace_id, user_id, agent_id, task_id, trace_id, root_span_id, name, client_protocol, client_tool_hint, service_name, tags, status, started_at, ended_at, duration_ms, span_count, error_count, total_cost, resource_attributes FROM gateway_session
 WHERE workspace_id = $1
@@ -807,4 +868,91 @@ func (q *Queries) ListGatewaySpansForSession(ctx context.Context, arg ListGatewa
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertGatewayMetricRollup = `-- name: UpsertGatewayMetricRollup :one
+INSERT INTO gateway_metric_rollup (
+    workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id,
+    prompt_tokens, completion_tokens, cache_tokens, reasoning_tokens, total_cost,
+    request_count, error_count, latency_p50_ms, latency_p95_ms, latency_p99_ms
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+ON CONFLICT (workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id)
+DO UPDATE SET
+    prompt_tokens = EXCLUDED.prompt_tokens,
+    completion_tokens = EXCLUDED.completion_tokens,
+    cache_tokens = EXCLUDED.cache_tokens,
+    reasoning_tokens = EXCLUDED.reasoning_tokens,
+    total_cost = EXCLUDED.total_cost,
+    request_count = EXCLUDED.request_count,
+    error_count = EXCLUDED.error_count,
+    latency_p50_ms = EXCLUDED.latency_p50_ms,
+    latency_p95_ms = EXCLUDED.latency_p95_ms,
+    latency_p99_ms = EXCLUDED.latency_p99_ms
+RETURNING id, workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id, prompt_tokens, completion_tokens, cache_tokens, reasoning_tokens, total_cost, request_count, error_count, latency_p50_ms, latency_p95_ms, latency_p99_ms, created_at
+`
+
+type UpsertGatewayMetricRollupParams struct {
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	BucketStart      pgtype.Timestamptz `json:"bucket_start"`
+	BucketWidth      string             `json:"bucket_width"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	BackendID        pgtype.UUID        `json:"backend_id"`
+	Model            string             `json:"model"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	PromptTokens     int64              `json:"prompt_tokens"`
+	CompletionTokens int64              `json:"completion_tokens"`
+	CacheTokens      int64              `json:"cache_tokens"`
+	ReasoningTokens  int64              `json:"reasoning_tokens"`
+	TotalCost        pgtype.Numeric     `json:"total_cost"`
+	RequestCount     int64              `json:"request_count"`
+	ErrorCount       int64              `json:"error_count"`
+	LatencyP50Ms     pgtype.Int8        `json:"latency_p50_ms"`
+	LatencyP95Ms     pgtype.Int8        `json:"latency_p95_ms"`
+	LatencyP99Ms     pgtype.Int8        `json:"latency_p99_ms"`
+}
+
+func (q *Queries) UpsertGatewayMetricRollup(ctx context.Context, arg UpsertGatewayMetricRollupParams) (GatewayMetricRollup, error) {
+	row := q.db.QueryRow(ctx, upsertGatewayMetricRollup,
+		arg.WorkspaceID,
+		arg.BucketStart,
+		arg.BucketWidth,
+		arg.UserID,
+		arg.BackendID,
+		arg.Model,
+		arg.AgentID,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.CacheTokens,
+		arg.ReasoningTokens,
+		arg.TotalCost,
+		arg.RequestCount,
+		arg.ErrorCount,
+		arg.LatencyP50Ms,
+		arg.LatencyP95Ms,
+		arg.LatencyP99Ms,
+	)
+	var i GatewayMetricRollup
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.BucketStart,
+		&i.BucketWidth,
+		&i.UserID,
+		&i.BackendID,
+		&i.Model,
+		&i.AgentID,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.CacheTokens,
+		&i.ReasoningTokens,
+		&i.TotalCost,
+		&i.RequestCount,
+		&i.ErrorCount,
+		&i.LatencyP50Ms,
+		&i.LatencyP95Ms,
+		&i.LatencyP99Ms,
+		&i.CreatedAt,
+	)
+	return i, err
 }
