@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,16 +30,23 @@ func openManagementTestDB(t *testing.T) *pgxpool.Pool {
 
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
+	explicitDatabaseURL := dbURL != ""
 	if dbURL == "" {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
+		if explicitDatabaseURL {
+			t.Fatalf("database unavailable from DATABASE_URL: %v", err)
+		}
 		t.Skipf("database unavailable: %v", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
+		if explicitDatabaseURL {
+			t.Fatalf("database unreachable from DATABASE_URL: %v", err)
+		}
 		t.Skipf("database unreachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
@@ -150,6 +159,59 @@ func TestManagementServiceKeyFlow(t *testing.T) {
 	}
 }
 
+func TestManagementServiceGetOrCreateUserKeyConcurrent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool := openManagementTestDB(t)
+	fixture := setupManagementTestFixture(t, pool)
+	t.Setenv("MULTICA_GATEWAY_SECRET_KEY", base64.StdEncoding.EncodeToString([]byte(managementTestGatewaySecret)))
+
+	svc := NewService(db.New(pool), pool)
+	const workers = 8
+
+	type result struct {
+		response UserKeyResponse
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			response, err := svc.GetOrCreateUserKey(ctx, fixture.workspaceID, fixture.userID, "https://api.multica.ai")
+			results <- result{response: response, err: err}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var wantKey string
+	for result := range results {
+		if result.err != nil {
+			if strings.Contains(result.err.Error(), "23505") || strings.Contains(result.err.Error(), "duplicate key") {
+				t.Fatalf("GetOrCreateUserKey surfaced unique-constraint error: %v", result.err)
+			}
+			t.Fatalf("GetOrCreateUserKey returned error: %v", result.err)
+		}
+		if result.response.Key == "" {
+			t.Fatal("GetOrCreateUserKey returned empty key")
+		}
+		if wantKey == "" {
+			wantKey = result.response.Key
+			continue
+		}
+		if result.response.Key != wantKey {
+			t.Fatalf("GetOrCreateUserKey returned key %q, want %q", result.response.Key, wantKey)
+		}
+	}
+}
+
 func TestManagementServiceBackendFlow(t *testing.T) {
 	ctx := context.Background()
 	pool := openManagementTestDB(t)
@@ -242,14 +304,25 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 	}
 }
 
-func TestManagementServiceSettingsRejectsMalformedWorkspaceID(t *testing.T) {
+func TestManagementServiceRejectsMalformedIDsBeforeDBAccess(t *testing.T) {
 	ctx := context.Background()
-	pool := openManagementTestDB(t)
-	svc := NewService(db.New(pool), pool)
+	svc := NewService(nil, nil)
+	validWorkspaceID := "00000000-0000-0000-0000-000000000001"
+	validUserID := "00000000-0000-0000-0000-000000000002"
 
 	_, err := svc.Settings(ctx, "not-a-uuid")
 	if !errors.Is(err, ErrInvalidGatewayBackend) {
 		t.Fatalf("Settings malformed workspace ID error = %v, want ErrInvalidGatewayBackend", err)
+	}
+
+	_, err = svc.RevokeUserKey(ctx, validWorkspaceID, "not-a-uuid", "00000000-0000-0000-0000-000000000003")
+	if !errors.Is(err, ErrInvalidGatewayBackend) {
+		t.Fatalf("RevokeUserKey malformed user ID error = %v, want ErrInvalidGatewayBackend", err)
+	}
+
+	_, err = svc.RevokeUserKey(ctx, validWorkspaceID, validUserID, "not-a-uuid")
+	if !errors.Is(err, ErrInvalidGatewayBackend) {
+		t.Fatalf("RevokeUserKey malformed key ID error = %v, want ErrInvalidGatewayBackend", err)
 	}
 }
 
