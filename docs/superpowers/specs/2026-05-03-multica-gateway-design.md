@@ -6,7 +6,7 @@ Status: approved architecture, awaiting written spec review
 
 ## Goal
 
-Build the first milestone of the Multica Gateway and Observer dashboard: a hosted, enterprise-managed model gateway inside the existing Multica Go server, plus native AgentOps-inspired tracking and visualization. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic, sessions, LLM calls, agents, spans, tools, logs, metrics, and costs observed according to workspace policy.
+Build the first milestone of the Multica Gateway, Observer dashboard, and AI governance platform: a hosted, enterprise-managed model gateway inside the existing Multica Go server, plus native AgentOps-inspired tracking, visualization, governance, compliance evidence, and third-party AI risk management. Users authenticate with `multica login`, retrieve a Multica-issued gateway key, configure agent tools with OpenAI-compatible and Anthropic-compatible base URLs, and have their model traffic, sessions, LLM calls, agents, spans, tools, logs, metrics, costs, policy decisions, and risk signals observed according to workspace policy.
 
 The product-facing name is **Observer Gateway** when explaining what it does. Commands, API routes, UI navigation, and code should use the shorter name **Gateway**.
 
@@ -44,6 +44,8 @@ The AgentOps v2 documentation expands the target dashboard surface beyond raw te
 - trace list/detail, timeline, tree, and analytics views;
 - span details for LLM calls, tools, operations, and tasks.
 
+AI governance and third-party risk add a second product surface on top of those observations. The platform should help enterprises continuously inventory AI usage, classify AI systems and providers, enforce workspace policies, monitor behavior drift and risky usage, collect evidence, and generate governance insights. It should align to common frameworks such as NIST AI RMF, NIST AI 600-1 for generative AI, ISO/IEC 42001, EU AI Act concepts, NIST CSF 2.0 governance and supply-chain risk, NIST SP 800-161 supply-chain practices, and OWASP LLM security risks. It should not claim legal certification or automated regulatory compliance without human review.
+
 Milestone 1 should not vendor the AgentOps app into Multica. The AgentOps Python SDK is MIT, but the cloned AgentOps app includes license material that needs review before any hosted enterprise product reuse. The safer design is to implement native Multica telemetry tables, APIs, and UI using AgentOps-like concepts.
 
 ## Selected Approach
@@ -73,6 +75,11 @@ Milestone 1 includes:
 - PostgreSQL telemetry storage;
 - AgentOps-inspired tracking for sessions/traces, spans, LLM calls, tools, agents, operations, logs, metrics, and costs;
 - Observer dashboard views for session overview, session drilldown, LLM calls, agent tracking, and dashboard visualizations;
+- AI governance inventory for AI systems, agents, models, tools, data domains, users, providers, and third-party backends;
+- policy enforcement for approved providers/models/tools, capture levels, sensitive-data handling, budget thresholds, human-approval requirements, and blocked actions;
+- continuous compliance evidence collection from gateway telemetry, configuration changes, policy decisions, approvals, incidents, and audit logs;
+- third-party AI risk register for provider/backends such as OpenAI, Anthropic, Groq, OpenRouter, local models, Claude OAuth pools, and enterprise-added tools;
+- governance dashboard for risk posture, policy violations, exceptions, third-party exposure, compliance evidence status, and behavioral insights;
 - minimal Settings -> Gateway UI;
 - Claude OAuth/subscription backend type present from day one as `claude-oauth`;
 - internal telemetry interface that can later export to OTLP or ClickHouse.
@@ -88,6 +95,8 @@ Milestone 1 excludes:
 - OTLP export;
 - pixel-for-pixel AgentOps dashboard cloning;
 - full AgentOps SDK auto-instrumentation parity for every supported Python/TypeScript framework;
+- legal certification, regulatory attestation, or compliance sign-off without human governance review;
+- complete GRC suite parity with mature vendor risk, contract lifecycle, procurement, and audit-management platforms;
 - full Dario shim/MCP/sub-agent feature parity;
 - broad automated strategy generation from observed behavior.
 
@@ -95,7 +104,7 @@ Those are later phases.
 
 ## Architecture
 
-The milestone 1 gateway has seven main units.
+The milestone 1 gateway has nine main units.
 
 1. **Gateway HTTP surface**
 
@@ -116,7 +125,7 @@ The milestone 1 gateway has seven main units.
    - default backend selection;
    - capture policy read/update;
    - basic gateway status;
-   - minimal request/session trace listing and detail reads.
+   - request/session trace listing and detail reads.
 
    Backend writes and policy changes require workspace `owner` or `admin`. User key operations require workspace membership.
 
@@ -158,6 +167,16 @@ The milestone 1 gateway has seven main units.
 7. **Observer dashboard**
 
    Add a workspace-level Gateway dashboard area in the shared frontend. Settings -> Gateway remains the configuration surface. The Gateway dashboard is the operational observability surface: overview, sessions, LLM calls, agents, and visualizations.
+
+8. **Governance and policy engine**
+
+   Add a policy layer that evaluates each gateway request, trace-ingestion payload, backend change, and high-risk agent/tool action against workspace governance rules. The first implementation should be deterministic and explainable: rules, decisions, reasons, enforcement action, actor, resource, and evidence references are all persisted.
+
+   The policy engine should support `allow`, `warn`, `require_approval`, `redact`, `route_to_backend`, and `block` decisions. It should not rely on opaque AI judgment for hard enforcement in milestone 1.
+
+9. **Risk and compliance evidence service**
+
+   Add services for AI inventory, third-party risk records, control mappings, policy exceptions, incidents, and evidence bundles. These services use Gateway telemetry as continuous evidence and expose dashboard/API views for governance users. They should map evidence to frameworks, but must present that mapping as compliance support rather than legal certification.
 
 ## Routing Model
 
@@ -362,6 +381,128 @@ Capture source rules:
 - The trace ingestion API is the path for explicit agent, tool, operation, workflow, and log spans from internal agents, future SDKs, and enterprise apps.
 - Captured content fields must obey the workspace capture policy before persistence.
 
+## Governance And Compliance Platform
+
+The governance layer turns Gateway observations into an enterprise AI control plane. It should continuously answer:
+
+- what AI systems, agents, models, providers, tools, data domains, and users exist in the workspace;
+- which third parties are being used and for what purpose;
+- whether usage complies with workspace policy;
+- which risks, exceptions, incidents, and evidence gaps need attention;
+- how user and agent behavior is changing over time;
+- which patterns should inform enterprise-specific skills, approved agent templates, and strategy.
+
+The design aligns to current governance patterns:
+
+- NIST AI RMF functions: govern, map, measure, manage;
+- NIST AI 600-1 generative AI risk profile;
+- ISO/IEC 42001 AI management-system concepts;
+- EU AI Act concepts such as risk classification, logging, transparency, human oversight, post-market monitoring, and technical documentation;
+- NIST CSF 2.0 governance and risk-management concepts;
+- NIST SP 800-161 supply-chain risk practices;
+- OWASP LLM risks such as prompt injection, sensitive information disclosure, supply-chain vulnerabilities, excessive agency, and overreliance.
+
+This is not legal advice and must not be presented as automatic compliance certification. The product provides controls, monitoring, evidence, and workflow support so an enterprise governance team can assess and manage compliance.
+
+Governance inventory:
+
+- AI systems and business use cases;
+- Multica agents and enterprise-created agents;
+- model/provider backends;
+- third-party tools, MCP servers, plugins, APIs, and data connectors;
+- data domains and sensitivity tags;
+- users, groups, roles, workspaces, and runtime environments;
+- risk classification by intended purpose, domain, data sensitivity, autonomy level, external impact, and third-party dependency.
+
+Third-party risk records:
+
+- provider/tool name;
+- backend type;
+- owner;
+- approved use cases;
+- data categories sent to the provider;
+- regions and hosting notes when known;
+- contract/security-review status;
+- terms, DPA, SOC 2, ISO, or security evidence links or attachments where available;
+- known limitations and prohibited uses;
+- model list and capability class;
+- risk score;
+- review cadence;
+- last assessment date;
+- next review date;
+- active exceptions.
+
+Policy engine:
+
+- approved, restricted, and blocked providers;
+- approved, restricted, and blocked models;
+- approved, restricted, and blocked tools/MCP servers;
+- data-classification rules for prompts, completions, tool inputs, logs, and files;
+- PII/secret/code/customer-data redaction rules;
+- budget and rate thresholds by user, group, agent, backend, model, and workspace;
+- human approval for high-risk models, sensitive data, external actions, financial actions, production changes, or high-autonomy agents;
+- routing policy to force specific backends for specific workspaces, users, agents, data classes, or use cases;
+- exception handling with reason, approver, expiration, and evidence.
+
+Enforcement points:
+
+- before gateway request routing;
+- before streaming content is forwarded when request metadata is enough to decide;
+- during streaming for content classifiers that can flag sensitive output or unsafe tool-call intent;
+- before tool/action execution for Multica-managed agents;
+- when adding or changing backends;
+- when creating or updating agents, skills, MCP/tool connections, and local runtimes;
+- when trace ingestion reports an incident, blocked action, or policy override.
+
+Policy decision record:
+
+- policy ID and version;
+- subject user/agent/workspace;
+- resource backend/model/tool/data class;
+- decision: `allow`, `warn`, `require_approval`, `redact`, `route_to_backend`, `block`;
+- reason code;
+- matched rules;
+- request/session/span IDs;
+- approver and approval status when applicable;
+- evidence references;
+- timestamp.
+
+Continuous monitoring:
+
+- policy violations and near-misses;
+- anomalous spending, token usage, latency, and error rate;
+- unusual provider/model/tool adoption;
+- risky prompt or tool-call patterns;
+- sensitive-data movement to third parties;
+- agent autonomy and external action rates;
+- behavior drift for users, agents, and teams;
+- repeated exceptions or stale approvals;
+- backend health, credential failures, and routing fallback events.
+
+Compliance evidence:
+
+- backend/provider configuration history;
+- gateway key lifecycle;
+- policy configuration history;
+- policy decision logs;
+- capture-policy changes;
+- approval workflows;
+- incidents and remediation notes;
+- third-party assessments;
+- trace/session samples;
+- exported reports for framework/control mappings;
+- immutable-enough audit log entries with actor, timestamp, before/after values, and request IDs.
+
+Insights:
+
+- high-risk usage trends;
+- departments or teams adopting unapproved providers/tools;
+- users or agents with unusual behavior changes;
+- third-party concentration risk;
+- opportunities to convert recurring safe behavior into approved enterprise skills;
+- policy friction points where users repeatedly request exceptions;
+- cost, quality, and risk tradeoffs by backend/model/agent.
+
 ## Authentication And Keys
 
 `multica login` remains the main login command. It stores the normal Multica token in the existing CLI config.
@@ -426,7 +567,7 @@ The CLI should use existing config resolution for `--server-url`, `--workspace-i
 
 ## UI Design
 
-Add two UI surfaces.
+Add three UI surfaces.
 
 1. **Settings -> Gateway**
 
@@ -469,11 +610,27 @@ Add two UI surfaces.
 
    Content visibility must match the capture policy. `metadata_only` should still render useful timings, status, costs, and counts, but prompt/completion/tool bodies should appear as unavailable due to workspace policy.
 
+3. **Governance dashboard**
+
+   Add a workspace-level Governance area in `packages/views/gateway` or a sibling `packages/views/governance` package, depending on implementation size. It should share the same API client and query patterns as the Gateway dashboard.
+
+   The first governance milestone includes:
+
+   - **Risk Overview**: policy violations, exceptions, incidents, risk score trends, third-party exposure, sensitive-data movement, high-risk agent activity, and evidence coverage.
+   - **AI Inventory**: AI systems, agents, models, providers, tools, MCP servers, data domains, owners, intended purposes, autonomy levels, risk classifications, and approval state.
+   - **Policies**: approved/restricted/blocked providers, models, tools, data classes, budget limits, human-approval rules, routing rules, and capture policies.
+   - **Third-Party Risk**: provider and tool risk records, review status, evidence links, approved use cases, data categories, next review dates, and active exceptions.
+   - **Evidence**: framework/control mapping, evidence bundles, policy decisions, audit logs, incidents, approvals, and exportable reports.
+   - **Insights**: behavioral trends that identify risky usage, repeated exceptions, shadow AI adoption, and candidate workflows for enterprise-approved skills.
+
+   Governance pages must make policy decisions explainable. For every block, warning, approval requirement, redaction, or forced route, the UI should show the matched rule, reason code, affected user/agent/resource, timestamp, and evidence links.
+
 The UI must stay in shared packages where possible:
 
 - shared API client and types in `packages/core`;
 - Gateway settings component in `packages/views/settings`;
 - Gateway dashboard pages/components in `packages/views/gateway`;
+- Governance dashboard pages/components in `packages/views/gateway` or `packages/views/governance`;
 - web and desktop only provide route wiring/navigation adapters.
 
 ## Capture Policy
@@ -526,6 +683,28 @@ Configuration:
   - capture policy;
   - default backend ID;
   - created/updated timestamps.
+- `gateway_policy`
+  - workspace ID;
+  - name;
+  - description;
+  - policy type;
+  - enabled flag;
+  - version;
+  - rule definition JSON;
+  - enforcement mode;
+  - created/updated timestamps.
+- `gateway_policy_decision`
+  - workspace ID;
+  - policy ID/version;
+  - subject user/agent;
+  - resource backend/model/tool/data class;
+  - decision;
+  - reason code;
+  - matched rules JSON;
+  - request/session/span IDs;
+  - approval status;
+  - evidence references;
+  - timestamp.
 
 Telemetry:
 
@@ -636,6 +815,82 @@ Telemetry:
   - currency;
   - effective timestamp.
 
+Governance:
+
+- `ai_system_inventory`
+  - workspace ID;
+  - name;
+  - owner user/member;
+  - intended purpose;
+  - business process;
+  - autonomy level;
+  - external impact level;
+  - data domains;
+  - risk classification;
+  - approval state;
+  - linked agents/backends/tools;
+  - created/updated timestamps.
+- `ai_third_party_risk`
+  - workspace ID;
+  - provider/tool/backend ID;
+  - owner;
+  - approved use cases;
+  - data categories;
+  - regions/hosting notes;
+  - contract/security-review status;
+  - evidence links JSON;
+  - limitations/prohibited uses;
+  - risk score;
+  - review cadence;
+  - last/next review timestamps;
+  - active exception count.
+- `ai_control_mapping`
+  - workspace ID;
+  - framework;
+  - control ID;
+  - control title;
+  - mapped policy IDs;
+  - mapped evidence queries;
+  - status;
+  - owner;
+  - updated timestamp.
+- `ai_evidence`
+  - workspace ID;
+  - evidence type;
+  - framework/control references;
+  - linked request/session/span/policy/backend/provider IDs;
+  - summary;
+  - payload or attachment reference;
+  - generated timestamp;
+  - retention timestamp.
+- `ai_policy_exception`
+  - workspace ID;
+  - policy ID;
+  - requester;
+  - approver;
+  - reason;
+  - scope;
+  - status;
+  - expiration timestamp;
+  - evidence references.
+- `ai_incident`
+  - workspace ID;
+  - severity;
+  - category;
+  - linked request/session/span/policy/provider IDs;
+  - summary;
+  - status;
+  - remediation notes;
+  - opened/closed timestamps.
+- `ai_audit_log`
+  - workspace ID;
+  - actor;
+  - action;
+  - target type/ID;
+  - before/after JSON;
+  - request ID;
+  - timestamp.
+
 Existing `runtime_usage` and `task_usage` should not be overloaded for gateway telemetry. They track Multica agent-runtime usage. Gateway traffic is a broader enterprise observability surface and needs separate tables.
 
 ## Cost Tracking
@@ -675,14 +930,22 @@ Security requirements:
 - encrypt upstream provider credentials and retrievable gateway key values at rest;
 - mask credential values in API responses, logs, and CLI output;
 - restrict backend management to workspace owners/admins;
+- restrict governance policy, third-party risk, exceptions, evidence export, and incident-management writes to workspace owners/admins or future explicit governance roles;
 - scope gateway keys to one workspace;
 - apply capture policy before telemetry persistence;
+- apply policy decisions before upstream provider calls or tool/action execution where enforcement is possible;
 - do not log raw prompt/completion content through general server logs;
-- record audit-friendly metadata for backend and policy changes.
+- record audit-friendly metadata for backend, policy, risk, evidence, exception, and incident changes;
+- preserve evidence according to workspace retention policy;
+- make policy decisions explainable and reviewable by human admins.
 
 Compliance caveat:
 
 Claude OAuth/subscription routing is sensitive because it depends on provider OAuth accounts and Dario-like wire behavior. The implementation must make this backend explicit in UI/API and should not silently route enterprise traffic through it without admin configuration.
+
+Governance caveat:
+
+The platform can support governance, compliance evidence, third-party risk assessment, and continuous monitoring, but it must not claim to certify legal compliance automatically. Final compliance determinations remain a human/legal/governance responsibility.
 
 ## Error Handling
 
@@ -701,9 +964,15 @@ Expected error classes:
 - upstream rate limit;
 - upstream timeout;
 - streaming interruption;
-- capture/telemetry persistence failure.
+- capture/telemetry persistence failure;
+- policy block;
+- approval required but missing, expired, or denied;
+- governance evidence persistence failure;
+- stale third-party review blocking restricted use.
 
 Telemetry persistence failures should not normally fail the model request if the upstream request can still complete. They should be logged as internal errors and exposed in Gateway health/status. Authentication, routing, policy, and backend credential errors should fail before any upstream call.
+
+Policy blocks and approval-required decisions should return protocol-compatible errors to model clients, but the policy decision record must retain the exact rule and reason so admins can review it.
 
 ## Integration Points
 
@@ -713,6 +982,7 @@ Backend:
 - add handler methods under `server/internal/handler`;
 - add core gateway package under `server/internal/gateway`;
 - add dashboard query service under the gateway package or a focused handler-adjacent service;
+- add governance policy/risk/evidence services under the gateway package or a dedicated `server/internal/governance` package;
 - add migrations under `server/migrations`;
 - add sqlc queries under `server/pkg/db/queries`;
 - regenerate db code with `make sqlc`.
@@ -725,9 +995,11 @@ CLI:
 Frontend:
 
 - add Gateway types and API client methods under `packages/core`;
+- add Governance types and API client methods under `packages/core`;
 - add Settings -> Gateway tab under `packages/views/settings`;
 - add Gateway dashboard views under `packages/views/gateway`;
-- add a web route and desktop route for the Gateway dashboard.
+- add Governance dashboard views under `packages/views/gateway` or `packages/views/governance`;
+- add web routes and desktop routes for the Gateway and Governance dashboards.
 
 Tracking and dashboard APIs:
 
@@ -740,6 +1012,18 @@ Tracking and dashboard APIs:
 - `GET /api/gateway/agents` returns named-agent metrics, agent span summaries, model usage, tool usage, handoffs, and task linkage.
 - `GET /api/gateway/requests` remains useful for low-level gateway request debugging.
 - Read APIs must apply workspace membership checks and must not expose captured content that was not stored under the active capture policy.
+
+Governance APIs:
+
+- `GET /api/governance/overview` returns risk posture, policy violations, third-party exposure, exception status, and evidence coverage.
+- `GET/POST/PATCH /api/governance/inventory` manages AI systems, agents, models, tools, data domains, intended purpose, owners, and risk classification.
+- `GET/POST/PATCH /api/governance/policies` manages deterministic policy rules, versions, enforcement modes, and enabled state.
+- `GET /api/governance/policy-decisions` lists explainable policy decisions with filters by user, agent, model, backend, tool, decision, and time range.
+- `GET/POST/PATCH /api/governance/third-parties` manages provider/tool risk records, review status, evidence links, approved use cases, and exceptions.
+- `GET/POST/PATCH /api/governance/exceptions` manages exception requests, approvals, expirations, and scope.
+- `GET/POST/PATCH /api/governance/incidents` manages governance incidents and remediation notes.
+- `GET /api/governance/evidence` lists evidence records and control mappings.
+- `POST /api/governance/evidence/export` generates exportable evidence bundles for selected frameworks, controls, date ranges, and systems.
 
 ## Testing Strategy
 
@@ -764,7 +1048,15 @@ Backend tests:
 - session drilldown data shape;
 - LLM call filtering and cost/token aggregation;
 - agent tracking summaries and handoff/tool/model aggregation;
-- capture-policy enforcement on dashboard read APIs.
+- capture-policy enforcement on dashboard read APIs;
+- policy engine decisions for allow, warn, require approval, redact, route, and block;
+- policy decision persistence with matched rule and reason code;
+- governance inventory CRUD and risk classification;
+- third-party risk record CRUD and review-state transitions;
+- exception approval and expiration behavior;
+- incident creation and remediation updates;
+- evidence/control mapping queries and export payloads;
+- policy enforcement before upstream provider calls.
 
 CLI tests:
 
@@ -780,6 +1072,11 @@ Frontend tests:
 - Session Drilldown renders metadata, timeline/waterfall, tree, and selected-span details;
 - LLM Calls view renders model call table and handles redacted/hidden content;
 - Agents view renders named agents, tools, handoffs, and metrics;
+- Governance Risk Overview renders posture, violations, exceptions, incidents, and evidence coverage;
+- AI Inventory renders systems, agents, providers, models, tools, owners, and risk classifications;
+- Policies view renders rules, enforcement modes, versions, and decision history;
+- Third-Party Risk view renders provider/tool reviews, evidence links, and active exceptions;
+- Evidence view renders control mappings and export states;
 - admin-only controls are hidden or disabled for non-admins;
 - backend list and policy selector use workspace-scoped query keys;
 - mutations invalidate Gateway queries.
@@ -793,7 +1090,10 @@ Manual verification:
 - verify telemetry appears in PostgreSQL;
 - verify policy changes alter captured payloads;
 - verify Overview, Sessions, Session Drilldown, LLM Calls, and Agents views show the recorded traffic;
-- verify an explicit trace-ingestion payload can create agent/tool/operation spans not visible from gateway-only traffic.
+- verify an explicit trace-ingestion payload can create agent/tool/operation spans not visible from gateway-only traffic;
+- configure a policy that blocks a model/provider/tool and verify the gateway blocks before upstream call;
+- configure an approval-required rule and verify denied/missing approvals are recorded and enforced;
+- add a third-party provider risk record and verify it appears in Governance dashboard and evidence exports.
 
 ## Rollout
 
@@ -802,11 +1102,14 @@ Manual verification:
 3. Implement OpenAI-compatible routing and streaming.
 4. Implement Anthropic-compatible routing and streaming.
 5. Implement telemetry recorder and capture policy.
-6. Implement trace ingestion and dashboard query APIs.
-7. Add Settings -> Gateway.
-8. Add Gateway dashboard views: Overview, Sessions, Session Drilldown, LLM Calls, Agents, and visualizations.
-9. Add `claude-oauth` adapter boundary and first implementation choice.
-10. Run end-to-end checks with real SDK clients and explicit trace-ingestion payloads.
+6. Implement governance policy engine, policy-decision logging, and enforcement hooks.
+7. Implement trace ingestion and dashboard query APIs.
+8. Implement governance inventory, third-party risk, exceptions, incidents, evidence, and export APIs.
+9. Add Settings -> Gateway.
+10. Add Gateway dashboard views: Overview, Sessions, Session Drilldown, LLM Calls, Agents, and visualizations.
+11. Add Governance dashboard views: Risk Overview, AI Inventory, Policies, Third-Party Risk, Evidence, and Insights.
+12. Add `claude-oauth` adapter boundary and first implementation choice.
+13. Run end-to-end checks with real SDK clients, explicit trace-ingestion payloads, and governance policy scenarios.
 
 The implementation plan should keep OpenAI-compatible routing and Anthropic-compatible routing separable enough to test independently.
 
@@ -847,6 +1150,26 @@ Agent attribution:
 - Some external tools will not let users add custom headers or explicit trace metadata.
 - Mitigation: always track workspace/user/session/LLM metadata, attach Multica agent/task IDs where available, infer only conservative client/tool hints, and use explicit trace ingestion for named-agent accuracy.
 
+Governance overclaiming:
+
+- A platform can collect evidence and enforce policy, but cannot guarantee legal compliance automatically.
+- Mitigation: label framework mappings as support/evidence, require human approval for compliance status, and avoid certification language.
+
+Policy false positives:
+
+- Blocking or approval rules may interrupt legitimate agent workflows.
+- Mitigation: start with explainable deterministic rules, warning mode, scoped exceptions, dry-run evaluation, and clear decision history.
+
+Continuous monitoring volume:
+
+- Policy decision logs, evidence, audit events, and telemetry can grow quickly.
+- Mitigation: retention policies, rollups, pagination, and future export paths to warehouse/ClickHouse.
+
+Third-party risk freshness:
+
+- Provider evidence and model capabilities can become stale.
+- Mitigation: review cadence fields, stale-review alerts, active exception tracking, and admin-owned review workflows.
+
 ## Implementation Planning Defaults
 
 These decisions are locked for the first implementation plan unless the written spec review changes them:
@@ -858,9 +1181,19 @@ These decisions are locked for the first implementation plan unless the written 
 - Pricing lives in `gateway_model_pricing`; unknown prices produce null cost values.
 - Milestone 1 includes AgentOps-inspired dashboard APIs and UI for Overview, Sessions, Session Drilldown, LLM Calls, Agents, and generic timeline/tree/graph visualizations.
 - Milestone 1 records the concrete AgentOps-style fields listed in the Observer Tracking Model section, using native Multica storage and capture policy.
+- Milestone 1 includes governance APIs and UI for AI inventory, deterministic policies, explainable policy decisions, third-party risk, exceptions, incidents, evidence, and insights.
+- Governance framework mappings support NIST AI RMF, NIST AI 600-1, ISO/IEC 42001, EU AI Act concepts, NIST CSF, NIST SP 800-161, and OWASP LLM risk categories as evidence/control mappings, not automatic certification.
 
 ## References Reviewed
 
+- NIST AI RMF: `https://www.nist.gov/itl/ai-risk-management-framework`
+- NIST AI 600-1 Generative AI Profile: `https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence`
+- ISO/IEC 42001: `https://www.iso.org/standard/42001`
+- EU AI Act overview: `https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai`
+- EU AI Act Q&A: `https://digital-strategy.ec.europa.eu/en/faqs/navigating-ai-act`
+- NIST Cybersecurity Framework: `https://www.nist.gov/cyberframework`
+- NIST SP 800-161 Rev. 1: `https://csrc.nist.gov/pubs/sp/800/161/r1/upd1/final`
+- OWASP Top 10 for LLM Applications 2025: `https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025`
 - AgentOps dashboard documentation: `https://docs.agentops.ai/v2/usage/dashboard-info`
 - AgentOps LLM tracking documentation: `https://docs.agentops.ai/v2/usage/tracking-llm-calls`
 - AgentOps agent tracking documentation: `https://docs.agentops.ai/v2/usage/tracking-agents`
