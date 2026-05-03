@@ -125,7 +125,7 @@ CREATE TABLE gateway_request (
     latency_ms BIGINT,
     error_type TEXT,
     error_message TEXT,
-    capture_policy TEXT NOT NULL
+    capture_policy TEXT NOT NULL DEFAULT 'redacted_content'
         CHECK (capture_policy IN ('metadata_only', 'redacted_content', 'full_content')),
     request_metadata JSONB NOT NULL DEFAULT '{}',
     response_metadata JSONB NOT NULL DEFAULT '{}',
