@@ -643,9 +643,6 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 	if normalized.BackendType == BackendTypeClaudeOAuth && credential == "" {
 		credential = "sidecar-managed"
 	}
-	if normalized.BackendType != BackendTypeClaudeOAuth && credential == "" {
-		return CreateBackendInput{}, "", fmt.Errorf("%w: credential is required", ErrInvalidGatewayBackend)
-	}
 
 	return normalized, credential, nil
 }

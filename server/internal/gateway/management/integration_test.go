@@ -205,6 +205,13 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 	if settings.CapturePolicy != CaptureMetadataOnly {
 		t.Fatalf("settings capture policy = %q, want %q", settings.CapturePolicy, CaptureMetadataOnly)
 	}
+	settings, err = svc.Settings(ctx, fixture.workspaceID)
+	if err != nil {
+		t.Fatalf("Settings returned error: %v", err)
+	}
+	if settings.CapturePolicy != CaptureMetadataOnly {
+		t.Fatalf("persisted settings capture policy = %q, want %q", settings.CapturePolicy, CaptureMetadataOnly)
+	}
 
 	var auditCount int
 	if err := pool.QueryRow(ctx, `
@@ -217,5 +224,29 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 	}
 	if auditCount != 2 {
 		t.Fatalf("audit count = %d, want 2", auditCount)
+	}
+}
+
+func TestNormalizeCreateBackendInputAllowsCustomBackendWithoutKey(t *testing.T) {
+	normalized, credential, err := normalizeCreateBackendInput(CreateBackendInput{
+		WorkspaceID: "workspace-id",
+		ActorUserID: "user-id",
+		Slug:        "custom",
+		DisplayName: "Custom Backend",
+		BackendType: BackendTypeOpenAICompatible,
+		BaseURL:     "https://custom.example.com/v1",
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("normalizeCreateBackendInput returned error: %v", err)
+	}
+	if credential != "" {
+		t.Fatalf("credential = %q, want empty string", credential)
+	}
+	if normalized.Slug != "custom" {
+		t.Fatalf("slug = %q, want custom", normalized.Slug)
+	}
+	if normalized.BackendType != BackendTypeOpenAICompatible {
+		t.Fatalf("backend type = %q, want %q", normalized.BackendType, BackendTypeOpenAICompatible)
 	}
 }
