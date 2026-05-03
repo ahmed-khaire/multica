@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -113,6 +114,59 @@ func TestGatewayDeleteBackendReturnsDeletedResponse(t *testing.T) {
 	}
 	if !resp["deleted"] {
 		t.Fatalf("DeleteGatewayBackend: deleted = %v, want true", resp["deleted"])
+	}
+}
+
+func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
+	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
+	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")
+
+	req := httptest.NewRequest("GET", "/api/gateway/status", nil)
+	req.Host = "request.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "forwarded.multica.ai")
+
+	if got := gatewayServerBaseURL(req); got != "https://gateway.multica.ai/root" {
+		t.Fatalf("gatewayServerBaseURL = %q, want %q", got, "https://gateway.multica.ai/root")
+	}
+}
+
+func TestGatewayServerBaseURLUsesFirstForwardedValues(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/gateway/status", nil)
+	req.Host = "request.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https, http")
+	req.Header.Set("X-Forwarded-Host", "api.multica.ai, evil.multica.ai")
+
+	if got := gatewayServerBaseURL(req); got != "https://api.multica.ai" {
+		t.Fatalf("gatewayServerBaseURL = %q, want %q", got, "https://api.multica.ai")
+	}
+}
+
+func TestGatewayServerBaseURLInvalidForwardedHostFallsBackToHost(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/gateway/status", nil)
+	req.Host = "request.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "evil.multica.ai/path")
+
+	if got := gatewayServerBaseURL(req); got != "https://request.multica.ai" {
+		t.Fatalf("gatewayServerBaseURL = %q, want %q", got, "https://request.multica.ai")
+	}
+}
+
+func TestWriteGatewayResultHidesUnmappedInternalErrors(t *testing.T) {
+	w := httptest.NewRecorder()
+
+	testHandler.writeGatewayResult(w, http.StatusOK, nil, errors.New("database password leaked in detail"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("writeGatewayResult: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("writeGatewayResult: failed to decode response: %v", err)
+	}
+	if resp["error"] != "gateway request failed" {
+		t.Fatalf("writeGatewayResult error = %q, want %q", resp["error"], "gateway request failed")
 	}
 }
 

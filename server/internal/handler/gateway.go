@@ -3,8 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
@@ -233,15 +237,26 @@ func (h *Handler) gatewayRequestScope(w http.ResponseWriter, r *http.Request) (w
 }
 
 func gatewayServerBaseURL(r *http.Request) string {
-	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if proto != "" && forwardedHost != "" {
-		return strings.TrimRight(proto+"://"+forwardedHost, "/")
+	for _, envName := range []string{"MULTICA_GATEWAY_BASE_URL", "MULTICA_SERVER_URL"} {
+		if baseURL, ok := normalizeGatewayBaseURL(os.Getenv(envName)); ok {
+			return baseURL
+		}
 	}
 
-	host := strings.TrimSpace(r.Host)
-	if proto != "" && host != "" {
-		return strings.TrimRight(proto+"://"+host, "/")
+	proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto"))
+	if proto != "http" && proto != "https" {
+		proto = ""
+	}
+
+	host := ""
+	if proto != "" {
+		forwardedHost := firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+		if validGatewayHost(forwardedHost) {
+			host = forwardedHost
+		}
+	}
+	if host == "" && validGatewayHost(r.Host) {
+		host = strings.TrimSpace(r.Host)
 	}
 
 	if proto == "" {
@@ -251,7 +266,52 @@ func gatewayServerBaseURL(r *http.Request) string {
 			proto = "http"
 		}
 	}
-	return strings.TrimRight(proto+"://"+host, "/")
+	if host == "" {
+		host = "localhost"
+	}
+	if baseURL, ok := normalizeGatewayBaseURL(proto + "://" + host); ok {
+		return baseURL
+	}
+	return proto + "://localhost"
+}
+
+func normalizeGatewayBaseURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", false
+	}
+	if parsed.Host == "" {
+		return "", false
+	}
+	return strings.TrimRight(parsed.String(), "/"), true
+}
+
+func firstHeaderValue(raw string) string {
+	if idx := strings.Index(raw, ","); idx >= 0 {
+		raw = raw[:idx]
+	}
+	return strings.TrimSpace(raw)
+}
+
+func validGatewayHost(raw string) bool {
+	host := strings.TrimSpace(raw)
+	if host == "" || strings.ContainsAny(host, `/\@`) {
+		return false
+	}
+	for _, r := range host {
+		if unicode.IsSpace(r) {
+			return false
+		}
+	}
+	parsed, err := url.Parse("http://" + host)
+	return err == nil && parsed.Host != ""
 }
 
 func (h *Handler) writeGatewayResult(w http.ResponseWriter, status int, payload any, err error) {
@@ -268,6 +328,7 @@ func (h *Handler) writeGatewayResult(w http.ResponseWriter, status int, payload 
 	case errors.Is(err, management.ErrGatewaySecretNotConfigured):
 		writeError(w, http.StatusInternalServerError, "gateway secret key is not configured")
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("gateway request failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "gateway request failed")
 	}
 }

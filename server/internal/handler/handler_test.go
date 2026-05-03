@@ -33,16 +33,26 @@ const (
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
+	explicitDatabaseURL := dbURL != ""
 	if dbURL == "" {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
+		if explicitDatabaseURL {
+			fmt.Printf("database unavailable from DATABASE_URL: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Skipping tests: could not connect to database: %v\n", err)
 		os.Exit(0)
 	}
 	if err := pool.Ping(ctx); err != nil {
+		if explicitDatabaseURL {
+			fmt.Printf("database unreachable from DATABASE_URL: %v\n", err)
+			pool.Close()
+			os.Exit(1)
+		}
 		fmt.Printf("Skipping tests: database not reachable: %v\n", err)
 		pool.Close()
 		os.Exit(0)
