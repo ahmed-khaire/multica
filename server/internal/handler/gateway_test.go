@@ -74,6 +74,48 @@ func TestGatewayCreateBackendRedactsCredential(t *testing.T) {
 	}
 }
 
+func TestGatewayDeleteBackendReturnsDeletedResponse(t *testing.T) {
+	setGatewaySecret(t)
+
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider": "groq",
+		"key":      "gsk_1234567890abcdef",
+	})
+
+	testHandler.CreateGatewayBackend(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayBackend: failed to decode response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("CreateGatewayBackend: expected non-empty backend id")
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("DELETE", "/api/gateway/backends/"+created.ID, nil)
+	req = withURLParam(req, "id", created.ID)
+
+	testHandler.DeleteGatewayBackend(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DeleteGatewayBackend: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("DeleteGatewayBackend: failed to decode response: %v", err)
+	}
+	if !resp["deleted"] {
+		t.Fatalf("DeleteGatewayBackend: deleted = %v, want true", resp["deleted"])
+	}
+}
+
 func TestGatewayPolicyRejectsInvalidCapturePolicy(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/gateway/policy", map[string]any{

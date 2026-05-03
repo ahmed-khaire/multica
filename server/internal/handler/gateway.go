@@ -172,7 +172,7 @@ func (h *Handler) DeleteGatewayBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := h.Gateway.DeleteBackend(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
-	h.writeGatewayResult(w, http.StatusNoContent, nil, err)
+	h.writeGatewayResult(w, http.StatusOK, map[string]bool{"deleted": true}, err)
 }
 
 func (h *Handler) SetGatewayDefaultBackend(w http.ResponseWriter, r *http.Request) {
