@@ -33,6 +33,19 @@ func TestLegacyCompatibilityCommandsRemainAvailable(t *testing.T) {
 			t.Fatalf("expected config set command to exist: %v", err)
 		}
 	})
+
+	t.Run("gateway remains available from root", func(t *testing.T) {
+		cmd, _, err := rootCmd.Find([]string{"gateway"})
+		if err != nil {
+			t.Fatalf("expected root gateway command to exist: %v", err)
+		}
+		if cmd == nil {
+			t.Fatal("expected root gateway command to exist")
+		}
+		if cmd.Name() != "gateway" {
+			t.Fatalf("command name = %q, want gateway", cmd.Name())
+		}
+	})
 }
 
 func TestRunConfigSetPersistsValues(t *testing.T) {

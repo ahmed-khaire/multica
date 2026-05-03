@@ -11,6 +11,23 @@ import (
 	"github.com/spf13/pflag"
 )
 
+func TestGatewayCommandTree(t *testing.T) {
+	for _, name := range []string{"status", "key", "keys", "revoke", "add", "backends", "default", "policy"} {
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := gatewayCmd.Find([]string{name})
+			if err != nil {
+				t.Fatalf("expected gateway %s command to exist: %v", name, err)
+			}
+			if cmd == nil {
+				t.Fatalf("expected gateway %s command to exist", name)
+			}
+			if cmd.Name() != name {
+				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
+			}
+		})
+	}
+}
+
 func TestGatewayKeyCommandPrintsEnv(t *testing.T) {
 	var called bool
 	var srv *httptest.Server
@@ -245,6 +262,7 @@ func gatewayTestRoot(t *testing.T, serverURL string) *cobra.Command {
 	root.PersistentFlags().String("server-url", "", "")
 	root.PersistentFlags().String("workspace-id", "", "")
 	root.PersistentFlags().String("profile", "", "")
+	root.AddGroup(&cobra.Group{ID: groupCore, Title: "CORE COMMANDS"})
 	root.AddCommand(gatewayCmd)
 	return root
 }
