@@ -314,12 +314,14 @@ CREATE TABLE gateway_metric_rollup (
     latency_p50_ms BIGINT,
     latency_p95_ms BIGINT,
     latency_p99_ms BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_gateway_metric_rollup_workspace_bucket
     ON gateway_metric_rollup(workspace_id, bucket_start DESC);
+CREATE UNIQUE INDEX idx_gateway_metric_rollup_unique_dimensions
+    ON gateway_metric_rollup(workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id)
+    NULLS NOT DISTINCT;
 
 CREATE TABLE gateway_model_pricing (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -518,3 +520,126 @@ CREATE TABLE ai_audit_log (
 
 CREATE INDEX idx_ai_audit_log_workspace_created
     ON ai_audit_log(workspace_id, created_at DESC);
+
+CREATE UNIQUE INDEX idx_gateway_agent_workspace_id
+    ON agent(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_backend_workspace_id
+    ON gateway_backend(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_policy_workspace_id
+    ON gateway_policy(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_session_workspace_id
+    ON gateway_session(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_request_workspace_id
+    ON gateway_request(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_span_workspace_id
+    ON gateway_span(workspace_id, id);
+CREATE UNIQUE INDEX idx_ai_third_party_risk_workspace_id
+    ON ai_third_party_risk(workspace_id, id);
+
+ALTER TABLE gateway_workspace_settings
+    ADD CONSTRAINT gateway_workspace_settings_default_backend_workspace_fk
+    FOREIGN KEY (workspace_id, default_backend_id) REFERENCES gateway_backend(workspace_id, id);
+
+ALTER TABLE gateway_session
+    ADD CONSTRAINT gateway_session_agent_workspace_fk
+    FOREIGN KEY (workspace_id, agent_id) REFERENCES agent(workspace_id, id);
+
+ALTER TABLE gateway_request
+    ADD CONSTRAINT gateway_request_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_request_backend_workspace_fk
+    FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id);
+
+ALTER TABLE gateway_model_call
+    ADD CONSTRAINT gateway_model_call_request_workspace_fk
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_model_call_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_model_call_backend_workspace_fk
+    FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id);
+
+ALTER TABLE gateway_span
+    ADD CONSTRAINT gateway_span_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_span_request_workspace_fk
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id);
+
+ALTER TABLE gateway_event
+    ADD CONSTRAINT gateway_event_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_event_request_workspace_fk
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_event_span_workspace_fk
+    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
+
+ALTER TABLE gateway_log
+    ADD CONSTRAINT gateway_log_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_log_request_workspace_fk
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_log_span_workspace_fk
+    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
+
+ALTER TABLE gateway_agent_observation
+    ADD CONSTRAINT gateway_agent_observation_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_agent_observation_span_workspace_fk
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+
+ALTER TABLE gateway_tool_observation
+    ADD CONSTRAINT gateway_tool_observation_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_tool_observation_span_workspace_fk
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+
+ALTER TABLE gateway_metric_rollup
+    ADD CONSTRAINT gateway_metric_rollup_backend_workspace_fk
+    FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id),
+    ADD CONSTRAINT gateway_metric_rollup_agent_workspace_fk
+    FOREIGN KEY (workspace_id, agent_id) REFERENCES agent(workspace_id, id);
+
+ALTER TABLE gateway_policy_decision
+    ADD CONSTRAINT gateway_policy_decision_policy_workspace_fk
+    FOREIGN KEY (workspace_id, policy_id) REFERENCES gateway_policy(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_subject_agent_workspace_fk
+    FOREIGN KEY (workspace_id, subject_agent_id) REFERENCES agent(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_request_workspace_fk
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_session_workspace_fk
+    FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_span_workspace_fk
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+
+ALTER TABLE ai_third_party_risk
+    ADD CONSTRAINT ai_third_party_risk_backend_workspace_fk
+    FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id);
+
+ALTER TABLE ai_evidence
+    ADD CONSTRAINT ai_evidence_request_workspace_fk
+    FOREIGN KEY (workspace_id, linked_request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_session_workspace_fk
+    FOREIGN KEY (workspace_id, linked_session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_span_workspace_fk
+    FOREIGN KEY (workspace_id, linked_span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_policy_workspace_fk
+    FOREIGN KEY (workspace_id, linked_policy_id) REFERENCES gateway_policy(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_backend_workspace_fk
+    FOREIGN KEY (workspace_id, linked_backend_id) REFERENCES gateway_backend(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_provider_risk_workspace_fk
+    FOREIGN KEY (workspace_id, linked_provider_risk_id) REFERENCES ai_third_party_risk(workspace_id, id);
+
+ALTER TABLE ai_policy_exception
+    ADD CONSTRAINT ai_policy_exception_policy_workspace_fk
+    FOREIGN KEY (workspace_id, policy_id) REFERENCES gateway_policy(workspace_id, id);
+
+ALTER TABLE ai_incident
+    ADD CONSTRAINT ai_incident_request_workspace_fk
+    FOREIGN KEY (workspace_id, linked_request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT ai_incident_session_workspace_fk
+    FOREIGN KEY (workspace_id, linked_session_id) REFERENCES gateway_session(workspace_id, id),
+    ADD CONSTRAINT ai_incident_span_workspace_fk
+    FOREIGN KEY (workspace_id, linked_span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT ai_incident_policy_workspace_fk
+    FOREIGN KEY (workspace_id, linked_policy_id) REFERENCES gateway_policy(workspace_id, id),
+    ADD CONSTRAINT ai_incident_provider_risk_workspace_fk
+    FOREIGN KEY (workspace_id, linked_provider_risk_id) REFERENCES ai_third_party_risk(workspace_id, id);

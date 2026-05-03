@@ -20,6 +20,9 @@ DROP TABLE IF EXISTS gateway_session;
 DROP TABLE IF EXISTS gateway_policy;
 DROP TABLE IF EXISTS gateway_user_key;
 ALTER TABLE IF EXISTS gateway_workspace_settings
+    DROP CONSTRAINT IF EXISTS gateway_workspace_settings_default_backend_workspace_fk;
+ALTER TABLE IF EXISTS gateway_workspace_settings
     DROP CONSTRAINT IF EXISTS gateway_workspace_settings_default_backend_fk;
 DROP TABLE IF EXISTS gateway_backend;
 DROP TABLE IF EXISTS gateway_workspace_settings;
+DROP INDEX IF EXISTS idx_gateway_agent_workspace_id;
