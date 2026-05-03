@@ -535,6 +535,8 @@ CREATE UNIQUE INDEX idx_gateway_session_workspace_id
     ON gateway_session(workspace_id, id);
 CREATE UNIQUE INDEX idx_gateway_request_workspace_id
     ON gateway_request(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_request_session_id
+    ON gateway_request(session_id, id);
 CREATE UNIQUE INDEX idx_gateway_span_workspace_id
     ON gateway_span(workspace_id, id);
 CREATE UNIQUE INDEX idx_ai_third_party_risk_workspace_id
@@ -559,6 +561,8 @@ ALTER TABLE gateway_request
 ALTER TABLE gateway_model_call
     ADD CONSTRAINT gateway_model_call_request_workspace_fk
     FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_model_call_request_session_fk
+    FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_model_call_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_model_call_backend_workspace_fk
@@ -568,13 +572,17 @@ ALTER TABLE gateway_span
     ADD CONSTRAINT gateway_span_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_span_request_workspace_fk
-    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id);
+    FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_span_request_session_fk
+    FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id);
 
 ALTER TABLE gateway_event
     ADD CONSTRAINT gateway_event_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_event_request_workspace_fk
     FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_event_request_session_fk
+    FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_event_span_workspace_fk
     FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
 
@@ -583,6 +591,8 @@ ALTER TABLE gateway_log
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_log_request_workspace_fk
     FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_log_request_session_fk
+    FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_log_span_workspace_fk
     FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
 
