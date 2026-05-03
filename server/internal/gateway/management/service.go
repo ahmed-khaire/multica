@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/gateway/keyring"
 	"github.com/multica-ai/multica/server/internal/gateway/secrets"
@@ -97,8 +98,12 @@ func (s *Service) withTx(ctx context.Context, fn func(*db.Queries) error) error 
 	return tx.Commit(ctx)
 }
 
-func uuidValue(id string) pgtype.UUID {
-	return util.ParseUUID(id)
+func uuidValue(id, field string) (pgtype.UUID, error) {
+	var value pgtype.UUID
+	if err := value.Scan(strings.TrimSpace(id)); err != nil || !value.Valid {
+		return pgtype.UUID{}, fmt.Errorf("%w: invalid %s", ErrInvalidGatewayBackend, field)
+	}
+	return value, nil
 }
 
 func uuidString(id pgtype.UUID) string {
@@ -127,14 +132,26 @@ func validateBackendURL(raw, backendType string) error {
 	return nil
 }
 
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 func (s *Service) GetOrCreateUserKey(ctx context.Context, workspaceID, userID, serverBaseURL string) (UserKeyResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return UserKeyResponse{}, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return UserKeyResponse{}, err
+	}
+
 	box, err := s.loadBox()
 	if err != nil {
 		return UserKeyResponse{}, normalizeSecretError(err)
 	}
 
-	workspaceUUID := uuidValue(workspaceID)
-	userUUID := uuidValue(userID)
 	urls := BuildGatewayURLs(serverBaseURL)
 
 	row, err := s.queries.GetActiveGatewayUserKey(ctx, db.GetActiveGatewayUserKeyParams{
@@ -172,6 +189,19 @@ func (s *Service) GetOrCreateUserKey(ctx context.Context, workspaceID, userID, s
 		created = row
 		return audit(ctx, q, workspaceUUID, userUUID, "gateway.key.create", "gateway_key", uuidString(row.ID), nil, userKeyListItem(row))
 	}); err != nil {
+		if isUniqueViolation(err) {
+			row, readErr := s.queries.GetActiveGatewayUserKey(ctx, db.GetActiveGatewayUserKeyParams{
+				WorkspaceID: workspaceUUID,
+				UserID:      userUUID,
+			})
+			if readErr == nil {
+				raw, decryptErr := keyring.DecryptStoredGatewayKey(box, row.EncryptedKeyValue)
+				if decryptErr != nil {
+					return UserKeyResponse{}, normalizeSecretError(decryptErr)
+				}
+				return userKeyResponse(row, raw, urls), nil
+			}
+		}
 		return UserKeyResponse{}, err
 	}
 
@@ -179,14 +209,23 @@ func (s *Service) GetOrCreateUserKey(ctx context.Context, workspaceID, userID, s
 }
 
 func (s *Service) GetActiveUserKey(ctx context.Context, workspaceID, userID, serverBaseURL string) (UserKeyResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return UserKeyResponse{}, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return UserKeyResponse{}, err
+	}
+
 	box, err := s.loadBox()
 	if err != nil {
 		return UserKeyResponse{}, normalizeSecretError(err)
 	}
 
 	row, err := s.queries.GetActiveGatewayUserKey(ctx, db.GetActiveGatewayUserKeyParams{
-		WorkspaceID: uuidValue(workspaceID),
-		UserID:      uuidValue(userID),
+		WorkspaceID: workspaceUUID,
+		UserID:      userUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UserKeyResponse{}, ErrGatewayKeyNotFound
@@ -203,9 +242,18 @@ func (s *Service) GetActiveUserKey(ctx context.Context, workspaceID, userID, ser
 }
 
 func (s *Service) ListUserKeys(ctx context.Context, workspaceID, userID string) ([]UserKeyListItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.queries.ListGatewayUserKeys(ctx, db.ListGatewayUserKeysParams{
-		WorkspaceID: uuidValue(workspaceID),
-		UserID:      uuidValue(userID),
+		WorkspaceID: workspaceUUID,
+		UserID:      userUUID,
 	})
 	if err != nil {
 		return nil, err
@@ -219,9 +267,18 @@ func (s *Service) ListUserKeys(ctx context.Context, workspaceID, userID string) 
 }
 
 func (s *Service) RevokeUserKey(ctx context.Context, workspaceID, userID, keyID string) (UserKeyListItem, error) {
-	workspaceUUID := uuidValue(workspaceID)
-	userUUID := uuidValue(userID)
-	keyUUID := uuidValue(keyID)
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return UserKeyListItem{}, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return UserKeyListItem{}, err
+	}
+	keyUUID, err := uuidValue(keyID, "key_id")
+	if err != nil {
+		return UserKeyListItem{}, err
+	}
 
 	var revoked db.GatewayUserKey
 	if err := s.withTx(ctx, func(q *db.Queries) error {
@@ -270,8 +327,11 @@ func userKeyListItem(row db.GatewayUserKey) UserKeyListItem {
 }
 
 func (s *Service) Settings(ctx context.Context, workspaceID string) (SettingsResponse, error) {
-	workspaceUUID := uuidValue(workspaceID)
-	settings, err := s.getSettingsOrDefault(ctx, workspaceID)
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return SettingsResponse{}, err
+	}
+	settings, err := getSettingsOrDefaultWithQueries(ctx, s.queries, workspaceUUID)
 	if err != nil {
 		return SettingsResponse{}, err
 	}
@@ -279,9 +339,15 @@ func (s *Service) Settings(ctx context.Context, workspaceID string) (SettingsRes
 }
 
 func (s *Service) Status(ctx context.Context, workspaceID, userID, serverBaseURL string) (StatusResponse, error) {
-	workspaceUUID := uuidValue(workspaceID)
-	userUUID := uuidValue(userID)
-	settings, err := s.getSettingsOrDefault(ctx, workspaceID)
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	settings, err := getSettingsOrDefaultWithQueries(ctx, s.queries, workspaceUUID)
 	if err != nil {
 		return StatusResponse{}, err
 	}
@@ -326,11 +392,15 @@ func (s *Service) Status(ctx context.Context, workspaceID, userID, serverBaseURL
 }
 
 func (s *Service) ListBackends(ctx context.Context, workspaceID string) ([]BackendResponse, error) {
-	settings, err := s.getSettingsOrDefault(ctx, workspaceID)
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.queries.ListGatewayBackends(ctx, uuidValue(workspaceID))
+	settings, err := getSettingsOrDefaultWithQueries(ctx, s.queries, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListGatewayBackends(ctx, workspaceUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +417,14 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 	if err != nil {
 		return BackendResponse{}, err
 	}
+	workspaceUUID, err := uuidValue(normalized.WorkspaceID, "workspace_id")
+	if err != nil {
+		return BackendResponse{}, err
+	}
+	actorUUID, err := uuidValue(normalized.ActorUserID, "actor_user_id")
+	if err != nil {
+		return BackendResponse{}, err
+	}
 	box, err := s.loadBox()
 	if err != nil {
 		return BackendResponse{}, normalizeSecretError(err)
@@ -360,8 +438,6 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 		return BackendResponse{}, err
 	}
 
-	workspaceUUID := uuidValue(normalized.WorkspaceID)
-	actorUUID := uuidValue(normalized.ActorUserID)
 	defaultID := pgtype.UUID{}
 	var created db.GatewayBackend
 
@@ -399,6 +475,9 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 				return err
 			}
 			defaultID = updatedSettings.DefaultBackendID
+			if err := audit(ctx, q, workspaceUUID, actorUUID, "gateway.default_backend.update", "gateway_workspace_settings", uuidString(workspaceUUID), settings, updatedSettings); err != nil {
+				return err
+			}
 		}
 
 		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.backend.create", "gateway_backend", uuidString(row.ID), nil, backendResponse(row, defaultID))
@@ -414,8 +493,14 @@ func (s *Service) UpdateCapturePolicy(ctx context.Context, input CapturePolicyIn
 		return SettingsResponse{}, err
 	}
 
-	workspaceUUID := uuidValue(input.WorkspaceID)
-	actorUUID := uuidValue(input.ActorUserID)
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return SettingsResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return SettingsResponse{}, err
+	}
 	var updated db.GatewayWorkspaceSetting
 
 	if err := s.withTx(ctx, func(q *db.Queries) error {
@@ -440,8 +525,14 @@ func (s *Service) UpdateCapturePolicy(ctx context.Context, input CapturePolicyIn
 }
 
 func (s *Service) SetDefaultBackend(ctx context.Context, input SetDefaultBackendInput) (SettingsResponse, error) {
-	workspaceUUID := uuidValue(input.WorkspaceID)
-	actorUUID := uuidValue(input.ActorUserID)
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return SettingsResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return SettingsResponse{}, err
+	}
 	var updated db.GatewayWorkspaceSetting
 
 	if err := s.withTx(ctx, func(q *db.Queries) error {
@@ -477,9 +568,18 @@ func (s *Service) SetDefaultBackend(ctx context.Context, input SetDefaultBackend
 }
 
 func (s *Service) UpdateBackend(ctx context.Context, input UpdateBackendInput) (BackendResponse, error) {
-	workspaceUUID := uuidValue(input.WorkspaceID)
-	actorUUID := uuidValue(input.ActorUserID)
-	backendUUID := uuidValue(input.BackendID)
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return BackendResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return BackendResponse{}, err
+	}
+	backendUUID, err := uuidValue(input.BackendID, "backend_id")
+	if err != nil {
+		return BackendResponse{}, err
+	}
 	var updated db.GatewayBackend
 	defaultID := pgtype.UUID{}
 
@@ -568,9 +668,18 @@ func (s *Service) UpdateBackend(ctx context.Context, input UpdateBackendInput) (
 }
 
 func (s *Service) DeleteBackend(ctx context.Context, workspaceID, actorUserID, backendID string) error {
-	workspaceUUID := uuidValue(workspaceID)
-	actorUUID := uuidValue(actorUserID)
-	backendUUID := uuidValue(backendID)
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return err
+	}
+	backendUUID, err := uuidValue(backendID, "backend_id")
+	if err != nil {
+		return err
+	}
 
 	return s.withTx(ctx, func(q *db.Queries) error {
 		current, err := q.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
@@ -645,10 +754,6 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 	}
 
 	return normalized, credential, nil
-}
-
-func (s *Service) getSettingsOrDefault(ctx context.Context, workspaceID string) (db.GatewayWorkspaceSetting, error) {
-	return getSettingsOrDefaultWithQueries(ctx, s.queries, uuidValue(workspaceID))
 }
 
 func getSettingsOrDefaultWithQueries(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID) (db.GatewayWorkspaceSetting, error) {

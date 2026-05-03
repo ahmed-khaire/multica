@@ -3,11 +3,13 @@ package management
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -180,6 +182,19 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 		t.Fatalf("metadata = %+v, want routing default", backend.Metadata)
 	}
 
+	var defaultAuditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM ai_audit_log
+		WHERE workspace_id = $1
+		  AND action = 'gateway.default_backend.update'
+	`, fixture.workspaceID).Scan(&defaultAuditCount); err != nil {
+		t.Fatalf("count default backend audit rows: %v", err)
+	}
+	if defaultAuditCount != 1 {
+		t.Fatalf("default backend audit count = %d, want 1", defaultAuditCount)
+	}
+
 	status, err := svc.Status(ctx, fixture.workspaceID, fixture.userID, "https://api.multica.ai")
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
@@ -218,12 +233,36 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 		SELECT count(*)
 		FROM ai_audit_log
 		WHERE workspace_id = $1
-		  AND action IN ('gateway.backend.create', 'gateway.policy.update')
+		  AND action IN ('gateway.backend.create', 'gateway.default_backend.update', 'gateway.policy.update')
 	`, fixture.workspaceID).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit rows: %v", err)
 	}
-	if auditCount != 2 {
-		t.Fatalf("audit count = %d, want 2", auditCount)
+	if auditCount != 3 {
+		t.Fatalf("audit count = %d, want 3", auditCount)
+	}
+}
+
+func TestManagementServiceSettingsRejectsMalformedWorkspaceID(t *testing.T) {
+	ctx := context.Background()
+	pool := openManagementTestDB(t)
+	svc := NewService(db.New(pool), pool)
+
+	_, err := svc.Settings(ctx, "not-a-uuid")
+	if !errors.Is(err, ErrInvalidGatewayBackend) {
+		t.Fatalf("Settings malformed workspace ID error = %v, want ErrInvalidGatewayBackend", err)
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "23505"})
+	if !isUniqueViolation(err) {
+		t.Fatalf("isUniqueViolation(%v) = false, want true", err)
+	}
+	if isUniqueViolation(&pgconn.PgError{Code: "23503"}) {
+		t.Fatal("isUniqueViolation returned true for non-unique pg error")
+	}
+	if isUniqueViolation(errors.New("plain error")) {
+		t.Fatal("isUniqueViolation returned true for non-pg error")
 	}
 }
 
