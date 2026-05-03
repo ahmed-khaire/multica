@@ -539,6 +539,10 @@ CREATE UNIQUE INDEX idx_gateway_request_session_id
     ON gateway_request(session_id, id);
 CREATE UNIQUE INDEX idx_gateway_span_workspace_id
     ON gateway_span(workspace_id, id);
+CREATE UNIQUE INDEX idx_gateway_span_session_id
+    ON gateway_span(session_id, id);
+CREATE UNIQUE INDEX idx_gateway_span_request_id
+    ON gateway_span(request_id, id);
 CREATE UNIQUE INDEX idx_ai_third_party_risk_workspace_id
     ON ai_third_party_risk(workspace_id, id);
 
@@ -584,7 +588,13 @@ ALTER TABLE gateway_event
     ADD CONSTRAINT gateway_event_request_session_fk
     FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_event_span_workspace_fk
-    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
+    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT gateway_event_span_requires_session
+    CHECK (span_id IS NULL OR session_id IS NOT NULL),
+    ADD CONSTRAINT gateway_event_span_session_fk
+    FOREIGN KEY (session_id, span_id) REFERENCES gateway_span(session_id, id),
+    ADD CONSTRAINT gateway_event_span_request_fk
+    FOREIGN KEY (request_id, span_id) REFERENCES gateway_span(request_id, id);
 
 ALTER TABLE gateway_log
     ADD CONSTRAINT gateway_log_session_workspace_fk
@@ -594,7 +604,13 @@ ALTER TABLE gateway_log
     ADD CONSTRAINT gateway_log_request_session_fk
     FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_log_span_workspace_fk
-    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id);
+    FOREIGN KEY (workspace_id, span_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT gateway_log_span_requires_session
+    CHECK (span_id IS NULL OR session_id IS NOT NULL),
+    ADD CONSTRAINT gateway_log_span_session_fk
+    FOREIGN KEY (session_id, span_id) REFERENCES gateway_span(session_id, id),
+    ADD CONSTRAINT gateway_log_span_request_fk
+    FOREIGN KEY (request_id, span_id) REFERENCES gateway_span(request_id, id);
 
 ALTER TABLE gateway_agent_observation
     ADD CONSTRAINT gateway_agent_observation_session_workspace_fk
