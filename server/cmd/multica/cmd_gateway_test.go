@@ -180,6 +180,57 @@ func TestGatewayAddClaudeOAuthAllowsMissingKey(t *testing.T) {
 	}
 }
 
+func TestGatewayBackendsJSONPreservesMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/backends" {
+			t.Errorf("path = %s, want /api/gateway/backends", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":              "backend-1",
+			"slug":            "groq",
+			"display_name":    "Groq",
+			"backend_type":    "openai_compatible",
+			"base_url":        "https://api.groq.com/openai/v1",
+			"credential_hint": "gsk_...cdef",
+			"enabled":         true,
+			"is_default":      false,
+			"metadata": map[string]any{
+				"region": "iad",
+				"tier":   "prod",
+			},
+		}})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "backends", "--workspace-id", "workspace-1", "--output", "json")
+	if err != nil {
+		t.Fatalf("execute gateway backends: %v", err)
+	}
+
+	var backends []map[string]any
+	if err := json.Unmarshal([]byte(out), &backends); err != nil {
+		t.Fatalf("decode output: %v\noutput: %s", err, out)
+	}
+	if len(backends) != 1 {
+		t.Fatalf("len(backends) = %d, want 1", len(backends))
+	}
+	metadata, ok := backends[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata missing or wrong type in output: %#v", backends[0])
+	}
+	if metadata["region"] != "iad" || metadata["tier"] != "prod" {
+		t.Fatalf("metadata = %#v, want region=iad tier=prod", metadata)
+	}
+}
+
 func gatewayTestRoot(t *testing.T, serverURL string) *cobra.Command {
 	t.Helper()
 	t.Setenv("MULTICA_SERVER_URL", serverURL)

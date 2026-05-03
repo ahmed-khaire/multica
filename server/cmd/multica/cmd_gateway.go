@@ -97,16 +97,17 @@ func init() {
 }
 
 type gatewayBackendDTO struct {
-	ID             string `json:"id"`
-	Slug           string `json:"slug"`
-	DisplayName    string `json:"display_name"`
-	BackendType    string `json:"backend_type"`
-	BaseURL        string `json:"base_url"`
-	CredentialHint string `json:"credential_hint"`
-	Enabled        bool   `json:"enabled"`
-	IsDefault      bool   `json:"is_default"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID             string         `json:"id"`
+	Slug           string         `json:"slug"`
+	DisplayName    string         `json:"display_name"`
+	BackendType    string         `json:"backend_type"`
+	BaseURL        string         `json:"base_url"`
+	CredentialHint string         `json:"credential_hint"`
+	Enabled        bool           `json:"enabled"`
+	IsDefault      bool           `json:"is_default"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
 }
 
 type gatewayStatusDTO struct {
