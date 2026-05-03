@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 func TestGatewayCommandTree(t *testing.T) {
@@ -25,6 +24,21 @@ func TestGatewayCommandTree(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
 			}
 		})
+	}
+}
+
+func TestGatewayTestRootDoesNotReparentProductionCommand(t *testing.T) {
+	if gatewayCmd.Parent() != rootCmd {
+		t.Fatalf("gatewayCmd parent before helper = %p, want rootCmd %p", gatewayCmd.Parent(), rootCmd)
+	}
+
+	root := gatewayTestRoot(t, "http://127.0.0.1")
+	if _, err := executeGatewayTestCommand(root, "gateway", "--help"); err != nil {
+		t.Fatalf("execute gateway help: %v", err)
+	}
+
+	if gatewayCmd.Parent() != rootCmd {
+		t.Fatalf("gatewayCmd parent after helper execution = %p, want rootCmd %p", gatewayCmd.Parent(), rootCmd)
 	}
 }
 
@@ -252,7 +266,6 @@ func gatewayTestRoot(t *testing.T, serverURL string) *cobra.Command {
 	t.Helper()
 	t.Setenv("MULTICA_SERVER_URL", serverURL)
 	t.Setenv("HOME", t.TempDir())
-	resetGatewayCommandFlags(t)
 
 	root := &cobra.Command{
 		Use:           "multica",
@@ -263,7 +276,10 @@ func gatewayTestRoot(t *testing.T, serverURL string) *cobra.Command {
 	root.PersistentFlags().String("workspace-id", "", "")
 	root.PersistentFlags().String("profile", "", "")
 	root.AddGroup(&cobra.Group{ID: groupCore, Title: "CORE COMMANDS"})
-	root.AddCommand(gatewayCmd)
+
+	gateway := newGatewayCommand()
+	gateway.GroupID = groupCore
+	root.AddCommand(gateway)
 	return root
 }
 
@@ -279,22 +295,4 @@ func executeGatewayTestCommand(root *cobra.Command, args ...string) (string, err
 		return errOut.String(), err
 	}
 	return out.String(), err
-}
-
-func resetGatewayCommandFlags(t *testing.T) {
-	t.Helper()
-
-	var reset func(cmd *cobra.Command)
-	reset = func(cmd *cobra.Command) {
-		cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-			if err := flag.Value.Set(flag.DefValue); err != nil {
-				t.Fatalf("reset flag %s: %v", flag.Name, err)
-			}
-			flag.Changed = false
-		})
-		for _, child := range cmd.Commands() {
-			reset(child)
-		}
-	}
-	reset(gatewayCmd)
 }

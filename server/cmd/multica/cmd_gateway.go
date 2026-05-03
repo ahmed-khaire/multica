@@ -13,87 +13,91 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-var gatewayCmd = &cobra.Command{
-	Use:   "gateway",
-	Short: "Manage Observer Gateway keys and backends",
-}
+var gatewayCmd = newGatewayCommand()
 
-var gatewayStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show Observer Gateway status",
-	RunE:  runGatewayStatus,
-}
+func newGatewayCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "gateway",
+		Short: "Manage Observer Gateway keys and backends",
+	}
 
-var gatewayKeyCmd = &cobra.Command{
-	Use:   "key",
-	Short: "Create or print your Observer Gateway key",
-	RunE:  runGatewayKey,
-}
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show Observer Gateway status",
+		RunE:  runGatewayStatus,
+	}
 
-var gatewayKeysCmd = &cobra.Command{
-	Use:   "keys",
-	Short: "List your Observer Gateway keys",
-	RunE:  runGatewayKeys,
-}
+	keyCmd := &cobra.Command{
+		Use:   "key",
+		Short: "Create or print your Observer Gateway key",
+		RunE:  runGatewayKey,
+	}
 
-var gatewayRevokeCmd = &cobra.Command{
-	Use:   "revoke <key-id>",
-	Short: "Revoke an Observer Gateway key",
-	Args:  exactArgs(1),
-	RunE:  runGatewayRevoke,
-}
+	keysCmd := &cobra.Command{
+		Use:   "keys",
+		Short: "List your Observer Gateway keys",
+		RunE:  runGatewayKeys,
+	}
 
-var gatewayAddCmd = &cobra.Command{
-	Use:   "add <provider>",
-	Short: "Add an Observer Gateway backend",
-	Args:  exactArgs(1),
-	RunE:  runGatewayAdd,
-}
+	revokeCmd := &cobra.Command{
+		Use:   "revoke <key-id>",
+		Short: "Revoke an Observer Gateway key",
+		Args:  exactArgs(1),
+		RunE:  runGatewayRevoke,
+	}
 
-var gatewayBackendsCmd = &cobra.Command{
-	Use:   "backends",
-	Short: "List Observer Gateway backends",
-	RunE:  runGatewayBackends,
-}
+	addCmd := &cobra.Command{
+		Use:   "add <provider>",
+		Short: "Add an Observer Gateway backend",
+		Args:  exactArgs(1),
+		RunE:  runGatewayAdd,
+	}
 
-var gatewayDefaultCmd = &cobra.Command{
-	Use:   "default <backend-slug>",
-	Short: "Set the default Observer Gateway backend",
-	Args:  exactArgs(1),
-	RunE:  runGatewayDefault,
-}
+	backendsCmd := &cobra.Command{
+		Use:   "backends",
+		Short: "List Observer Gateway backends",
+		RunE:  runGatewayBackends,
+	}
 
-var gatewayPolicyCmd = &cobra.Command{
-	Use:   "policy <capture-policy>",
-	Short: "Set the Observer Gateway capture policy",
-	Args:  exactArgs(1),
-	RunE:  runGatewayPolicy,
-}
+	defaultCmd := &cobra.Command{
+		Use:   "default <backend-slug>",
+		Short: "Set the default Observer Gateway backend",
+		Args:  exactArgs(1),
+		RunE:  runGatewayDefault,
+	}
 
-func init() {
-	gatewayCmd.AddCommand(gatewayStatusCmd)
-	gatewayCmd.AddCommand(gatewayKeyCmd)
-	gatewayCmd.AddCommand(gatewayKeysCmd)
-	gatewayCmd.AddCommand(gatewayRevokeCmd)
-	gatewayCmd.AddCommand(gatewayAddCmd)
-	gatewayCmd.AddCommand(gatewayBackendsCmd)
-	gatewayCmd.AddCommand(gatewayDefaultCmd)
-	gatewayCmd.AddCommand(gatewayPolicyCmd)
+	policyCmd := &cobra.Command{
+		Use:   "policy <capture-policy>",
+		Short: "Set the Observer Gateway capture policy",
+		Args:  exactArgs(1),
+		RunE:  runGatewayPolicy,
+	}
 
-	gatewayStatusCmd.Flags().String("output", "table", "Output format: table or json")
-	gatewayKeyCmd.Flags().String("output", "env", "Output format: env or json")
-	gatewayKeysCmd.Flags().String("output", "table", "Output format: table or json")
+	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(keyCmd)
+	cmd.AddCommand(keysCmd)
+	cmd.AddCommand(revokeCmd)
+	cmd.AddCommand(addCmd)
+	cmd.AddCommand(backendsCmd)
+	cmd.AddCommand(defaultCmd)
+	cmd.AddCommand(policyCmd)
 
-	gatewayAddCmd.Flags().String("key", "", "Upstream provider API key")
-	gatewayAddCmd.Flags().String("base-url", "", "Upstream provider base URL")
-	gatewayAddCmd.Flags().String("name", "", "Backend display name")
-	gatewayAddCmd.Flags().String("slug", "", "Backend slug")
-	gatewayAddCmd.Flags().Bool("set-default", false, "Set this backend as the workspace default")
-	gatewayAddCmd.Flags().String("output", "table", "Output format: table or json")
+	statusCmd.Flags().String("output", "table", "Output format: table or json")
+	keyCmd.Flags().String("output", "env", "Output format: env or json")
+	keysCmd.Flags().String("output", "table", "Output format: table or json")
 
-	gatewayBackendsCmd.Flags().String("output", "table", "Output format: table or json")
-	gatewayDefaultCmd.Flags().String("output", "table", "Output format: table or json")
-	gatewayPolicyCmd.Flags().String("output", "table", "Output format: table or json")
+	addCmd.Flags().String("key", "", "Upstream provider API key")
+	addCmd.Flags().String("base-url", "", "Upstream provider base URL")
+	addCmd.Flags().String("name", "", "Backend display name")
+	addCmd.Flags().String("slug", "", "Backend slug")
+	addCmd.Flags().Bool("set-default", false, "Set this backend as the workspace default")
+	addCmd.Flags().String("output", "table", "Output format: table or json")
+
+	backendsCmd.Flags().String("output", "table", "Output format: table or json")
+	defaultCmd.Flags().String("output", "table", "Output format: table or json")
+	policyCmd.Flags().String("output", "table", "Output format: table or json")
+
+	return cmd
 }
 
 type gatewayBackendDTO struct {
