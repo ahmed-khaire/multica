@@ -1442,6 +1442,7 @@ These decisions are locked for the first implementation plan unless the written 
 
 ## References Reviewed
 
+- Related future-feature backlog: `docs/superpowers/specs/2026-05-03-dario-agentops-feature-backlog.md`
 - NIST AI RMF: `https://www.nist.gov/itl/ai-risk-management-framework`
 - NIST AI 600-1 Generative AI Profile: `https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence`
 - ISO/IEC 42001: `https://www.iso.org/standard/42001`
