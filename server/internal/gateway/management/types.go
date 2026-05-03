@@ -28,52 +28,52 @@ type GatewayURLs struct {
 }
 
 type BackendResponse struct {
-	ID             string
-	Slug           string
-	DisplayName    string
-	BackendType    string
-	BaseURL        string
-	CredentialHint string
-	Enabled        bool
-	IsDefault      bool
-	Metadata       map[string]any
-	CreatedAt      string
-	UpdatedAt      string
+	ID             string         `json:"id"`
+	Slug           string         `json:"slug"`
+	DisplayName    string         `json:"display_name"`
+	BackendType    string         `json:"backend_type"`
+	BaseURL        string         `json:"base_url"`
+	CredentialHint string         `json:"credential_hint"`
+	Enabled        bool           `json:"enabled"`
+	IsDefault      bool           `json:"is_default"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
 }
 
 type SettingsResponse struct {
-	CapturePolicy  string
-	DefaultBackend *BackendResponse
+	CapturePolicy  string           `json:"capture_policy"`
+	DefaultBackend *BackendResponse `json:"default_backend"`
 }
 
 type StatusResponse struct {
-	OpenAIBaseURL       string
-	AnthropicBaseURL    string
-	CapturePolicy       string
-	DefaultBackend      *BackendResponse
-	BackendCount        int
-	EnabledBackendCount int
-	HasActiveKey        bool
+	OpenAIBaseURL       string           `json:"openai_base_url"`
+	AnthropicBaseURL    string           `json:"anthropic_base_url"`
+	CapturePolicy       string           `json:"capture_policy"`
+	DefaultBackend      *BackendResponse `json:"default_backend"`
+	BackendCount        int              `json:"backend_count"`
+	EnabledBackendCount int              `json:"enabled_backend_count"`
+	HasActiveKey        bool             `json:"has_active_key"`
 }
 
 type UserKeyResponse struct {
-	ID               string
-	Key              string
-	KeyPrefix        string
-	OpenAIBaseURL    string
-	OpenAIAPIKey     string
-	AnthropicBaseURL string
-	AnthropicAPIKey  string
-	CreatedAt        string
-	LastUsedAt       *string
+	ID               string  `json:"id"`
+	Key              string  `json:"key"`
+	KeyPrefix        string  `json:"key_prefix"`
+	OpenAIBaseURL    string  `json:"openai_base_url"`
+	OpenAIAPIKey     string  `json:"openai_api_key"`
+	AnthropicBaseURL string  `json:"anthropic_base_url"`
+	AnthropicAPIKey  string  `json:"anthropic_api_key"`
+	CreatedAt        string  `json:"created_at"`
+	LastUsedAt       *string `json:"last_used_at"`
 }
 
 type UserKeyListItem struct {
-	ID         string
-	KeyPrefix  string
-	RevokedAt  *string
-	LastUsedAt *string
-	CreatedAt  string
+	ID         string  `json:"id"`
+	KeyPrefix  string  `json:"key_prefix"`
+	RevokedAt  *string `json:"revoked_at"`
+	LastUsedAt *string `json:"last_used_at"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 type CreateBackendInput struct {
@@ -141,7 +141,7 @@ var providerPresets = map[string]ProviderPreset{
 	"local": {
 		Provider:           "local",
 		Slug:               "local",
-		DisplayName:        "Local",
+		DisplayName:        "Local OpenAI-compatible",
 		BackendType:        BackendTypeOpenAICompatible,
 		BaseURL:            "http://127.0.0.1:11434/v1",
 		RequiresCredential: true,
