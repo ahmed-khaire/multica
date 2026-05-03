@@ -43,10 +43,11 @@ type RequestSummary struct {
 }
 
 type ProxyResult struct {
-	StatusCode          int
+	StatusCode         int
 	Status             string
 	ErrorType          string
 	ErrorMessage       string
+	DurationMS         int64
 	ResponseBody       []byte
 	ResponseJSON       map[string]any
 	Streaming          bool

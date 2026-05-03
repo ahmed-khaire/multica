@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
+	"github.com/multica-ai/multica/server/internal/gateway/proxy"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -41,6 +42,7 @@ type Handler struct {
 	TaskService  *service.TaskService
 	EmailService *service.EmailService
 	Gateway      *management.Service
+	GatewayProxy *proxy.Service
 	PingStore    *PingStore
 	UpdateStore  *UpdateStore
 	Storage      *storage.S3Storage
@@ -62,6 +64,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TaskService:  service.NewTaskService(queries, hub, bus),
 		EmailService: emailService,
 		Gateway:      management.NewService(queries, txStarter),
+		GatewayProxy: proxy.NewService(queries, http.DefaultClient),
 		PingStore:    NewPingStore(),
 		UpdateStore:  NewUpdateStore(),
 		Storage:      s3,

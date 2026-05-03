@@ -40,6 +40,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 		return ProxyResult{}, err
 	}
 
+	start := time.Now()
 	resp, err := f.Client.Do(upstreamReq)
 	if err != nil {
 		return ProxyResult{
@@ -59,6 +60,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 		result.StatusCode = resp.StatusCode
 		result.Status = statusForHTTP(resp.StatusCode)
 		result.Streaming = true
+		result.DurationMS = time.Since(start).Milliseconds()
 		return result, err
 	}
 
@@ -77,6 +79,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 		Status:          statusForHTTP(resp.StatusCode),
 		ResponseBody:    body,
 		ResponseJSON:    decodeObject(body),
+		DurationMS:      time.Since(start).Milliseconds(),
 		Streaming:       false,
 		ErrorType:       errorTypeForHTTP(resp.StatusCode),
 		ErrorMessage:    "",
