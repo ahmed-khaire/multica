@@ -616,13 +616,17 @@ ALTER TABLE gateway_agent_observation
     ADD CONSTRAINT gateway_agent_observation_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_agent_observation_span_workspace_fk
-    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT gateway_agent_observation_span_session_fk
+    FOREIGN KEY (session_id, span_row_id) REFERENCES gateway_span(session_id, id);
 
 ALTER TABLE gateway_tool_observation
     ADD CONSTRAINT gateway_tool_observation_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_tool_observation_span_workspace_fk
-    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT gateway_tool_observation_span_session_fk
+    FOREIGN KEY (session_id, span_row_id) REFERENCES gateway_span(session_id, id);
 
 ALTER TABLE gateway_metric_rollup
     ADD CONSTRAINT gateway_metric_rollup_backend_workspace_fk
@@ -637,10 +641,16 @@ ALTER TABLE gateway_policy_decision
     FOREIGN KEY (workspace_id, subject_agent_id) REFERENCES agent(workspace_id, id),
     ADD CONSTRAINT gateway_policy_decision_request_workspace_fk
     FOREIGN KEY (workspace_id, request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_request_session_fk
+    FOREIGN KEY (session_id, request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT gateway_policy_decision_session_workspace_fk
     FOREIGN KEY (workspace_id, session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT gateway_policy_decision_span_workspace_fk
-    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id);
+    FOREIGN KEY (workspace_id, span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT gateway_policy_decision_span_session_fk
+    FOREIGN KEY (session_id, span_row_id) REFERENCES gateway_span(session_id, id),
+    ADD CONSTRAINT gateway_policy_decision_span_request_fk
+    FOREIGN KEY (request_id, span_row_id) REFERENCES gateway_span(request_id, id);
 
 ALTER TABLE ai_third_party_risk
     ADD CONSTRAINT ai_third_party_risk_backend_workspace_fk
@@ -649,10 +659,16 @@ ALTER TABLE ai_third_party_risk
 ALTER TABLE ai_evidence
     ADD CONSTRAINT ai_evidence_request_workspace_fk
     FOREIGN KEY (workspace_id, linked_request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_request_session_fk
+    FOREIGN KEY (linked_session_id, linked_request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT ai_evidence_session_workspace_fk
     FOREIGN KEY (workspace_id, linked_session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT ai_evidence_span_workspace_fk
     FOREIGN KEY (workspace_id, linked_span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT ai_evidence_span_session_fk
+    FOREIGN KEY (linked_session_id, linked_span_row_id) REFERENCES gateway_span(session_id, id),
+    ADD CONSTRAINT ai_evidence_span_request_fk
+    FOREIGN KEY (linked_request_id, linked_span_row_id) REFERENCES gateway_span(request_id, id),
     ADD CONSTRAINT ai_evidence_policy_workspace_fk
     FOREIGN KEY (workspace_id, linked_policy_id) REFERENCES gateway_policy(workspace_id, id),
     ADD CONSTRAINT ai_evidence_backend_workspace_fk
@@ -667,10 +683,16 @@ ALTER TABLE ai_policy_exception
 ALTER TABLE ai_incident
     ADD CONSTRAINT ai_incident_request_workspace_fk
     FOREIGN KEY (workspace_id, linked_request_id) REFERENCES gateway_request(workspace_id, id),
+    ADD CONSTRAINT ai_incident_request_session_fk
+    FOREIGN KEY (linked_session_id, linked_request_id) REFERENCES gateway_request(session_id, id),
     ADD CONSTRAINT ai_incident_session_workspace_fk
     FOREIGN KEY (workspace_id, linked_session_id) REFERENCES gateway_session(workspace_id, id),
     ADD CONSTRAINT ai_incident_span_workspace_fk
     FOREIGN KEY (workspace_id, linked_span_row_id) REFERENCES gateway_span(workspace_id, id),
+    ADD CONSTRAINT ai_incident_span_session_fk
+    FOREIGN KEY (linked_session_id, linked_span_row_id) REFERENCES gateway_span(session_id, id),
+    ADD CONSTRAINT ai_incident_span_request_fk
+    FOREIGN KEY (linked_request_id, linked_span_row_id) REFERENCES gateway_span(request_id, id),
     ADD CONSTRAINT ai_incident_policy_workspace_fk
     FOREIGN KEY (workspace_id, linked_policy_id) REFERENCES gateway_policy(workspace_id, id),
     ADD CONSTRAINT ai_incident_provider_risk_workspace_fk
