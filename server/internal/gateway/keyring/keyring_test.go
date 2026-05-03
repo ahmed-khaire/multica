@@ -3,6 +3,7 @@ package keyring
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -32,6 +33,13 @@ func TestGenerateGatewayKeyFormat(t *testing.T) {
 	if len(key) != len(Prefix)+40 {
 		t.Fatalf("unexpected key length: %d", len(key))
 	}
+	suffix := strings.TrimPrefix(key, Prefix)
+	if len(suffix) != 40 {
+		t.Fatalf("unexpected key suffix length: %d", len(suffix))
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Fatalf("expected hex suffix, got %q: %v", suffix, err)
+	}
 }
 
 func TestPrepareGatewayKeyStoresHashAndEncryptedValue(t *testing.T) {
@@ -46,6 +54,9 @@ func TestPrepareGatewayKeyStoresHashAndEncryptedValue(t *testing.T) {
 	}
 	if prepared.Hash == "" || prepared.Hash == prepared.Raw {
 		t.Fatalf("invalid hash: %q", prepared.Hash)
+	}
+	if prepared.Hash != HashGatewayKey(prepared.Raw) {
+		t.Fatalf("hash mismatch: got %q want %q", prepared.Hash, HashGatewayKey(prepared.Raw))
 	}
 	if prepared.DisplayPrefix != prepared.Raw[:12] {
 		t.Fatalf("display prefix mismatch: got %q want %q", prepared.DisplayPrefix, prepared.Raw[:12])
