@@ -683,7 +683,7 @@ Do not adopt these without a focused review:
 - making Claude OAuth routing invisible or automatic;
 - implementing provider impersonation or wire-fidelity logic outside the isolated `claude-oauth` adapter;
 - exposing mutating Gateway/Governance operations through MCP or diagnostic agents in the first version;
-- capturing full prompt, completion, tool input/output, logs, or artifacts by default;
+- deploying `full_content` defaults without clear admin-facing retention, access-control, and enterprise data-handling guidance;
 - treating user-supplied app IDs, agent IDs, or correlation headers as authorization.
 
 ## Source Files Reviewed

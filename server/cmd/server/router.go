@@ -97,6 +97,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Get("/models", h.GatewayModels)
 		r.Post("/chat/completions", h.GatewayOpenAIChatCompletions)
 		r.Post("/messages", h.GatewayAnthropicMessages)
+		r.Post("/traces", h.PostGatewayTraceIngest)
 	})
 
 	// Daemon API routes (all require a valid token)

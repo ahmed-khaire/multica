@@ -244,6 +244,76 @@ INSERT INTO gateway_span (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING *;
 
+-- name: UpsertGatewaySessionForIngest :one
+INSERT INTO gateway_session (
+    workspace_id, user_id, trace_id, root_span_id,
+    name, client_protocol, client_tool_hint, service_name, tags,
+    status, started_at, ended_at, duration_ms, resource_attributes
+)
+VALUES (
+    $1, $2, $3, $4,
+    $5, 'multica_trace', $6, $7, $8,
+    $9, $10, $11, $12, $13
+)
+ON CONFLICT (workspace_id, trace_id)
+DO UPDATE SET
+    user_id = COALESCE(EXCLUDED.user_id, gateway_session.user_id),
+    root_span_id = COALESCE(NULLIF(EXCLUDED.root_span_id, ''), gateway_session.root_span_id),
+    name = EXCLUDED.name,
+    client_protocol = 'multica_trace',
+    client_tool_hint = EXCLUDED.client_tool_hint,
+    service_name = EXCLUDED.service_name,
+    tags = EXCLUDED.tags,
+    status = EXCLUDED.status,
+    started_at = LEAST(gateway_session.started_at, EXCLUDED.started_at),
+    ended_at = COALESCE(EXCLUDED.ended_at, gateway_session.ended_at),
+    duration_ms = COALESCE(EXCLUDED.duration_ms, gateway_session.duration_ms),
+    resource_attributes = EXCLUDED.resource_attributes
+RETURNING *;
+
+-- name: UpsertGatewaySpanForIngest :one
+INSERT INTO gateway_span (
+    session_id, request_id, workspace_id, trace_id, span_id, parent_span_id,
+    span_kind, name, service_name, status_code, status_message,
+    started_at, ended_at, duration_ms, attributes, resource_attributes
+)
+VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT (workspace_id, trace_id, span_id)
+DO UPDATE SET
+    session_id = EXCLUDED.session_id,
+    parent_span_id = EXCLUDED.parent_span_id,
+    span_kind = EXCLUDED.span_kind,
+    name = EXCLUDED.name,
+    service_name = EXCLUDED.service_name,
+    status_code = EXCLUDED.status_code,
+    status_message = EXCLUDED.status_message,
+    started_at = EXCLUDED.started_at,
+    ended_at = EXCLUDED.ended_at,
+    duration_ms = EXCLUDED.duration_ms,
+    attributes = EXCLUDED.attributes,
+    resource_attributes = EXCLUDED.resource_attributes
+RETURNING *;
+
+-- name: GetGatewaySpanByTraceSpanID :one
+SELECT * FROM gateway_span
+WHERE workspace_id = $1 AND trace_id = $2 AND span_id = $3;
+
+-- name: RefreshGatewaySessionIngestSummary :one
+UPDATE gateway_session
+SET
+    span_count = (
+        SELECT count(*)::int
+        FROM gateway_span
+        WHERE gateway_span.workspace_id = $1 AND gateway_span.session_id = $2
+    ),
+    error_count = (
+        SELECT count(*)::int
+        FROM gateway_span
+        WHERE gateway_span.workspace_id = $1 AND gateway_span.session_id = $2 AND gateway_span.status_code = 'error'
+    )
+WHERE gateway_session.workspace_id = $1 AND gateway_session.id = $2
+RETURNING *;
+
 -- name: ListGatewaySpansForSession :many
 SELECT * FROM gateway_span
 WHERE workspace_id = $1 AND session_id = $2

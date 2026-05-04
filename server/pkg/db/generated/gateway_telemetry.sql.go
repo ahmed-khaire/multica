@@ -798,6 +798,43 @@ func (q *Queries) GetGatewaySession(ctx context.Context, arg GetGatewaySessionPa
 	return i, err
 }
 
+const getGatewaySpanByTraceSpanID = `-- name: GetGatewaySpanByTraceSpanID :one
+SELECT id, session_id, request_id, workspace_id, trace_id, span_id, parent_span_id, span_kind, name, service_name, status_code, status_message, started_at, ended_at, duration_ms, attributes, resource_attributes, created_at FROM gateway_span
+WHERE workspace_id = $1 AND trace_id = $2 AND span_id = $3
+`
+
+type GetGatewaySpanByTraceSpanIDParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	TraceID     string      `json:"trace_id"`
+	SpanID      string      `json:"span_id"`
+}
+
+func (q *Queries) GetGatewaySpanByTraceSpanID(ctx context.Context, arg GetGatewaySpanByTraceSpanIDParams) (GatewaySpan, error) {
+	row := q.db.QueryRow(ctx, getGatewaySpanByTraceSpanID, arg.WorkspaceID, arg.TraceID, arg.SpanID)
+	var i GatewaySpan
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.RequestID,
+		&i.WorkspaceID,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.SpanKind,
+		&i.Name,
+		&i.ServiceName,
+		&i.StatusCode,
+		&i.StatusMessage,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Attributes,
+		&i.ResourceAttributes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listGatewayAgentObservationsForSession = `-- name: ListGatewayAgentObservationsForSession :many
 SELECT id, workspace_id, session_id, span_row_id, agent_id, agent_name, role, models, tools, handoff_source, handoff_destination, reasoning_summary, created_at FROM gateway_agent_observation
 WHERE workspace_id = $1 AND session_id = $2
@@ -1765,6 +1802,56 @@ func (q *Queries) ListGatewayTopModels(ctx context.Context, arg ListGatewayTopMo
 	return items, nil
 }
 
+const refreshGatewaySessionIngestSummary = `-- name: RefreshGatewaySessionIngestSummary :one
+UPDATE gateway_session
+SET
+    span_count = (
+        SELECT count(*)::int
+        FROM gateway_span
+        WHERE gateway_span.workspace_id = $1 AND gateway_span.session_id = $2
+    ),
+    error_count = (
+        SELECT count(*)::int
+        FROM gateway_span
+        WHERE gateway_span.workspace_id = $1 AND gateway_span.session_id = $2 AND gateway_span.status_code = 'error'
+    )
+WHERE gateway_session.workspace_id = $1 AND gateway_session.id = $2
+RETURNING id, workspace_id, user_id, agent_id, task_id, trace_id, root_span_id, name, client_protocol, client_tool_hint, service_name, tags, status, started_at, ended_at, duration_ms, span_count, error_count, total_cost, resource_attributes
+`
+
+type RefreshGatewaySessionIngestSummaryParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) RefreshGatewaySessionIngestSummary(ctx context.Context, arg RefreshGatewaySessionIngestSummaryParams) (GatewaySession, error) {
+	row := q.db.QueryRow(ctx, refreshGatewaySessionIngestSummary, arg.WorkspaceID, arg.SessionID)
+	var i GatewaySession
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.AgentID,
+		&i.TaskID,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.Name,
+		&i.ClientProtocol,
+		&i.ClientToolHint,
+		&i.ServiceName,
+		&i.Tags,
+		&i.Status,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.SpanCount,
+		&i.ErrorCount,
+		&i.TotalCost,
+		&i.ResourceAttributes,
+	)
+	return i, err
+}
+
 const upsertGatewayMetricRollup = `-- name: UpsertGatewayMetricRollup :one
 INSERT INTO gateway_metric_rollup (
     workspace_id, bucket_start, bucket_width, user_id, backend_id, model, agent_id,
@@ -1847,6 +1934,176 @@ func (q *Queries) UpsertGatewayMetricRollup(ctx context.Context, arg UpsertGatew
 		&i.LatencyP50Ms,
 		&i.LatencyP95Ms,
 		&i.LatencyP99Ms,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertGatewaySessionForIngest = `-- name: UpsertGatewaySessionForIngest :one
+INSERT INTO gateway_session (
+    workspace_id, user_id, trace_id, root_span_id,
+    name, client_protocol, client_tool_hint, service_name, tags,
+    status, started_at, ended_at, duration_ms, resource_attributes
+)
+VALUES (
+    $1, $2, $3, $4,
+    $5, 'multica_trace', $6, $7, $8,
+    $9, $10, $11, $12, $13
+)
+ON CONFLICT (workspace_id, trace_id)
+DO UPDATE SET
+    user_id = COALESCE(EXCLUDED.user_id, gateway_session.user_id),
+    root_span_id = COALESCE(NULLIF(EXCLUDED.root_span_id, ''), gateway_session.root_span_id),
+    name = EXCLUDED.name,
+    client_protocol = 'multica_trace',
+    client_tool_hint = EXCLUDED.client_tool_hint,
+    service_name = EXCLUDED.service_name,
+    tags = EXCLUDED.tags,
+    status = EXCLUDED.status,
+    started_at = LEAST(gateway_session.started_at, EXCLUDED.started_at),
+    ended_at = COALESCE(EXCLUDED.ended_at, gateway_session.ended_at),
+    duration_ms = COALESCE(EXCLUDED.duration_ms, gateway_session.duration_ms),
+    resource_attributes = EXCLUDED.resource_attributes
+RETURNING id, workspace_id, user_id, agent_id, task_id, trace_id, root_span_id, name, client_protocol, client_tool_hint, service_name, tags, status, started_at, ended_at, duration_ms, span_count, error_count, total_cost, resource_attributes
+`
+
+type UpsertGatewaySessionForIngestParams struct {
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	TraceID            string             `json:"trace_id"`
+	RootSpanID         pgtype.Text        `json:"root_span_id"`
+	Name               string             `json:"name"`
+	ClientToolHint     string             `json:"client_tool_hint"`
+	ServiceName        string             `json:"service_name"`
+	Tags               []byte             `json:"tags"`
+	Status             string             `json:"status"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	DurationMs         pgtype.Int8        `json:"duration_ms"`
+	ResourceAttributes []byte             `json:"resource_attributes"`
+}
+
+func (q *Queries) UpsertGatewaySessionForIngest(ctx context.Context, arg UpsertGatewaySessionForIngestParams) (GatewaySession, error) {
+	row := q.db.QueryRow(ctx, upsertGatewaySessionForIngest,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.TraceID,
+		arg.RootSpanID,
+		arg.Name,
+		arg.ClientToolHint,
+		arg.ServiceName,
+		arg.Tags,
+		arg.Status,
+		arg.StartedAt,
+		arg.EndedAt,
+		arg.DurationMs,
+		arg.ResourceAttributes,
+	)
+	var i GatewaySession
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.AgentID,
+		&i.TaskID,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.Name,
+		&i.ClientProtocol,
+		&i.ClientToolHint,
+		&i.ServiceName,
+		&i.Tags,
+		&i.Status,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.SpanCount,
+		&i.ErrorCount,
+		&i.TotalCost,
+		&i.ResourceAttributes,
+	)
+	return i, err
+}
+
+const upsertGatewaySpanForIngest = `-- name: UpsertGatewaySpanForIngest :one
+INSERT INTO gateway_span (
+    session_id, request_id, workspace_id, trace_id, span_id, parent_span_id,
+    span_kind, name, service_name, status_code, status_message,
+    started_at, ended_at, duration_ms, attributes, resource_attributes
+)
+VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT (workspace_id, trace_id, span_id)
+DO UPDATE SET
+    session_id = EXCLUDED.session_id,
+    parent_span_id = EXCLUDED.parent_span_id,
+    span_kind = EXCLUDED.span_kind,
+    name = EXCLUDED.name,
+    service_name = EXCLUDED.service_name,
+    status_code = EXCLUDED.status_code,
+    status_message = EXCLUDED.status_message,
+    started_at = EXCLUDED.started_at,
+    ended_at = EXCLUDED.ended_at,
+    duration_ms = EXCLUDED.duration_ms,
+    attributes = EXCLUDED.attributes,
+    resource_attributes = EXCLUDED.resource_attributes
+RETURNING id, session_id, request_id, workspace_id, trace_id, span_id, parent_span_id, span_kind, name, service_name, status_code, status_message, started_at, ended_at, duration_ms, attributes, resource_attributes, created_at
+`
+
+type UpsertGatewaySpanForIngestParams struct {
+	SessionID          pgtype.UUID        `json:"session_id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TraceID            string             `json:"trace_id"`
+	SpanID             string             `json:"span_id"`
+	ParentSpanID       pgtype.Text        `json:"parent_span_id"`
+	SpanKind           string             `json:"span_kind"`
+	Name               string             `json:"name"`
+	ServiceName        string             `json:"service_name"`
+	StatusCode         string             `json:"status_code"`
+	StatusMessage      string             `json:"status_message"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	DurationMs         pgtype.Int8        `json:"duration_ms"`
+	Attributes         []byte             `json:"attributes"`
+	ResourceAttributes []byte             `json:"resource_attributes"`
+}
+
+func (q *Queries) UpsertGatewaySpanForIngest(ctx context.Context, arg UpsertGatewaySpanForIngestParams) (GatewaySpan, error) {
+	row := q.db.QueryRow(ctx, upsertGatewaySpanForIngest,
+		arg.SessionID,
+		arg.WorkspaceID,
+		arg.TraceID,
+		arg.SpanID,
+		arg.ParentSpanID,
+		arg.SpanKind,
+		arg.Name,
+		arg.ServiceName,
+		arg.StatusCode,
+		arg.StatusMessage,
+		arg.StartedAt,
+		arg.EndedAt,
+		arg.DurationMs,
+		arg.Attributes,
+		arg.ResourceAttributes,
+	)
+	var i GatewaySpan
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.RequestID,
+		&i.WorkspaceID,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.SpanKind,
+		&i.Name,
+		&i.ServiceName,
+		&i.StatusCode,
+		&i.StatusMessage,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Attributes,
+		&i.ResourceAttributes,
 		&i.CreatedAt,
 	)
 	return i, err

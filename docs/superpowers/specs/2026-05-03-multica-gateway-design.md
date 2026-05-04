@@ -73,7 +73,7 @@ Milestone 1 includes:
 - Anthropic Messages endpoint support;
 - streaming support for both OpenAI-compatible and Anthropic-compatible endpoints from day one;
 - admin default backend plus optional `provider:model` routing prefix;
-- workspace capture policy with default `redacted_content`;
+- workspace capture policy with default `full_content`;
 - PostgreSQL telemetry storage;
 - AgentOps-inspired tracking for sessions/traces, spans, LLM calls, tools, agents, operations, logs, metrics, and costs;
 - lightweight TypeScript and Python SDKs for trace context, gateway header injection, explicit spans, logs, artifacts, and policy context;
@@ -681,7 +681,7 @@ multica gateway add anthropic --key=sk-ant-...
 multica gateway add claude-oauth
 multica gateway backends
 multica gateway default <backend-slug>
-multica gateway policy redacted_content
+multica gateway policy full_content
 ```
 
 The CLI should use existing config resolution for `--server-url`, `--workspace-id`, and `--profile`.
@@ -770,7 +770,7 @@ Capture policy is workspace-scoped. The milestone 1 allowed values are:
 - `redacted_content`
 - `full_content`
 
-Default: `redacted_content`.
+Default: `full_content`.
 
 `metadata_only` records request metadata, backend, model, status, latency, usage, cost, and error details, but not prompt or completion content.
 
@@ -778,7 +778,7 @@ Default: `redacted_content`.
 
 Implementation should reuse and extend the existing `server/pkg/redact` package instead of introducing a separate redaction path.
 
-`full_content` records prompts, completions, tool payloads, and logs. It must be admin-selected.
+`full_content` records prompts, completions, tool payloads, and logs. It is the default for new workspaces, and workspace admins can lower capture to `redacted_content` or `metadata_only` when enterprise policy requires stricter content minimization.
 
 All policies record enough metadata to support usage analytics and operational debugging.
 

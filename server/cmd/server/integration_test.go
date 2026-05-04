@@ -505,6 +505,51 @@ func TestGatewayRouterKeyFlow(t *testing.T) {
 	}
 }
 
+func TestGatewayTraceIngestThroughRouter(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyRouterKey(t)
+	traceID := "trace-router-ingest"
+
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID)
+	})
+
+	resp := gatewayProxyRequest(t, http.MethodPost, "/v1/traces", gatewayKey, map[string]any{
+		"trace_id":     traceID,
+		"name":         "Router ingest trace",
+		"service_name": "router-test",
+		"spans": []map[string]any{{
+			"span_id":     "root",
+			"name":        "Router workflow",
+			"kind":        "workflow",
+			"status_code": "ok",
+		}},
+		"logs": []map[string]any{{
+			"span_id":  "root",
+			"severity": "info",
+			"body":     "router ingest reached handler",
+		}},
+	}, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("trace ingest: expected 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	var result struct {
+		TraceID   string `json:"trace_id"`
+		SessionID string `json:"session_id"`
+		SpanCount int    `json:"span_count"`
+		LogCount  int    `json:"log_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode trace ingest response: %v", err)
+	}
+	if result.TraceID != traceID || result.SessionID == "" || result.SpanCount != 1 || result.LogCount != 1 {
+		t.Fatalf("unexpected trace ingest response: %+v", result)
+	}
+}
+
 func TestGatewayRouterBackendAdminFlow(t *testing.T) {
 	setGatewaySecret(t)
 

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/gateway/ingest"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
 	"github.com/multica-ai/multica/server/internal/gateway/observability"
 	"github.com/multica-ai/multica/server/internal/gateway/proxy"
@@ -43,6 +44,7 @@ type Handler struct {
 	TaskService          *service.TaskService
 	EmailService         *service.EmailService
 	Gateway              *management.Service
+	GatewayIngest        *ingest.Service
 	GatewayObservability *observability.Service
 	GatewayProxy         *proxy.Service
 	PingStore            *PingStore
@@ -66,6 +68,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TaskService:          service.NewTaskService(queries, hub, bus),
 		EmailService:         emailService,
 		Gateway:              management.NewService(queries, txStarter),
+		GatewayIngest:        ingest.NewService(queries, txStarter),
 		GatewayObservability: observability.NewService(queries),
 		GatewayProxy:         proxy.NewService(queries, http.DefaultClient),
 		PingStore:            NewPingStore(),
