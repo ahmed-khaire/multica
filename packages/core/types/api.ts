@@ -104,6 +104,26 @@ export interface GatewayObservabilityParams {
   signal?: AbortSignal;
 }
 
+export interface GatewayIngestKeyListItem {
+  id: string;
+  key_prefix: string;
+  app_id: string;
+  display_name: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface GatewayIngestKeyResponse extends GatewayIngestKeyListItem {
+  key: string;
+  gateway_base_url: string;
+}
+
+export interface CreateGatewayIngestKeyRequest {
+  app_id?: string;
+  display_name?: string;
+}
+
 export interface GatewayOverviewResponse {
   since: string;
   until: string;

@@ -43,6 +43,9 @@ import type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
+  CreateGatewayIngestKeyRequest,
+  GatewayIngestKeyListItem,
+  GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
   GatewaySessionListResponse,
@@ -618,6 +621,24 @@ export class ApiClient {
 
   async listGatewayLLMCalls(params?: GatewayObservabilityParams): Promise<GatewayLLMCallListResponse> {
     return this.fetch(`/api/gateway/llm-calls${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
+  async listGatewayIngestKeys(params?: { signal?: AbortSignal }): Promise<GatewayIngestKeyListItem[]> {
+    return this.fetch("/api/gateway/ingest-keys", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async createGatewayIngestKey(data: CreateGatewayIngestKeyRequest): Promise<GatewayIngestKeyResponse> {
+    return this.fetch("/api/gateway/ingest-keys", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async revokeGatewayIngestKey(id: string): Promise<GatewayIngestKeyListItem> {
+    return this.fetch(`/api/gateway/ingest-keys/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   }
 
   // File Upload & Attachments

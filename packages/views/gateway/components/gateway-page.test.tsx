@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceIdProvider } from "@multica/core/hooks";
 import type {
   GatewayLLMCallListResponse,
+  GatewayIngestKeyListItem,
+  GatewayIngestKeyResponse,
   GatewayOverviewResponse,
   GatewaySessionDetail,
   GatewaySessionListResponse,
@@ -18,6 +20,9 @@ const { mockApi } = vi.hoisted(() => ({
     getGatewaySession: vi.fn(),
     getGatewaySessionSpans: vi.fn(),
     listGatewayLLMCalls: vi.fn(),
+    listGatewayIngestKeys: vi.fn(),
+    createGatewayIngestKey: vi.fn(),
+    revokeGatewayIngestKey: vi.fn(),
   },
 }));
 
@@ -159,6 +164,30 @@ const llmCalls: GatewayLLMCallListResponse = {
   ],
 };
 
+const ingestKeys: GatewayIngestKeyListItem[] = [
+  {
+    id: "ingest-key-1",
+    key_prefix: "mig_checkout",
+    app_id: "checkout",
+    display_name: "Checkout API",
+    revoked_at: null,
+    last_used_at: null,
+    created_at: "2026-05-04T10:00:00Z",
+  },
+];
+
+const createdIngestKey: GatewayIngestKeyResponse = {
+  id: "ingest-key-2",
+  key: "mig_secret",
+  key_prefix: "mig_secret",
+  app_id: "billing",
+  display_name: "Billing Agent",
+  revoked_at: null,
+  last_used_at: null,
+  created_at: "2026-05-04T11:00:00Z",
+  gateway_base_url: "http://localhost:18080",
+};
+
 function renderGatewayPage() {
   const qc = new QueryClient({
     defaultOptions: {
@@ -183,6 +212,9 @@ describe("GatewayPage", () => {
     mockApi.getGatewaySession.mockResolvedValue(sessionDetail);
     mockApi.getGatewaySessionSpans.mockResolvedValue(spans);
     mockApi.listGatewayLLMCalls.mockResolvedValue(llmCalls);
+    mockApi.listGatewayIngestKeys.mockResolvedValue(ingestKeys);
+    mockApi.createGatewayIngestKey.mockResolvedValue(createdIngestKey);
+    mockApi.revokeGatewayIngestKey.mockResolvedValue({ ...ingestKeys[0], revoked_at: "2026-05-04T12:00:00Z" });
   });
 
   it("renders overview metrics and breakdowns", async () => {
@@ -217,5 +249,40 @@ describe("GatewayPage", () => {
     const table = await screen.findByRole("table", { name: /LLM calls/ });
     expect(within(table).getByText("/v1/chat/completions")).toBeInTheDocument();
     expect(within(table).getByText("redacted_content")).toBeInTheDocument();
+  });
+
+  it("creates and displays Observer SDK ingest keys from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Checkout API")).toBeInTheDocument();
+    expect(screen.getByText("mig_checkout")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("App ID"), "billing");
+    await user.type(screen.getByLabelText("Name"), "Billing Agent");
+    await user.click(screen.getByRole("button", { name: /Create ingest key/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayIngestKey).toHaveBeenCalledWith({
+        app_id: "billing",
+        display_name: "Billing Agent",
+      });
+    });
+    expect(await screen.findByText(/MULTICA_OBSERVER_GATEWAY_BASE_URL=http:\/\/localhost:18080/)).toBeInTheDocument();
+    expect(screen.getByText(/MULTICA_OBSERVER_KEY=mig_secret/)).toBeInTheDocument();
+  });
+
+  it("revokes ingest keys from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await user.click(await screen.findByRole("button", { name: /Revoke Checkout API ingest key/ }));
+
+    await waitFor(() => {
+      expect(mockApi.revokeGatewayIngestKey).toHaveBeenCalledWith("ingest-key-1");
+    });
   });
 });

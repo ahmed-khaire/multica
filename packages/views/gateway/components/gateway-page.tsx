@@ -8,18 +8,24 @@ import {
   Bot,
   Boxes,
   CircleDollarSign,
+  Copy,
   DatabaseZap,
   Eye,
   Gauge,
+  KeyRound,
   MessageSquareText,
   RefreshCw,
   Route,
   Server,
+  ShieldCheck,
   TerminalSquare,
+  Trash2,
   Wrench,
 } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  GatewayIngestKeyListItem,
+  GatewayIngestKeyResponse,
   GatewayBackendUsage,
   GatewayOverviewResponse,
   GatewayLLMCallListItem,
@@ -31,8 +37,10 @@ import type {
   GatewaySpanObservation,
 } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { api } from "@multica/core/api";
 import {
   gatewayKeys,
+  gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
   gatewaySessionDetailOptions,
@@ -42,6 +50,8 @@ import {
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@multica/ui/components/ui/card";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
   Table,
@@ -92,6 +102,10 @@ function formatTime(value: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatNullableTime(value: string | null | undefined): string {
+  return value ? formatTime(value) : "Never";
 }
 
 function formatDuration(value: number | null | undefined): string {
@@ -417,6 +431,237 @@ function LLMCallsTable({
   );
 }
 
+function ingestKeyName(key: GatewayIngestKeyListItem): string {
+  return key.display_name || key.app_id || key.key_prefix;
+}
+
+function IngestKeySetup({ wsId }: { wsId: string }) {
+  const qc = useQueryClient();
+  const [appId, setAppId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [createdKey, setCreatedKey] = useState<GatewayIngestKeyResponse | null>(null);
+  const keysQuery = useQuery(gatewayIngestKeysOptions(wsId));
+  const keys = keysQuery.data ?? [];
+  const activeKeys = keys.filter((key) => !key.revoked_at).length;
+
+  const createdEnv = createdKey
+    ? [
+        `MULTICA_OBSERVER_GATEWAY_BASE_URL=${createdKey.gateway_base_url}`,
+        `MULTICA_OBSERVER_KEY=${createdKey.key}`,
+        `MULTICA_OBSERVER_APP_ID=${createdKey.app_id}`,
+      ].join("\n")
+    : "";
+
+  const createMutation = useMutation({
+    mutationFn: (input: { app_id?: string; display_name?: string }) =>
+      api.createGatewayIngestKey(input),
+    onSuccess: (key) => {
+      setCreatedKey(key);
+      setAppId("");
+      setDisplayName("");
+      void qc.invalidateQueries({ queryKey: gatewayKeys.ingestKeys(wsId) });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => api.revokeGatewayIngestKey(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gatewayKeys.ingestKeys(wsId) });
+    },
+  });
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    createMutation.mutate({
+      app_id: appId.trim() || undefined,
+      display_name: displayName.trim() || undefined,
+    });
+  };
+
+  const copyCreatedKey = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard && createdEnv) {
+      void navigator.clipboard.writeText(createdEnv);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <KeyRound className="size-4 text-muted-foreground" />
+              Create Ingest Key
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-3" onSubmit={submit}>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-ingest-app-id">App ID</Label>
+                <Input
+                  id="gateway-ingest-app-id"
+                  value={appId}
+                  onChange={(event) => setAppId(event.target.value)}
+                  placeholder="checkout-api"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-ingest-name">Name</Label>
+                <Input
+                  id="gateway-ingest-name"
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="Checkout API"
+                  autoComplete="off"
+                />
+              </div>
+              {createMutation.error instanceof Error ? (
+                <p className="text-xs text-destructive">{createMutation.error.message}</p>
+              ) : null}
+              <Button
+                type="submit"
+                size="sm"
+                disabled={!appId.trim() || createMutation.isPending}
+              >
+                <KeyRound className="size-3.5" />
+                Create ingest key
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ShieldCheck className="size-4 text-muted-foreground" />
+              SDK Connection
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {createdKey ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">{createdKey.display_name || createdKey.app_id}</p>
+                    <p className="text-xs text-muted-foreground">Copy this secret now. It will not be shown again.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={copyCreatedKey}
+                    aria-label="Copy generated ingest key"
+                  >
+                    <Copy className="size-3.5" />
+                    Copy
+                  </Button>
+                </div>
+                <pre className="max-h-40 overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+                  {createdEnv}
+                </pre>
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Active keys</p>
+                  <p className="mt-1 text-2xl font-semibold tabular-nums">{activeKeys}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Key type</p>
+                  <p className="mt-1 text-sm font-medium">mig_ ingest</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Routing</p>
+                  <p className="mt-1 text-sm font-medium">Gateway traces</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card size="sm" className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <KeyRound className="size-4 text-muted-foreground" />
+            Ingest Keys
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {keysQuery.isLoading ? (
+            <div className="space-y-2 p-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-12 rounded-md" />
+              ))}
+            </div>
+          ) : keys.length === 0 ? (
+            <div className="flex h-40 flex-col items-center justify-center border-t text-center">
+              <KeyRound className="size-8 text-muted-foreground/40" />
+              <p className="mt-3 text-sm font-medium">No ingest keys</p>
+              <p className="mt-1 text-xs text-muted-foreground">Create a key for application traces and SDK events.</p>
+            </div>
+          ) : (
+            <Table aria-label="Gateway ingest keys">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>App ID</TableHead>
+                  <TableHead>Prefix</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {keys.map((key) => {
+                  const revoked = Boolean(key.revoked_at);
+                  return (
+                    <TableRow key={key.id}>
+                      <TableCell>
+                        <div className="flex max-w-56 flex-col">
+                          <span className="truncate font-medium">{ingestKeyName(key)}</span>
+                          <span className="truncate text-xs text-muted-foreground">{formatTime(key.created_at)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{key.app_id}</TableCell>
+                      <TableCell>
+                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{key.key_prefix}</code>
+                      </TableCell>
+                      <TableCell>{formatNullableTime(key.last_used_at)}</TableCell>
+                      <TableCell>
+                        <Badge variant={revoked ? "outline" : "secondary"}>
+                          {revoked ? "revoked" : "active"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          disabled={revoked || revokeMutation.isPending}
+                          onClick={() => revokeMutation.mutate(key.id)}
+                          aria-label={`Revoke ${ingestKeyName(key)} ingest key`}
+                          title={`Revoke ${ingestKeyName(key)} ingest key`}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+          {keysQuery.error instanceof Error ? (
+            <p className="border-t p-3 text-xs text-destructive">{keysQuery.error.message}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function SpanWaterfall({ spans }: { spans: GatewaySpanObservation[] }) {
   const maxDuration = Math.max(...spans.map((s) => s.duration_ms ?? 0), 1);
   if (spans.length === 0) {
@@ -700,6 +945,7 @@ export function GatewayPage() {
               <TabsList>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
                 <TabsTrigger value="llm-calls">LLM Calls</TabsTrigger>
+                <TabsTrigger value="setup">Setup</TabsTrigger>
               </TabsList>
               <p className="text-xs text-muted-foreground">
                 {formatCount(sessionsQuery.data?.total ?? 0)} sessions · {formatCount(llmCallsQuery.data?.total ?? 0)} calls
@@ -733,6 +979,9 @@ export function GatewayPage() {
                   onSelectSession={setSelectedSessionId}
                 />
               )}
+            </TabsContent>
+            <TabsContent value="setup" className="mt-3">
+              <IngestKeySetup wsId={wsId} />
             </TabsContent>
           </Tabs>
         </div>
