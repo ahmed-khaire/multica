@@ -76,6 +76,28 @@ type UserKeyListItem struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
+type IngestKeyResponse struct {
+	ID             string  `json:"id"`
+	Key            string  `json:"key"`
+	KeyPrefix      string  `json:"key_prefix"`
+	AppID          string  `json:"app_id"`
+	DisplayName    string  `json:"display_name"`
+	GatewayBaseURL string  `json:"gateway_base_url"`
+	CreatedAt      string  `json:"created_at"`
+	LastUsedAt     *string `json:"last_used_at"`
+	RevokedAt      *string `json:"revoked_at"`
+}
+
+type IngestKeyListItem struct {
+	ID          string  `json:"id"`
+	KeyPrefix   string  `json:"key_prefix"`
+	AppID       string  `json:"app_id"`
+	DisplayName string  `json:"display_name"`
+	RevokedAt   *string `json:"revoked_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+	CreatedAt   string  `json:"created_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
@@ -88,6 +110,13 @@ type CreateBackendInput struct {
 	Enabled     bool
 	SetDefault  bool
 	Metadata    map[string]any
+}
+
+type CreateIngestKeyInput struct {
+	WorkspaceID string
+	ActorUserID string
+	AppID       string
+	DisplayName string
 }
 
 type UpdateBackendInput struct {

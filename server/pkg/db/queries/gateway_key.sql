@@ -28,3 +28,30 @@ RETURNING *;
 UPDATE gateway_user_key
 SET last_used_at = now()
 WHERE id = $1 AND revoked_at IS NULL;
+
+-- name: CreateGatewayIngestKey :one
+INSERT INTO gateway_ingest_key (
+    workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: ListGatewayIngestKeys :many
+SELECT * FROM gateway_ingest_key
+WHERE workspace_id = $1
+ORDER BY created_at DESC;
+
+-- name: RevokeGatewayIngestKey :one
+UPDATE gateway_ingest_key
+SET revoked_at = now()
+WHERE workspace_id = $1 AND id = $2 AND revoked_at IS NULL
+RETURNING *;
+
+-- name: GetGatewayIngestKeyByHash :one
+SELECT * FROM gateway_ingest_key
+WHERE key_hash = $1 AND revoked_at IS NULL;
+
+-- name: TouchGatewayIngestKeyLastUsed :exec
+UPDATE gateway_ingest_key
+SET last_used_at = now()
+WHERE id = $1 AND revoked_at IS NULL;

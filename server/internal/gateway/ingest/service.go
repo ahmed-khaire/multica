@@ -42,14 +42,14 @@ func (s *Service) IngestTrace(ctx context.Context, gatewayKey string, req TraceR
 		return TraceResponse{}, err
 	}
 
-	authContext, err := proxy.AuthenticateGatewayKey(ctx, s.queries, gatewayKey)
+	authContext, err := s.authenticateTraceKey(ctx, gatewayKey)
 	if err != nil {
 		return TraceResponse{}, err
 	}
-	workspaceID := util.ParseUUID(authContext.WorkspaceID)
-	userID := util.ParseUUID(authContext.UserID)
-	if !workspaceID.Valid || !userID.Valid {
-		return TraceResponse{}, fmt.Errorf("%w: gateway key resolved invalid workspace or user", ErrInvalidTracePayload)
+	workspaceID := authContext.workspaceID
+	userID := authContext.userID
+	if !workspaceID.Valid {
+		return TraceResponse{}, fmt.Errorf("%w: ingest key resolved invalid workspace", ErrInvalidTracePayload)
 	}
 
 	var resp TraceResponse

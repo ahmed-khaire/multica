@@ -46,6 +46,25 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewayRevoke,
 	}
 
+	ingestKeyCmd := &cobra.Command{
+		Use:   "ingest-key",
+		Short: "Create an Observer SDK ingest key",
+		RunE:  runGatewayIngestKey,
+	}
+
+	ingestKeysCmd := &cobra.Command{
+		Use:   "ingest-keys",
+		Short: "List Observer SDK ingest keys",
+		RunE:  runGatewayIngestKeys,
+	}
+
+	revokeIngestKeyCmd := &cobra.Command{
+		Use:   "revoke-ingest-key <key-id>",
+		Short: "Revoke an Observer SDK ingest key",
+		Args:  exactArgs(1),
+		RunE:  runGatewayRevokeIngestKey,
+	}
+
 	addCmd := &cobra.Command{
 		Use:   "add <provider>",
 		Short: "Add an Observer Gateway backend",
@@ -77,6 +96,9 @@ func newGatewayCommand() *cobra.Command {
 	cmd.AddCommand(keyCmd)
 	cmd.AddCommand(keysCmd)
 	cmd.AddCommand(revokeCmd)
+	cmd.AddCommand(ingestKeyCmd)
+	cmd.AddCommand(ingestKeysCmd)
+	cmd.AddCommand(revokeIngestKeyCmd)
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(backendsCmd)
 	cmd.AddCommand(defaultCmd)
@@ -85,6 +107,11 @@ func newGatewayCommand() *cobra.Command {
 	statusCmd.Flags().String("output", "table", "Output format: table or json")
 	keyCmd.Flags().String("output", "env", "Output format: env or json")
 	keysCmd.Flags().String("output", "table", "Output format: table or json")
+	ingestKeyCmd.Flags().String("app-id", "", "Application identifier attached to ingested traces")
+	ingestKeyCmd.Flags().String("name", "", "Ingest key display name")
+	ingestKeyCmd.Flags().String("output", "env", "Output format: env or json")
+	ingestKeysCmd.Flags().String("output", "table", "Output format: table or json")
+	revokeIngestKeyCmd.Flags().String("output", "table", "Output format: table or json")
 
 	addCmd.Flags().String("key", "", "Upstream provider API key")
 	addCmd.Flags().String("base-url", "", "Upstream provider base URL")
@@ -142,6 +169,28 @@ type gatewayKeyListItemDTO struct {
 	RevokedAt  *string `json:"revoked_at"`
 	LastUsedAt *string `json:"last_used_at"`
 	CreatedAt  string  `json:"created_at"`
+}
+
+type gatewayIngestKeyDTO struct {
+	ID             string  `json:"id"`
+	Key            string  `json:"key"`
+	KeyPrefix      string  `json:"key_prefix"`
+	AppID          string  `json:"app_id"`
+	DisplayName    string  `json:"display_name"`
+	GatewayBaseURL string  `json:"gateway_base_url"`
+	RevokedAt      *string `json:"revoked_at"`
+	LastUsedAt     *string `json:"last_used_at"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+type gatewayIngestKeyListItemDTO struct {
+	ID          string  `json:"id"`
+	KeyPrefix   string  `json:"key_prefix"`
+	AppID       string  `json:"app_id"`
+	DisplayName string  `json:"display_name"`
+	RevokedAt   *string `json:"revoked_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+	CreatedAt   string  `json:"created_at"`
 }
 
 type gatewaySettingsDTO struct {
@@ -270,6 +319,98 @@ func runGatewayRevoke(cmd *cobra.Command, args []string) error {
 	path := "/api/gateway/keys/" + url.PathEscape(keyID) + "/revoke"
 	if err := client.PostJSON(ctx, path, map[string]any{}, &resp); err != nil {
 		return fmt.Errorf("revoke gateway key: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Revoked %s\n", keyID)
+	return nil
+}
+
+func runGatewayIngestKey(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	body := map[string]any{}
+	if appID, _ := cmd.Flags().GetString("app-id"); strings.TrimSpace(appID) != "" {
+		body["app_id"] = strings.TrimSpace(appID)
+	}
+	if name, _ := cmd.Flags().GetString("name"); strings.TrimSpace(name) != "" {
+		body["display_name"] = strings.TrimSpace(name)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var resp gatewayIngestKeyDTO
+	if err := client.PostJSON(ctx, "/api/gateway/ingest-keys", body, &resp); err != nil {
+		return fmt.Errorf("create gateway ingest key: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "MULTICA_OBSERVER_GATEWAY_BASE_URL=%s\n", resp.GatewayBaseURL)
+	fmt.Fprintf(w, "MULTICA_OBSERVER_KEY=%s\n", resp.Key)
+	if resp.AppID != "" {
+		fmt.Fprintf(w, "MULTICA_OBSERVER_APP_ID=%s\n", resp.AppID)
+	}
+	return nil
+}
+
+func runGatewayIngestKeys(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var keys []gatewayIngestKeyListItemDTO
+	if err := client.GetJSON(ctx, "/api/gateway/ingest-keys", &keys); err != nil {
+		return fmt.Errorf("list gateway ingest keys: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), keys)
+	}
+
+	rows := make([][]string, 0, len(keys))
+	for _, key := range keys {
+		rows = append(rows, []string{
+			key.ID,
+			key.KeyPrefix,
+			key.AppID,
+			key.DisplayName,
+			key.CreatedAt,
+			nullableString(key.LastUsedAt),
+			nullableString(key.RevokedAt),
+		})
+	}
+	cli.PrintTable(cmd.OutOrStdout(), []string{"ID", "PREFIX", "APP ID", "NAME", "CREATED", "LAST USED", "REVOKED"}, rows)
+	return nil
+}
+
+func runGatewayRevokeIngestKey(cmd *cobra.Command, args []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var resp gatewayIngestKeyListItemDTO
+	keyID := args[0]
+	path := "/api/gateway/ingest-keys/" + url.PathEscape(keyID) + "/revoke"
+	if err := client.PostJSON(ctx, path, map[string]any{}, &resp); err != nil {
+		return fmt.Errorf("revoke gateway ingest key: %w", err)
 	}
 
 	if output, _ := cmd.Flags().GetString("output"); output == "json" {

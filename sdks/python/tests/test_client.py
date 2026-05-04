@@ -75,7 +75,7 @@ def test_records_spans_logs_tools_and_flushes_to_trace_ingest_endpoint():
 
     client = ObserverClient(
         gateway_base_url="https://gateway.example.com/",
-        gateway_key="mgw_test",
+        gateway_key="mig_test",
         service_name="checkout-api",
         app_id="checkout",
         environment="staging",
@@ -128,7 +128,7 @@ def test_records_spans_logs_tools_and_flushes_to_trace_ingest_endpoint():
     url, headers, body = calls[0]
     assert url == "https://gateway.example.com/v1/traces"
     assert headers == {
-        "Authorization": "Bearer mgw_test",
+        "Authorization": "Bearer mig_test",
         "Content-Type": "application/json",
     }
     assert body["trace_id"] == "trace-1"
@@ -165,7 +165,7 @@ def test_flush_raises_readable_error_when_ingest_fails():
 
     client = ObserverClient(
         gateway_base_url="https://gateway.example.com",
-        gateway_key="mgw_bad",
+        gateway_key="mig_bad",
         service_name="checkout-api",
         id_generator=ids(["trace-1", "session-1", "root-1"]),
         transport=transport,

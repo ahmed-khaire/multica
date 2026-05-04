@@ -11,6 +11,7 @@ import (
 
 const (
 	Prefix       = "mgw_"
+	IngestPrefix = "mig_"
 	randomBytes  = 20
 	prefixLength = 12
 )
@@ -23,15 +24,31 @@ type PreparedKey struct {
 }
 
 func GenerateGatewayKey() (string, error) {
+	return generateKey(Prefix)
+}
+
+func GenerateIngestKey() (string, error) {
+	return generateKey(IngestPrefix)
+}
+
+func generateKey(prefix string) (string, error) {
 	b := make([]byte, randomBytes)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate gateway key: %w", err)
+		return "", fmt.Errorf("generate key: %w", err)
 	}
-	return Prefix + hex.EncodeToString(b), nil
+	return prefix + hex.EncodeToString(b), nil
 }
 
 func PrepareNewGatewayKey(box *secrets.Box) (PreparedKey, error) {
-	raw, err := GenerateGatewayKey()
+	return prepareNewKey(box, GenerateGatewayKey)
+}
+
+func PrepareNewIngestKey(box *secrets.Box) (PreparedKey, error) {
+	return prepareNewKey(box, GenerateIngestKey)
+}
+
+func prepareNewKey(box *secrets.Box, generate func() (string, error)) (PreparedKey, error) {
+	raw, err := generate()
 	if err != nil {
 		return PreparedKey{}, err
 	}

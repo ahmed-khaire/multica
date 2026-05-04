@@ -156,6 +156,56 @@ func TestGatewayIngestPersistsTraceTelemetry(t *testing.T) {
 	}
 }
 
+func TestGatewayIngestAcceptsScopedIngestKey(t *testing.T) {
+	setGatewaySecret(t)
+	ingestKey := createGatewayScopedIngestTestKey(t)
+	traceID := "trace-ingest-scoped-key"
+
+	t.Cleanup(func() {
+		if _, err := testPool.Exec(context.Background(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID); err != nil {
+			t.Fatalf("cleanup scoped ingest trace: %v", err)
+		}
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/traces", requestBody(t, map[string]any{
+		"trace_id":     traceID,
+		"name":         "Scoped ingest run",
+		"service_name": "checkout-api",
+		"spans": []map[string]any{{
+			"span_id":     "root",
+			"name":        "Scoped workflow",
+			"kind":        "workflow",
+			"status_code": "ok",
+		}},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+ingestKey)
+
+	testHandler.PostGatewayTraceIngest(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PostGatewayTraceIngest: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var persisted struct {
+		ServiceName string
+		UserID      string
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT service_name, COALESCE(user_id::text, '')
+		FROM gateway_session
+		WHERE workspace_id = $1 AND trace_id = $2
+	`, testWorkspaceID, traceID).Scan(&persisted.ServiceName, &persisted.UserID); err != nil {
+		t.Fatalf("query scoped ingest session: %v", err)
+	}
+	if persisted.ServiceName != "checkout-api" {
+		t.Fatalf("service_name = %q, want checkout-api", persisted.ServiceName)
+	}
+	if persisted.UserID != "" {
+		t.Fatalf("user_id = %q, want empty for app ingest key", persisted.UserID)
+	}
+}
+
 func createGatewayIngestTestKey(t *testing.T) string {
 	t.Helper()
 
@@ -174,6 +224,31 @@ func createGatewayIngestTestKey(t *testing.T) string {
 	}
 	if resp.Key == "" {
 		t.Fatal("gateway key is empty")
+	}
+	return resp.Key
+}
+
+func createGatewayScopedIngestTestKey(t *testing.T) string {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/gateway/ingest-keys", map[string]any{
+		"app_id":       "checkout",
+		"display_name": "Checkout API",
+	})
+	testHandler.CreateGatewayIngestKey(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayIngestKey: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode ingest key response: %v", err)
+	}
+	if resp.Key == "" {
+		t.Fatal("ingest key is empty")
 	}
 	return resp.Key
 }

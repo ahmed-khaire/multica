@@ -99,3 +99,52 @@ func TestGenerateGatewayKeyProducesUniqueValues(t *testing.T) {
 		t.Fatal("expected distinct gateway keys")
 	}
 }
+
+func TestGenerateIngestKeyFormat(t *testing.T) {
+	t.Parallel()
+
+	key, err := GenerateIngestKey()
+	if err != nil {
+		t.Fatalf("GenerateIngestKey returned error: %v", err)
+	}
+	if !strings.HasPrefix(key, IngestPrefix) {
+		t.Fatalf("expected prefix %q, got %q", IngestPrefix, key)
+	}
+	if len(key) != len(IngestPrefix)+40 {
+		t.Fatalf("unexpected key length: %d", len(key))
+	}
+	suffix := strings.TrimPrefix(key, IngestPrefix)
+	if len(suffix) != 40 {
+		t.Fatalf("unexpected key suffix length: %d", len(suffix))
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Fatalf("expected hex suffix, got %q: %v", suffix, err)
+	}
+}
+
+func TestPrepareIngestKeyStoresHashAndEncryptedValue(t *testing.T) {
+	t.Parallel()
+
+	prepared, err := PrepareNewIngestKey(testBox(t))
+	if err != nil {
+		t.Fatalf("PrepareNewIngestKey returned error: %v", err)
+	}
+	if prepared.Raw == "" {
+		t.Fatal("expected raw key for one-time CLI output")
+	}
+	if !strings.HasPrefix(prepared.Raw, IngestPrefix) {
+		t.Fatalf("raw key prefix = %q, want %q", prepared.Raw, IngestPrefix)
+	}
+	if prepared.Hash == "" || prepared.Hash == prepared.Raw {
+		t.Fatalf("invalid hash: %q", prepared.Hash)
+	}
+	if prepared.Hash != HashGatewayKey(prepared.Raw) {
+		t.Fatalf("hash mismatch: got %q want %q", prepared.Hash, HashGatewayKey(prepared.Raw))
+	}
+	if prepared.DisplayPrefix != prepared.Raw[:12] {
+		t.Fatalf("display prefix mismatch: got %q want %q", prepared.DisplayPrefix, prepared.Raw[:12])
+	}
+	if bytes.Contains(prepared.Encrypted, []byte(prepared.Raw)) {
+		t.Fatalf("encrypted value contains raw key: %q", prepared.Encrypted)
+	}
+}

@@ -36,6 +36,13 @@ func TestExtractGatewayKey(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			name: "rejects ingest key",
+			headers: map[string]string{
+				"Authorization": "Bearer mig_123",
+			},
+			wantOK: false,
+		},
+		{
 			name:   "missing",
 			wantOK: false,
 		},

@@ -325,6 +325,20 @@ type GatewayEvent struct {
 	OccurredAt  pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type GatewayIngestKey struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AppID             string             `json:"app_id"`
+	DisplayName       string             `json:"display_name"`
+	KeyHash           string             `json:"key_hash"`
+	EncryptedKeyValue []byte             `json:"encrypted_key_value"`
+	KeyPrefix         string             `json:"key_prefix"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type GatewayLog struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

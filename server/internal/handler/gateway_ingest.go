@@ -14,7 +14,7 @@ import (
 const gatewayTraceIngestMaxBodyBytes = 4 << 20
 
 func (h *Handler) PostGatewayTraceIngest(w http.ResponseWriter, r *http.Request) {
-	gatewayKey, ok := proxy.ExtractGatewayKey(r)
+	gatewayKey, ok := ingest.ExtractTraceIngestKey(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "gateway key is required")
 		return

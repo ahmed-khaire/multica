@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "key", "keys", "revoke", "add", "backends", "default", "policy"} {
+	for _, name := range []string{"status", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -88,6 +88,137 @@ func TestGatewayKeyCommandPrintsEnv(t *testing.T) {
 	}, "\n") + "\n"
 	if out != want {
 		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+func TestGatewayIngestKeyCommandPrintsEnv(t *testing.T) {
+	var gotBody map[string]any
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/ingest-keys" {
+			t.Errorf("path = %s, want /api/gateway/ingest-keys", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":               "ingest-key-1",
+			"key":              "mig_123",
+			"key_prefix":       "mig_123",
+			"app_id":           "checkout",
+			"display_name":     "Checkout API",
+			"gateway_base_url": srv.URL,
+			"created_at":       "2026-05-03T12:00:00Z",
+			"last_used_at":     nil,
+			"revoked_at":       nil,
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(
+		root,
+		"gateway", "ingest-key",
+		"--workspace-id", "workspace-1",
+		"--app-id", "checkout",
+		"--name", "Checkout API",
+	)
+	if err != nil {
+		t.Fatalf("execute gateway ingest-key: %v", err)
+	}
+
+	if gotBody["app_id"] != "checkout" {
+		t.Fatalf("app_id = %v, want checkout", gotBody["app_id"])
+	}
+	if gotBody["display_name"] != "Checkout API" {
+		t.Fatalf("display_name = %v, want Checkout API", gotBody["display_name"])
+	}
+	want := strings.Join([]string{
+		"MULTICA_OBSERVER_GATEWAY_BASE_URL=" + srv.URL,
+		"MULTICA_OBSERVER_KEY=mig_123",
+		"MULTICA_OBSERVER_APP_ID=checkout",
+	}, "\n") + "\n"
+	if out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+func TestGatewayIngestKeysCommandListsKeys(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/ingest-keys" {
+			t.Errorf("path = %s, want /api/gateway/ingest-keys", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":           "ingest-key-1",
+			"key_prefix":   "mig_123",
+			"app_id":       "checkout",
+			"display_name": "Checkout API",
+			"created_at":   "2026-05-03T12:00:00Z",
+			"last_used_at": nil,
+			"revoked_at":   nil,
+		}})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "ingest-keys", "--workspace-id", "workspace-1", "--output", "json")
+	if err != nil {
+		t.Fatalf("execute gateway ingest-keys: %v", err)
+	}
+
+	var keys []map[string]any
+	if err := json.Unmarshal([]byte(out), &keys); err != nil {
+		t.Fatalf("decode output: %v\noutput: %s", err, out)
+	}
+	if len(keys) != 1 || keys[0]["app_id"] != "checkout" {
+		t.Fatalf("unexpected ingest keys output: %#v", keys)
+	}
+}
+
+func TestGatewayRevokeIngestKeyCommandCallsAPI(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/ingest-keys/ingest-key-1/revoke" {
+			t.Errorf("path = %s, want /api/gateway/ingest-keys/ingest-key-1/revoke", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           "ingest-key-1",
+			"key_prefix":   "mig_123",
+			"app_id":       "checkout",
+			"display_name": "Checkout API",
+			"created_at":   "2026-05-03T12:00:00Z",
+			"last_used_at": nil,
+			"revoked_at":   "2026-05-03T12:05:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "revoke-ingest-key", "ingest-key-1", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway revoke-ingest-key: %v", err)
+	}
+	if !called {
+		t.Fatal("server was not called")
+	}
+	if !strings.Contains(out, "Revoked ingest-key-1") {
+		t.Fatalf("output = %q, want revoked message", out)
 	}
 }
 

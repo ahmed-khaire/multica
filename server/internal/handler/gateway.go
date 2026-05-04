@@ -42,6 +42,11 @@ type gatewayPolicyRequest struct {
 	CapturePolicy string `json:"capture_policy"`
 }
 
+type gatewayCreateIngestKeyRequest struct {
+	AppID       string `json:"app_id"`
+	DisplayName string `json:"display_name"`
+}
+
 func (h *Handler) GatewayStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -109,6 +114,47 @@ func (h *Handler) RevokeGatewayUserKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.RevokeUserKey(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) CreateGatewayIngestKey(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayCreateIngestKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.CreateIngestKey(r.Context(), management.CreateIngestKeyInput{
+		WorkspaceID: workspaceID,
+		ActorUserID: userID,
+		AppID:       req.AppID,
+		DisplayName: req.DisplayName,
+	}, gatewayServerBaseURL(r))
+	h.writeGatewayResult(w, http.StatusCreated, resp, err)
+}
+
+func (h *Handler) ListGatewayIngestKeys(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListIngestKeys(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) RevokeGatewayIngestKey(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.RevokeIngestKey(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 

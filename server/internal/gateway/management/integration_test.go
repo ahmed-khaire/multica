@@ -159,6 +159,69 @@ func TestManagementServiceKeyFlow(t *testing.T) {
 	}
 }
 
+func TestManagementServiceIngestKeyFlow(t *testing.T) {
+	ctx := context.Background()
+	pool := openManagementTestDB(t)
+	fixture := setupManagementTestFixture(t, pool)
+	t.Setenv("MULTICA_GATEWAY_SECRET_KEY", base64.StdEncoding.EncodeToString([]byte(managementTestGatewaySecret)))
+
+	svc := NewService(db.New(pool), pool)
+
+	created, err := svc.CreateIngestKey(ctx, CreateIngestKeyInput{
+		WorkspaceID: fixture.workspaceID,
+		ActorUserID: fixture.userID,
+		AppID:       "checkout",
+		DisplayName: "Checkout API",
+	}, "https://api.multica.ai")
+	if err != nil {
+		t.Fatalf("CreateIngestKey returned error: %v", err)
+	}
+	if !strings.HasPrefix(created.Key, "mig_") {
+		t.Fatalf("ingest key = %q, want mig_ prefix", created.Key)
+	}
+	if created.KeyPrefix == "" || created.KeyPrefix == created.Key {
+		t.Fatalf("unexpected key prefix: %+v", created)
+	}
+	if created.AppID != "checkout" || created.DisplayName != "Checkout API" {
+		t.Fatalf("unexpected ingest key metadata: %+v", created)
+	}
+	if created.GatewayBaseURL != "https://api.multica.ai" {
+		t.Fatalf("gateway base URL = %q, want https://api.multica.ai", created.GatewayBaseURL)
+	}
+
+	keys, err := svc.ListIngestKeys(ctx, fixture.workspaceID)
+	if err != nil {
+		t.Fatalf("ListIngestKeys returned error: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("ListIngestKeys returned %d keys, want 1", len(keys))
+	}
+	if keys[0].ID != created.ID || keys[0].AppID != "checkout" || keys[0].RevokedAt != nil {
+		t.Fatalf("unexpected ingest key list item: %+v", keys[0])
+	}
+
+	revoked, err := svc.RevokeIngestKey(ctx, fixture.workspaceID, fixture.userID, created.ID)
+	if err != nil {
+		t.Fatalf("RevokeIngestKey returned error: %v", err)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatalf("expected revoked timestamp: %+v", revoked)
+	}
+
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM ai_audit_log
+		WHERE workspace_id = $1
+		  AND action IN ('gateway.ingest_key.create', 'gateway.ingest_key.revoke')
+	`, fixture.workspaceID).Scan(&auditCount); err != nil {
+		t.Fatalf("count ingest key audit rows: %v", err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("ingest key audit count = %d, want 2", auditCount)
+	}
+}
+
 func TestManagementServiceGetOrCreateUserKeyConcurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

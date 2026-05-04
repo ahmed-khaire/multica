@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createGatewayIngestKey = `-- name: CreateGatewayIngestKey :one
+INSERT INTO gateway_ingest_key (
+    workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by, revoked_at, last_used_at, created_at
+`
+
+type CreateGatewayIngestKeyParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	AppID             string      `json:"app_id"`
+	DisplayName       string      `json:"display_name"`
+	KeyHash           string      `json:"key_hash"`
+	EncryptedKeyValue []byte      `json:"encrypted_key_value"`
+	KeyPrefix         string      `json:"key_prefix"`
+	CreatedBy         pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateGatewayIngestKey(ctx context.Context, arg CreateGatewayIngestKeyParams) (GatewayIngestKey, error) {
+	row := q.db.QueryRow(ctx, createGatewayIngestKey,
+		arg.WorkspaceID,
+		arg.AppID,
+		arg.DisplayName,
+		arg.KeyHash,
+		arg.EncryptedKeyValue,
+		arg.KeyPrefix,
+		arg.CreatedBy,
+	)
+	var i GatewayIngestKey
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AppID,
+		&i.DisplayName,
+		&i.KeyHash,
+		&i.EncryptedKeyValue,
+		&i.KeyPrefix,
+		&i.CreatedBy,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createGatewayUserKey = `-- name: CreateGatewayUserKey :one
 INSERT INTO gateway_user_key (
     workspace_id, user_id, key_hash, encrypted_key_value, key_prefix
@@ -77,6 +122,30 @@ func (q *Queries) GetActiveGatewayUserKey(ctx context.Context, arg GetActiveGate
 	return i, err
 }
 
+const getGatewayIngestKeyByHash = `-- name: GetGatewayIngestKeyByHash :one
+SELECT id, workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by, revoked_at, last_used_at, created_at FROM gateway_ingest_key
+WHERE key_hash = $1 AND revoked_at IS NULL
+`
+
+func (q *Queries) GetGatewayIngestKeyByHash(ctx context.Context, keyHash string) (GatewayIngestKey, error) {
+	row := q.db.QueryRow(ctx, getGatewayIngestKeyByHash, keyHash)
+	var i GatewayIngestKey
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AppID,
+		&i.DisplayName,
+		&i.KeyHash,
+		&i.EncryptedKeyValue,
+		&i.KeyPrefix,
+		&i.CreatedBy,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getGatewayUserKeyByHash = `-- name: GetGatewayUserKeyByHash :one
 SELECT id, workspace_id, user_id, key_hash, encrypted_key_value, key_prefix, revoked_at, last_used_at, created_at FROM gateway_user_key
 WHERE key_hash = $1 AND revoked_at IS NULL
@@ -97,6 +166,44 @@ func (q *Queries) GetGatewayUserKeyByHash(ctx context.Context, keyHash string) (
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listGatewayIngestKeys = `-- name: ListGatewayIngestKeys :many
+SELECT id, workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by, revoked_at, last_used_at, created_at FROM gateway_ingest_key
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListGatewayIngestKeys(ctx context.Context, workspaceID pgtype.UUID) ([]GatewayIngestKey, error) {
+	rows, err := q.db.Query(ctx, listGatewayIngestKeys, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayIngestKey{}
+	for rows.Next() {
+		var i GatewayIngestKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AppID,
+			&i.DisplayName,
+			&i.KeyHash,
+			&i.EncryptedKeyValue,
+			&i.KeyPrefix,
+			&i.CreatedBy,
+			&i.RevokedAt,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listGatewayUserKeys = `-- name: ListGatewayUserKeys :many
@@ -140,6 +247,37 @@ func (q *Queries) ListGatewayUserKeys(ctx context.Context, arg ListGatewayUserKe
 	return items, nil
 }
 
+const revokeGatewayIngestKey = `-- name: RevokeGatewayIngestKey :one
+UPDATE gateway_ingest_key
+SET revoked_at = now()
+WHERE workspace_id = $1 AND id = $2 AND revoked_at IS NULL
+RETURNING id, workspace_id, app_id, display_name, key_hash, encrypted_key_value, key_prefix, created_by, revoked_at, last_used_at, created_at
+`
+
+type RevokeGatewayIngestKeyParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) RevokeGatewayIngestKey(ctx context.Context, arg RevokeGatewayIngestKeyParams) (GatewayIngestKey, error) {
+	row := q.db.QueryRow(ctx, revokeGatewayIngestKey, arg.WorkspaceID, arg.ID)
+	var i GatewayIngestKey
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AppID,
+		&i.DisplayName,
+		&i.KeyHash,
+		&i.EncryptedKeyValue,
+		&i.KeyPrefix,
+		&i.CreatedBy,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const revokeGatewayUserKey = `-- name: RevokeGatewayUserKey :one
 UPDATE gateway_user_key
 SET revoked_at = now()
@@ -168,6 +306,17 @@ func (q *Queries) RevokeGatewayUserKey(ctx context.Context, arg RevokeGatewayUse
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const touchGatewayIngestKeyLastUsed = `-- name: TouchGatewayIngestKeyLastUsed :exec
+UPDATE gateway_ingest_key
+SET last_used_at = now()
+WHERE id = $1 AND revoked_at IS NULL
+`
+
+func (q *Queries) TouchGatewayIngestKeyLastUsed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchGatewayIngestKeyLastUsed, id)
+	return err
 }
 
 const touchGatewayUserKeyLastUsed = `-- name: TouchGatewayUserKeyLastUsed :exec

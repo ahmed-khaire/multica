@@ -76,7 +76,7 @@ describe("ObserverClient", () => {
     const fixedNow = new Date("2026-05-04T12:00:00.000Z");
     const client = new ObserverClient({
       gatewayBaseUrl: "https://gateway.example.com/",
-      gatewayKey: "mgw_test",
+      gatewayKey: "mig_test",
       serviceName: "checkout-api",
       appId: "checkout",
       environment: "staging",
@@ -132,7 +132,7 @@ describe("ObserverClient", () => {
     expect(url).toBe("https://gateway.example.com/v1/traces");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({
-      "Authorization": "Bearer mgw_test",
+      "Authorization": "Bearer mig_test",
       "Content-Type": "application/json",
     });
 
@@ -187,7 +187,7 @@ describe("ObserverClient", () => {
     }));
     const client = new ObserverClient({
       gatewayBaseUrl: "https://gateway.example.com",
-      gatewayKey: "mgw_bad",
+      gatewayKey: "mig_bad",
       serviceName: "checkout-api",
       fetch: fetchMock,
       idGenerator: ids(["trace-1", "session-1", "root-1"]),

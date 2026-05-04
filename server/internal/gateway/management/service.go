@@ -302,6 +302,109 @@ func (s *Service) RevokeUserKey(ctx context.Context, workspaceID, userID, keyID 
 	return userKeyListItem(revoked), nil
 }
 
+func (s *Service) CreateIngestKey(ctx context.Context, input CreateIngestKeyInput, serverBaseURL string) (IngestKeyResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return IngestKeyResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return IngestKeyResponse{}, err
+	}
+	appID := strings.TrimSpace(input.AppID)
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		displayName = appID
+	}
+	if displayName == "" {
+		displayName = "Observer SDK"
+	}
+
+	box, err := s.loadBox()
+	if err != nil {
+		return IngestKeyResponse{}, normalizeSecretError(err)
+	}
+	prepared, err := keyring.PrepareNewIngestKey(box)
+	if err != nil {
+		return IngestKeyResponse{}, normalizeSecretError(err)
+	}
+
+	var created db.GatewayIngestKey
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		row, err := q.CreateGatewayIngestKey(ctx, db.CreateGatewayIngestKeyParams{
+			WorkspaceID:       workspaceUUID,
+			AppID:             appID,
+			DisplayName:       displayName,
+			KeyHash:           prepared.Hash,
+			EncryptedKeyValue: prepared.Encrypted,
+			KeyPrefix:         prepared.DisplayPrefix,
+			CreatedBy:         actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		created = row
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.ingest_key.create", "gateway_ingest_key", uuidString(row.ID), nil, ingestKeyListItem(row))
+	}); err != nil {
+		return IngestKeyResponse{}, err
+	}
+
+	return ingestKeyResponse(created, prepared.Raw, serverBaseURL), nil
+}
+
+func (s *Service) ListIngestKeys(ctx context.Context, workspaceID string) ([]IngestKeyListItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.queries.ListGatewayIngestKeys(ctx, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]IngestKeyListItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ingestKeyListItem(row))
+	}
+	return items, nil
+}
+
+func (s *Service) RevokeIngestKey(ctx context.Context, workspaceID, actorUserID, keyID string) (IngestKeyListItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return IngestKeyListItem{}, err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return IngestKeyListItem{}, err
+	}
+	keyUUID, err := uuidValue(keyID, "key_id")
+	if err != nil {
+		return IngestKeyListItem{}, err
+	}
+
+	var revoked db.GatewayIngestKey
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		row, err := q.RevokeGatewayIngestKey(ctx, db.RevokeGatewayIngestKeyParams{
+			WorkspaceID: workspaceUUID,
+			ID:          keyUUID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGatewayKeyNotFound
+		}
+		if err != nil {
+			return err
+		}
+		revoked = row
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.ingest_key.revoke", "gateway_ingest_key", uuidString(row.ID), nil, ingestKeyListItem(row))
+	}); err != nil {
+		return IngestKeyListItem{}, err
+	}
+
+	return ingestKeyListItem(revoked), nil
+}
+
 func userKeyResponse(row db.GatewayUserKey, raw string, urls GatewayURLs) UserKeyResponse {
 	return UserKeyResponse{
 		ID:               uuidString(row.ID),
@@ -316,6 +419,20 @@ func userKeyResponse(row db.GatewayUserKey, raw string, urls GatewayURLs) UserKe
 	}
 }
 
+func ingestKeyResponse(row db.GatewayIngestKey, raw, serverBaseURL string) IngestKeyResponse {
+	return IngestKeyResponse{
+		ID:             uuidString(row.ID),
+		Key:            raw,
+		KeyPrefix:      row.KeyPrefix,
+		AppID:          row.AppID,
+		DisplayName:    row.DisplayName,
+		GatewayBaseURL: strings.TrimRight(strings.TrimSpace(serverBaseURL), "/"),
+		CreatedAt:      textTimestamp(row.CreatedAt),
+		LastUsedAt:     optionalTimestamp(row.LastUsedAt),
+		RevokedAt:      optionalTimestamp(row.RevokedAt),
+	}
+}
+
 func userKeyListItem(row db.GatewayUserKey) UserKeyListItem {
 	return UserKeyListItem{
 		ID:         uuidString(row.ID),
@@ -323,6 +440,18 @@ func userKeyListItem(row db.GatewayUserKey) UserKeyListItem {
 		RevokedAt:  optionalTimestamp(row.RevokedAt),
 		LastUsedAt: optionalTimestamp(row.LastUsedAt),
 		CreatedAt:  textTimestamp(row.CreatedAt),
+	}
+}
+
+func ingestKeyListItem(row db.GatewayIngestKey) IngestKeyListItem {
+	return IngestKeyListItem{
+		ID:          uuidString(row.ID),
+		KeyPrefix:   row.KeyPrefix,
+		AppID:       row.AppID,
+		DisplayName: row.DisplayName,
+		RevokedAt:   optionalTimestamp(row.RevokedAt),
+		LastUsedAt:  optionalTimestamp(row.LastUsedAt),
+		CreatedAt:   textTimestamp(row.CreatedAt),
 	}
 }
 

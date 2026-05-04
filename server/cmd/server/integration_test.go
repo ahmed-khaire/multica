@@ -459,7 +459,7 @@ func TestInvalidJWT(t *testing.T) {
 // ---- Gateway through full router ----
 
 func TestGatewayRoutesRequireAuth(t *testing.T) {
-	paths := []string{"/api/gateway/status", "/api/gateway/key", "/api/gateway/backends"}
+	paths := []string{"/api/gateway/status", "/api/gateway/key", "/api/gateway/backends", "/api/gateway/ingest-keys"}
 
 	for _, path := range paths {
 		resp, err := http.Get(testServer.URL + path)
@@ -547,6 +547,104 @@ func TestGatewayTraceIngestThroughRouter(t *testing.T) {
 	}
 	if result.TraceID != traceID || result.SessionID == "" || result.SpanCount != 1 || result.LogCount != 1 {
 		t.Fatalf("unexpected trace ingest response: %+v", result)
+	}
+}
+
+func TestGatewayRouterIngestKeyFlow(t *testing.T) {
+	setGatewaySecret(t)
+
+	resp := authRequest(t, "POST", "/api/gateway/ingest-keys", map[string]any{
+		"app_id":       "checkout",
+		"display_name": "Checkout API",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("CreateGatewayIngestKey: expected 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	var created struct {
+		ID             string `json:"id"`
+		Key            string `json:"key"`
+		KeyPrefix      string `json:"key_prefix"`
+		AppID          string `json:"app_id"`
+		DisplayName    string `json:"display_name"`
+		GatewayBaseURL string `json:"gateway_base_url"`
+	}
+	readJSON(t, resp, &created)
+	if !strings.HasPrefix(created.Key, "mig_") {
+		t.Fatalf("ingest key = %q, want mig_ prefix", created.Key)
+	}
+	if created.ID == "" || created.KeyPrefix == "" || created.AppID != "checkout" || created.DisplayName != "Checkout API" {
+		t.Fatalf("unexpected ingest key response: %+v", created)
+	}
+	if created.GatewayBaseURL == "" {
+		t.Fatalf("gateway_base_url is empty: %+v", created)
+	}
+
+	resp = authRequest(t, "GET", "/api/gateway/ingest-keys", nil)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("ListGatewayIngestKeys: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var keys []map[string]any
+	readJSON(t, resp, &keys)
+	foundCreated := false
+	for _, key := range keys {
+		if key["id"] == created.ID {
+			foundCreated = true
+		}
+		if _, ok := key["key"]; ok {
+			t.Fatalf("list ingest keys leaked raw key: %#v", key)
+		}
+	}
+	if !foundCreated {
+		t.Fatalf("list ingest keys did not include %q: %#v", created.ID, keys)
+	}
+
+	traceID := "trace-router-ingest-key"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID)
+	})
+	resp = gatewayProxyRequest(t, http.MethodPost, "/v1/traces", created.Key, map[string]any{
+		"trace_id":     traceID,
+		"name":         "Router app ingest trace",
+		"service_name": "router-app",
+		"spans": []map[string]any{{
+			"span_id": "root",
+			"name":    "Router app workflow",
+			"kind":    "workflow",
+		}},
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("trace ingest with app key: expected 201, got %d: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = gatewayProxyRequest(t, http.MethodPost, "/v1/chat/completions", created.Key, map[string]any{
+		"model": "gpt-test",
+	}, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("proxy with app ingest key: expected 401, got %d", resp.StatusCode)
+	}
+
+	resp = authRequest(t, "POST", "/api/gateway/ingest-keys/"+created.ID+"/revoke", map[string]any{})
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("RevokeGatewayIngestKey: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var revoked struct {
+		ID        string  `json:"id"`
+		RevokedAt *string `json:"revoked_at"`
+	}
+	readJSON(t, resp, &revoked)
+	if revoked.ID != created.ID || revoked.RevokedAt == nil {
+		t.Fatalf("unexpected revoked ingest key: %+v", revoked)
 	}
 }
 
@@ -640,6 +738,25 @@ func TestGatewayRouterBackendAdminOnly(t *testing.T) {
 			name:   "delete backend",
 			method: "DELETE",
 			path:   "/api/gateway/backends/00000000-0000-0000-0000-000000000000",
+		},
+		{
+			name:   "create ingest key",
+			method: "POST",
+			path:   "/api/gateway/ingest-keys",
+			body: map[string]any{
+				"app_id":       "checkout",
+				"display_name": "Checkout API",
+			},
+		},
+		{
+			name:   "list ingest keys",
+			method: "GET",
+			path:   "/api/gateway/ingest-keys",
+		},
+		{
+			name:   "revoke ingest key",
+			method: "POST",
+			path:   "/api/gateway/ingest-keys/00000000-0000-0000-0000-000000000000/revoke",
 		},
 		{
 			name:   "set default",
