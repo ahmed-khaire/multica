@@ -34,6 +34,8 @@
     "./inbox/queries": "./inbox/queries.ts",
     "./inbox/mutations": "./inbox/mutations.ts",
     "./inbox/ws-updaters": "./inbox/ws-updaters.ts",
+    "./gateway": "./gateway/index.ts",
+    "./gateway/queries": "./gateway/queries.ts",
     "./chat": "./chat/index.ts",
     "./chat/queries": "./chat/queries.ts",
     "./chat/mutations": "./chat/mutations.ts",
