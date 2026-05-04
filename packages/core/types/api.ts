@@ -177,6 +177,20 @@ export interface DeleteGatewayBackendResponse {
   deleted: boolean;
 }
 
+export interface GatewayAuditLogItem {
+  id: string;
+  actor_user_id: string;
+  actor_name: string;
+  actor_email: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  request_id: string;
+  created_at: string;
+}
+
 export interface GatewayIngestKeyListItem {
   id: string;
   key_prefix: string;

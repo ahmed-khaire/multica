@@ -12,7 +12,9 @@ import {
   DatabaseZap,
   Eye,
   Gauge,
+  History,
   KeyRound,
+  LockKeyhole,
   MessageSquareText,
   Pencil,
   RefreshCw,
@@ -27,6 +29,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateGatewayBackendRequest,
+  GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
   GatewayIngestKeyListItem,
@@ -44,10 +47,12 @@ import type {
   GatewaySpanObservation,
   UpdateGatewayBackendRequest,
 } from "@multica/core/types";
+import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { api } from "@multica/core/api";
 import {
   gatewayKeys,
+  gatewayAuditOptions,
   gatewayBackendsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
@@ -57,6 +62,7 @@ import {
   gatewaySessionsOptions,
   gatewayStatusOptions,
 } from "@multica/core/gateway/queries";
+import { memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@multica/ui/components/ui/card";
@@ -466,6 +472,10 @@ function gatewayBackendLabel(backend: GatewayBackend): string {
   return backend.display_name || backend.slug;
 }
 
+function canManageGateway(role: string | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
+
 function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
   return [
     `OPENAI_BASE_URL=${key.openai_base_url}`,
@@ -477,6 +487,7 @@ function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
 
 function GatewayBackendsTable({
   backends,
+  canManage,
   editBaseUrl,
   editEnabled,
   editKey,
@@ -496,6 +507,7 @@ function GatewayBackendsTable({
   setEditName,
 }: {
   backends: GatewayBackend[];
+  canManage: boolean;
   editBaseUrl: string;
   editEnabled: boolean;
   editKey: string;
@@ -534,7 +546,7 @@ function GatewayBackendsTable({
           <TableHead>Key</TableHead>
           <TableHead>Status</TableHead>
           <TableHead className="text-right">Routing</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
+          {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -604,31 +616,37 @@ function GatewayBackendsTable({
                   </Button>
                 </TableCell>
                 <TableCell className="text-right">
-                  {backend.is_default ? <Badge variant="secondary">Default</Badge> : <Badge variant="outline">Optional</Badge>}
+                  {backend.is_default ? (
+                    <Badge variant="secondary">Default</Badge>
+                  ) : (
+                    <Badge variant="outline">Optional</Badge>
+                  )}
                 </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      disabled={pendingEditId === backend.id || !editBaseUrl.trim()}
-                      onClick={() => onSaveEdit(backend)}
-                      aria-label="Save backend changes"
-                      title="Save backend changes"
-                    >
-                      <Save className="size-3" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost"
-                      disabled={pendingEditId === backend.id}
-                      onClick={onCancelEdit}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </TableCell>
+                {canManage ? (
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        disabled={pendingEditId === backend.id || !editBaseUrl.trim()}
+                        onClick={() => onSaveEdit(backend)}
+                        aria-label="Save backend changes"
+                        title="Save backend changes"
+                      >
+                        <Save className="size-3" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        disabled={pendingEditId === backend.id}
+                        onClick={onCancelEdit}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </TableCell>
+                ) : null}
               </TableRow>
             );
           }
@@ -654,7 +672,7 @@ function GatewayBackendsTable({
               <TableCell className="text-right">
                 {backend.is_default ? (
                   <Badge variant="secondary">Default</Badge>
-                ) : (
+                ) : canManage ? (
                   <Button
                     type="button"
                     size="xs"
@@ -665,34 +683,38 @@ function GatewayBackendsTable({
                   >
                     Make default
                   </Button>
+                ) : (
+                  <Badge variant="outline">Optional</Badge>
                 )}
               </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-1">
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    disabled={Boolean(editingBackendId)}
-                    onClick={() => onStartEdit(backend)}
-                    aria-label={`Edit ${label}`}
-                    title={`Edit ${label}`}
-                  >
-                    <Pencil className="size-3" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="destructive"
-                    disabled={backend.is_default || pendingDeleteId === backend.id || Boolean(editingBackendId)}
-                    onClick={() => onDeleteBackend(backend)}
-                    aria-label={`Delete ${label}`}
-                    title={backend.is_default ? "Default backends cannot be deleted" : `Delete ${label}`}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </div>
-              </TableCell>
+              {canManage ? (
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={Boolean(editingBackendId)}
+                      onClick={() => onStartEdit(backend)}
+                      aria-label={`Edit ${label}`}
+                      title={`Edit ${label}`}
+                    >
+                      <Pencil className="size-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="destructive"
+                      disabled={backend.is_default || pendingDeleteId === backend.id || Boolean(editingBackendId)}
+                      onClick={() => onDeleteBackend(backend)}
+                      aria-label={`Delete ${label}`}
+                      title={backend.is_default ? "Default backends cannot be deleted" : `Delete ${label}`}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </div>
+                </TableCell>
+              ) : null}
             </TableRow>
           );
         })}
@@ -701,7 +723,17 @@ function GatewayBackendsTable({
   );
 }
 
-function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
+function GatewayConfigurationSetup({
+  canManage,
+  memberRole,
+  permissionsLoading,
+  wsId,
+}: {
+  canManage: boolean;
+  memberRole: string | undefined;
+  permissionsLoading: boolean;
+  wsId: string;
+}) {
   const qc = useQueryClient();
   const statusQuery = useQuery(gatewayStatusOptions(wsId));
   const backendsQuery = useQuery(gatewayBackendsOptions(wsId));
@@ -825,6 +857,20 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
 
   return (
     <div className="space-y-3">
+      {!permissionsLoading && !canManage ? (
+        <Card size="sm" className="rounded-lg">
+          <CardContent className="flex items-start gap-3">
+            <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Gateway administration requires owner or admin access.</p>
+              <p className="text-xs text-muted-foreground">
+                Your current role is {memberRole ?? "unknown"}. You can generate your own Gateway key and view routing policy, but workspace backends, capture policy, and ingest keys are managed by admins.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="grid gap-3 xl:grid-cols-3">
         <Card size="sm" className="rounded-lg">
           <CardHeader>
@@ -913,20 +959,26 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">Current: {status?.capture_policy ?? "full_content"}</p>
-            <div className="flex flex-wrap gap-2">
-              {capturePolicies.map((policy) => (
-                <Button
-                  key={policy}
-                  type="button"
-                  size="xs"
-                  variant={status?.capture_policy === policy ? "default" : "outline"}
-                  disabled={policyMutation.isPending || status?.capture_policy === policy}
-                  onClick={() => policyMutation.mutate(policy)}
-                >
-                  {policy}
-                </Button>
-              ))}
-            </div>
+            {canManage ? (
+              <div className="flex flex-wrap gap-2">
+                {capturePolicies.map((policy) => (
+                  <Button
+                    key={policy}
+                    type="button"
+                    size="xs"
+                    variant={status?.capture_policy === policy ? "default" : "outline"}
+                    disabled={policyMutation.isPending || status?.capture_policy === policy}
+                    onClick={() => policyMutation.mutate(policy)}
+                  >
+                    {policy}
+                  </Button>
+                ))}
+              </div>
+            ) : permissionsLoading ? (
+              <p className="text-xs text-muted-foreground">Checking workspace permissions...</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Only workspace owners and admins can change capture policy.</p>
+            )}
             {policyMutation.error instanceof Error ? (
               <p className="text-xs text-destructive">{policyMutation.error.message}</p>
             ) : null}
@@ -934,88 +986,90 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
         </Card>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <Card size="sm" className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Server className="size-4 text-muted-foreground" />
-              Add Backend
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-3" onSubmit={submitBackend}>
-              <div className="space-y-1.5">
-                <Label htmlFor="gateway-backend-provider">Provider</Label>
-                <NativeSelect
-                  id="gateway-backend-provider"
-                  className="w-full"
-                  value={provider}
-                  onChange={(event) => selectProvider(event.target.value)}
+      <div className={cn("grid gap-3", canManage ? "xl:grid-cols-[360px_minmax(0,1fr)]" : "xl:grid-cols-1")}>
+        {canManage ? (
+          <Card size="sm" className="rounded-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Server className="size-4 text-muted-foreground" />
+                Add Backend
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-3" onSubmit={submitBackend}>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gateway-backend-provider">Provider</Label>
+                  <NativeSelect
+                    id="gateway-backend-provider"
+                    className="w-full"
+                    value={provider}
+                    onChange={(event) => selectProvider(event.target.value)}
+                  >
+                    {gatewayProviderPresets.map((preset) => (
+                      <NativeSelectOption key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gateway-backend-base-url">Backend base URL</Label>
+                  <Input
+                    id="gateway-backend-base-url"
+                    value={baseUrl}
+                    onChange={(event) => setBaseUrl(event.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gateway-backend-key">Backend API key</Label>
+                  <Input
+                    id="gateway-backend-key"
+                    value={backendKey}
+                    onChange={(event) => setBackendKey(event.target.value)}
+                    placeholder={selectedProviderRequiresKey ? "sk-..." : "managed by sidecar"}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gateway-backend-name">Backend name</Label>
+                  <Input
+                    id="gateway-backend-name"
+                    value={backendName}
+                    onChange={(event) => setBackendName(event.target.value)}
+                    placeholder="Optional display name"
+                    autoComplete="off"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input"
+                    checked={setAsDefault}
+                    onChange={(event) => setSetAsDefault(event.target.checked)}
+                  />
+                  Set as default
+                </label>
+                {createBackendMutation.error instanceof Error ? (
+                  <p className="text-xs text-destructive">{createBackendMutation.error.message}</p>
+                ) : null}
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={
+                    createBackendMutation.isPending ||
+                    !provider ||
+                    !baseUrl.trim() ||
+                    (selectedProviderRequiresKey && !backendKey.trim())
+                  }
                 >
-                  {gatewayProviderPresets.map((preset) => (
-                    <NativeSelectOption key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="gateway-backend-base-url">Backend base URL</Label>
-                <Input
-                  id="gateway-backend-base-url"
-                  value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="gateway-backend-key">Backend API key</Label>
-                <Input
-                  id="gateway-backend-key"
-                  value={backendKey}
-                  onChange={(event) => setBackendKey(event.target.value)}
-                  placeholder={selectedProviderRequiresKey ? "sk-..." : "managed by sidecar"}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="gateway-backend-name">Backend name</Label>
-                <Input
-                  id="gateway-backend-name"
-                  value={backendName}
-                  onChange={(event) => setBackendName(event.target.value)}
-                  placeholder="Optional display name"
-                  autoComplete="off"
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="size-4 rounded border-input"
-                  checked={setAsDefault}
-                  onChange={(event) => setSetAsDefault(event.target.checked)}
-                />
-                Set as default
-              </label>
-              {createBackendMutation.error instanceof Error ? (
-                <p className="text-xs text-destructive">{createBackendMutation.error.message}</p>
-              ) : null}
-              <Button
-                type="submit"
-                size="sm"
-                disabled={
-                  createBackendMutation.isPending ||
-                  !provider ||
-                  !baseUrl.trim() ||
-                  (selectedProviderRequiresKey && !backendKey.trim())
-                }
-              >
-                <Server className="size-3.5" />
-                Add backend
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+                  <Server className="size-3.5" />
+                  Add backend
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card size="sm" className="rounded-lg">
           <CardHeader>
@@ -1034,6 +1088,7 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
             ) : (
               <GatewayBackendsTable
                 backends={backends}
+                canManage={canManage}
                 editBaseUrl={editBaseUrl}
                 editEnabled={editEnabled}
                 editKey={editKey}
@@ -1071,6 +1126,81 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
 
 function ingestKeyName(key: GatewayIngestKeyListItem): string {
   return key.display_name || key.app_id || key.key_prefix;
+}
+
+function GatewayAuditHistory({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const auditQuery = useQuery(gatewayAuditOptions(wsId, 20, canManage));
+  const rows = auditQuery.data ?? [];
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <History className="size-4 text-muted-foreground" />
+          Gateway Change History
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {auditQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <History className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No Gateway changes recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Backend, policy, and key administration events will appear here.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway audit history">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Action</TableHead>
+                <TableHead>Actor</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead className="text-right">Time</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayAuditLogItem) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <Badge variant="outline">{row.action}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-56 flex-col">
+                      <span className="truncate font-medium">{row.actor_name || row.actor_email || row.actor_user_id}</span>
+                      <span className="truncate text-xs text-muted-foreground">{row.actor_email}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-64 flex-col">
+                      <span className="truncate font-medium">{row.target_id}</span>
+                      <span className="truncate text-xs text-muted-foreground">{row.target_type}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.created_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {auditQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{auditQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 }
 
 function IngestKeySetup({ wsId }: { wsId: string }) {
@@ -1502,13 +1632,19 @@ function SessionDrilldown({
 export function GatewayPage() {
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
+  const user = useAuthStore((state) => state.user);
   const [timeWindow, setTimeWindow] = useState("24h");
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const filters = useMemo(() => ({ since: timeWindow, limit: 50 }), [timeWindow]);
 
+  const membersQuery = useQuery(memberListOptions(wsId));
   const overviewQuery = useQuery(gatewayOverviewOptions(wsId, filters));
   const sessionsQuery = useQuery(gatewaySessionsOptions(wsId, filters));
   const llmCallsQuery = useQuery(gatewayLLMCallsOptions(wsId, filters));
+  const currentMember = membersQuery.data?.find((member) => member.user_id === user?.id);
+  const memberRole = currentMember?.role;
+  const permissionsLoading = membersQuery.isLoading;
+  const canManage = !permissionsLoading && canManageGateway(memberRole);
 
   const sessionRows = sessionsQuery.data?.sessions;
   const sessions = useMemo(() => sessionRows ?? [], [sessionRows]);
@@ -1620,8 +1756,14 @@ export function GatewayPage() {
             </TabsContent>
             <TabsContent value="setup" className="mt-3">
               <div className="space-y-4">
-                <GatewayConfigurationSetup wsId={wsId} />
-                <IngestKeySetup wsId={wsId} />
+                <GatewayConfigurationSetup
+                  canManage={canManage}
+                  memberRole={memberRole}
+                  permissionsLoading={permissionsLoading}
+                  wsId={wsId}
+                />
+                <GatewayAuditHistory canManage={canManage} wsId={wsId} />
+                {canManage ? <IngestKeySetup wsId={wsId} /> : null}
               </div>
             </TabsContent>
           </Tabs>

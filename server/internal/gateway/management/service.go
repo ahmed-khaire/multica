@@ -835,6 +835,45 @@ func (s *Service) DeleteBackend(ctx context.Context, workspaceID, actorUserID, b
 	})
 }
 
+func (s *Service) ListAudit(ctx context.Context, workspaceID string, limit int32) ([]AuditLogItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := s.queries.ListGatewayAuditLog(ctx, db.ListGatewayAuditLogParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AuditLogItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, AuditLogItem{
+			ID:          uuidString(row.ID),
+			ActorUserID: uuidString(row.ActorUserID),
+			ActorName:   row.ActorName,
+			ActorEmail:  row.ActorEmail,
+			Action:      row.Action,
+			TargetType:  row.TargetType,
+			TargetID:    row.TargetID,
+			BeforeState: auditJSON(row.BeforeState),
+			AfterState:  auditJSON(row.AfterState),
+			RequestID:   row.RequestID,
+			CreatedAt:   textTimestamp(row.CreatedAt),
+		})
+	}
+	return items, nil
+}
+
 func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, string, error) {
 	normalized := input
 	normalized.Provider = strings.ToLower(strings.TrimSpace(normalized.Provider))
@@ -951,6 +990,17 @@ func metadataJSON(metadata map[string]any) ([]byte, error) {
 		return nil, fmt.Errorf("%w: invalid metadata: %v", ErrInvalidGatewayBackend, err)
 	}
 	return raw, nil
+}
+
+func auditJSON(raw []byte) any {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return value
 }
 
 func audit(ctx context.Context, q *db.Queries, workspaceID, actorUserID pgtype.UUID, action, targetType, targetID string, before, after any) error {

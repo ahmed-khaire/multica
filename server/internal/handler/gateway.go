@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -225,6 +226,21 @@ func (h *Handler) DeleteGatewayBackend(w http.ResponseWriter, r *http.Request) {
 	h.writeGatewayResult(w, http.StatusOK, map[string]bool{"deleted": true}, err)
 }
 
+func (h *Handler) ListGatewayAudit(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	limit, ok := gatewayAuditLimit(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListAudit(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) SetGatewayDefaultBackend(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -263,6 +279,22 @@ func (h *Handler) UpdateGatewayPolicy(w http.ResponseWriter, r *http.Request) {
 		CapturePolicy: req.CapturePolicy,
 	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func gatewayAuditLimit(w http.ResponseWriter, r *http.Request) (int32, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return 20, true
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+		return 0, false
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return int32(limit), true
 }
 
 func (h *Handler) gatewayRequestScope(w http.ResponseWriter, r *http.Request) (workspaceID, userID string, ok bool) {

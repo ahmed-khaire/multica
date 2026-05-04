@@ -6,6 +6,7 @@ import { WorkspaceIdProvider } from "@multica/core/hooks";
 import type {
   GatewayLLMCallListResponse,
   GatewayBackend,
+  GatewayAuditLogItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
@@ -16,8 +17,19 @@ import type {
   GatewayUserKeyResponse,
 } from "@multica/core/types";
 
-const { mockApi } = vi.hoisted(() => ({
+const { mockApi, mockAuthState } = vi.hoisted(() => ({
+  mockAuthState: {
+    user: {
+      id: "user-1",
+      name: "Admin User",
+      email: "admin@example.com",
+      avatar_url: null,
+      created_at: "2026-05-04T00:00:00Z",
+      updated_at: "2026-05-04T00:00:00Z",
+    },
+  },
   mockApi: {
+    listMembers: vi.fn(),
     getGatewayOverview: vi.fn(),
     listGatewaySessions: vi.fn(),
     getGatewaySession: vi.fn(),
@@ -28,6 +40,7 @@ const { mockApi } = vi.hoisted(() => ({
     revokeGatewayIngestKey: vi.fn(),
     getGatewayStatus: vi.fn(),
     listGatewayBackends: vi.fn(),
+    listGatewayAudit: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
@@ -38,6 +51,9 @@ const { mockApi } = vi.hoisted(() => ({
 }));
 
 vi.mock("@multica/core/api", () => ({ api: mockApi }));
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (state: typeof mockAuthState) => unknown) => selector(mockAuthState),
+}));
 
 import { GatewayPage } from "./gateway-page";
 
@@ -250,6 +266,35 @@ const gatewayUserKey: GatewayUserKeyResponse = {
   last_used_at: null,
 };
 
+const gatewayAudit: GatewayAuditLogItem[] = [
+  {
+    id: "audit-1",
+    actor_user_id: "user-1",
+    actor_name: "Admin User",
+    actor_email: "admin@example.com",
+    action: "gateway.backend.update",
+    target_type: "gateway_backend",
+    target_id: "backend-local",
+    before_state: { display_name: "Local OpenAI-compatible", enabled: true },
+    after_state: { display_name: "Local Router", enabled: false },
+    request_id: "",
+    created_at: "2026-05-04T12:30:00Z",
+  },
+];
+
+const adminMembers = [
+  {
+    id: "member-1",
+    workspace_id: "ws-1",
+    user_id: "user-1",
+    role: "admin",
+    created_at: "2026-05-04T00:00:00Z",
+    name: "Admin User",
+    email: "admin@example.com",
+    avatar_url: null,
+  },
+] as const;
+
 function renderGatewayPage() {
   const qc = new QueryClient({
     defaultOptions: {
@@ -269,6 +314,7 @@ function renderGatewayPage() {
 describe("GatewayPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApi.listMembers.mockResolvedValue(adminMembers);
     mockApi.getGatewayOverview.mockResolvedValue(overview);
     mockApi.listGatewaySessions.mockResolvedValue(sessions);
     mockApi.getGatewaySession.mockResolvedValue(sessionDetail);
@@ -279,6 +325,7 @@ describe("GatewayPage", () => {
     mockApi.revokeGatewayIngestKey.mockResolvedValue({ ...ingestKeys[0], revoked_at: "2026-05-04T12:00:00Z" });
     mockApi.getGatewayStatus.mockResolvedValue(gatewayStatus);
     mockApi.listGatewayBackends.mockResolvedValue(gatewayBackends);
+    mockApi.listGatewayAudit.mockResolvedValue(gatewayAudit);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -402,6 +449,35 @@ describe("GatewayPage", () => {
     await waitFor(() => {
       expect(mockApi.updateGatewayCapturePolicy).toHaveBeenCalledWith("metadata_only");
     });
+  });
+
+  it("renders Gateway administration as read-only for non-admin members", async () => {
+    const user = userEvent.setup();
+    mockApi.listMembers.mockResolvedValueOnce([{ ...adminMembers[0], role: "member" }]);
+
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText(/Gateway administration requires owner or admin access/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate Gateway key/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add backend/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Local OpenAI-compatible/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create ingest key/ })).not.toBeInTheDocument();
+    expect(mockApi.listGatewayAudit).not.toHaveBeenCalled();
+  });
+
+  it("shows Gateway audit history for admins from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Gateway Change History")).toBeInTheDocument();
+    expect(screen.getByText("gateway.backend.update")).toBeInTheDocument();
+    expect(screen.getByText("Admin User")).toBeInTheDocument();
+    expect(screen.getByText("backend-local")).toBeInTheDocument();
+    expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

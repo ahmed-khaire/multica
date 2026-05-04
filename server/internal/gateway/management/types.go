@@ -98,6 +98,20 @@ type IngestKeyListItem struct {
 	CreatedAt   string  `json:"created_at"`
 }
 
+type AuditLogItem struct {
+	ID          string `json:"id"`
+	ActorUserID string `json:"actor_user_id"`
+	ActorName   string `json:"actor_name"`
+	ActorEmail  string `json:"actor_email"`
+	Action      string `json:"action"`
+	TargetType  string `json:"target_type"`
+	TargetID    string `json:"target_id"`
+	BeforeState any    `json:"before_state"`
+	AfterState  any    `json:"after_state"`
+	RequestID   string `json:"request_id"`
+	CreatedAt   string `json:"created_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string

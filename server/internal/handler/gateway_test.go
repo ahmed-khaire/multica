@@ -117,6 +117,73 @@ func TestGatewayDeleteBackendReturnsDeletedResponse(t *testing.T) {
 	}
 }
 
+func TestGatewayAuditHandlerListsBackendChanges(t *testing.T) {
+	setGatewaySecret(t)
+
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider": "local",
+		"key":      "anything",
+	})
+
+	testHandler.CreateGatewayBackend(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayBackend: failed to decode response: %v", err)
+	}
+
+	displayName := "Local Router"
+	updateW := httptest.NewRecorder()
+	updateReq := newRequest("PATCH", "/api/gateway/backends/"+created.ID, map[string]any{
+		"display_name": displayName,
+		"enabled":      false,
+	})
+	updateReq = withURLParam(updateReq, "id", created.ID)
+	testHandler.UpdateGatewayBackend(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayBackend: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/audit?limit=10", nil)
+
+	testHandler.ListGatewayAudit(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListGatewayAudit: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []struct {
+		Action     string         `json:"action"`
+		TargetID   string         `json:"target_id"`
+		ActorName  string         `json:"actor_name"`
+		AfterState map[string]any `json:"after_state"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayAudit: failed to decode response: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Fatal("ListGatewayAudit: expected at least one audit row")
+	}
+	if resp[0].Action != "gateway.backend.update" {
+		t.Fatalf("ListGatewayAudit: first action = %q, want gateway.backend.update", resp[0].Action)
+	}
+	if resp[0].TargetID != created.ID {
+		t.Fatalf("ListGatewayAudit: target_id = %q, want %q", resp[0].TargetID, created.ID)
+	}
+	if resp[0].ActorName != handlerTestName {
+		t.Fatalf("ListGatewayAudit: actor_name = %q, want %q", resp[0].ActorName, handlerTestName)
+	}
+	if resp[0].AfterState["display_name"] != displayName {
+		t.Fatalf("ListGatewayAudit: after_state.display_name = %v, want %q", resp[0].AfterState["display_name"], displayName)
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

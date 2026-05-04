@@ -436,6 +436,81 @@ func (q *Queries) ListAIThirdPartyRisk(ctx context.Context, workspaceID pgtype.U
 	return items, nil
 }
 
+const listGatewayAuditLog = `-- name: ListGatewayAuditLog :many
+SELECT
+    l.id,
+    l.workspace_id,
+    l.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    l.action,
+    l.target_type,
+    l.target_id,
+    l.before_state,
+    l.after_state,
+    l.request_id,
+    l.created_at
+FROM ai_audit_log l
+LEFT JOIN "user" u ON u.id = l.actor_user_id
+WHERE l.workspace_id = $1
+  AND l.action LIKE 'gateway.%'
+ORDER BY l.created_at DESC
+LIMIT $2
+`
+
+type ListGatewayAuditLogParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+type ListGatewayAuditLogRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ActorUserID pgtype.UUID        `json:"actor_user_id"`
+	ActorName   string             `json:"actor_name"`
+	ActorEmail  string             `json:"actor_email"`
+	Action      string             `json:"action"`
+	TargetType  string             `json:"target_type"`
+	TargetID    string             `json:"target_id"`
+	BeforeState []byte             `json:"before_state"`
+	AfterState  []byte             `json:"after_state"`
+	RequestID   string             `json:"request_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListGatewayAuditLog(ctx context.Context, arg ListGatewayAuditLogParams) ([]ListGatewayAuditLogRow, error) {
+	rows, err := q.db.Query(ctx, listGatewayAuditLog, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewayAuditLogRow{}
+	for rows.Next() {
+		var i ListGatewayAuditLogRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ActorUserID,
+			&i.ActorName,
+			&i.ActorEmail,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.BeforeState,
+			&i.AfterState,
+			&i.RequestID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertAIControlMapping = `-- name: UpsertAIControlMapping :one
 INSERT INTO ai_control_mapping (
     workspace_id, framework, control_id, control_title,

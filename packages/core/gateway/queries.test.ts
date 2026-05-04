@@ -10,6 +10,7 @@ const { mockApi } = vi.hoisted(() => ({
     listGatewayIngestKeys: vi.fn(),
     getGatewayStatus: vi.fn(),
     listGatewayBackends: vi.fn(),
+    listGatewayAudit: vi.fn(),
   },
 }));
 
@@ -25,6 +26,7 @@ import {
   gatewayIngestKeysOptions,
   gatewayStatusOptions,
   gatewayBackendsOptions,
+  gatewayAuditOptions,
 } from "./queries";
 
 describe("gateway query options", () => {
@@ -60,6 +62,12 @@ describe("gateway query options", () => {
       "ws-1",
       "backends",
     ]);
+    expect(gatewayKeys.audit("ws-1", 20)).toEqual([
+      "gateway",
+      "ws-1",
+      "audit",
+      20,
+    ]);
   });
 
   it("routes query functions to the Gateway API client", async () => {
@@ -71,6 +79,7 @@ describe("gateway query options", () => {
     mockApi.listGatewayIngestKeys.mockResolvedValueOnce([]);
     mockApi.getGatewayStatus.mockResolvedValueOnce({ capture_policy: "full_content" });
     mockApi.listGatewayBackends.mockResolvedValueOnce([]);
+    mockApi.listGatewayAudit.mockResolvedValueOnce([]);
 
     const overviewQuery = gatewayOverviewOptions("ws-1", { since: "24h" });
     const sessionsQuery = gatewaySessionsOptions("ws-1", { limit: 25 });
@@ -80,6 +89,7 @@ describe("gateway query options", () => {
     const ingestKeysQuery = gatewayIngestKeysOptions("ws-1");
     const statusQuery = gatewayStatusOptions("ws-1");
     const backendsQuery = gatewayBackendsOptions("ws-1");
+    const auditQuery = gatewayAuditOptions("ws-1");
 
     expect(overviewQuery.queryFn).toBeTypeOf("function");
     expect(sessionsQuery.queryFn).toBeTypeOf("function");
@@ -89,6 +99,7 @@ describe("gateway query options", () => {
     expect(ingestKeysQuery.queryFn).toBeTypeOf("function");
     expect(statusQuery.queryFn).toBeTypeOf("function");
     expect(backendsQuery.queryFn).toBeTypeOf("function");
+    expect(auditQuery.queryFn).toBeTypeOf("function");
 
     await overviewQuery.queryFn!({} as never);
     await sessionsQuery.queryFn!({} as never);
@@ -98,6 +109,7 @@ describe("gateway query options", () => {
     await ingestKeysQuery.queryFn!({} as never);
     await statusQuery.queryFn!({} as never);
     await backendsQuery.queryFn!({} as never);
+    await auditQuery.queryFn!({} as never);
 
     expect(mockApi.getGatewayOverview).toHaveBeenCalledWith({ since: "24h" });
     expect(mockApi.listGatewaySessions).toHaveBeenCalledWith({ limit: 25 });
@@ -107,6 +119,7 @@ describe("gateway query options", () => {
     expect(mockApi.listGatewayIngestKeys).toHaveBeenCalledWith();
     expect(mockApi.getGatewayStatus).toHaveBeenCalledWith();
     expect(mockApi.listGatewayBackends).toHaveBeenCalledWith();
+    expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 20, signal: undefined });
   });
 
   it("passes abort signals through to the Gateway API client", async () => {
@@ -116,17 +129,20 @@ describe("gateway query options", () => {
     mockApi.listGatewayIngestKeys.mockResolvedValueOnce([]);
     mockApi.getGatewayStatus.mockResolvedValueOnce({ capture_policy: "full_content" });
     mockApi.listGatewayBackends.mockResolvedValueOnce([]);
+    mockApi.listGatewayAudit.mockResolvedValueOnce([]);
 
     await gatewayOverviewOptions("ws-1", { since: "24h" }).queryFn!({ signal } as never);
     await gatewaySessionDetailOptions("ws-1", "session-1").queryFn!({ signal } as never);
     await gatewayIngestKeysOptions("ws-1").queryFn!({ signal } as never);
     await gatewayStatusOptions("ws-1").queryFn!({ signal } as never);
     await gatewayBackendsOptions("ws-1").queryFn!({ signal } as never);
+    await gatewayAuditOptions("ws-1", 10).queryFn!({ signal } as never);
 
     expect(mockApi.getGatewayOverview).toHaveBeenCalledWith({ since: "24h", signal });
     expect(mockApi.getGatewaySession).toHaveBeenCalledWith("session-1", { signal });
     expect(mockApi.listGatewayIngestKeys).toHaveBeenCalledWith({ signal });
     expect(mockApi.getGatewayStatus).toHaveBeenCalledWith({ signal });
     expect(mockApi.listGatewayBackends).toHaveBeenCalledWith({ signal });
+    expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 10, signal });
   });
 });

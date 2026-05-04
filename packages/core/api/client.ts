@@ -46,6 +46,7 @@ import type {
   CreateGatewayBackendRequest,
   DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
+  GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
   GatewayIngestKeyListItem,
@@ -664,6 +665,13 @@ export class ApiClient {
     return this.fetch(`/api/gateway/backends/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  }
+
+  async listGatewayAudit(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayAuditLogItem[]> {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/gateway/audit${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
   }
 
   async setGatewayDefaultBackend(backendSlug: string): Promise<GatewaySettingsResponse> {

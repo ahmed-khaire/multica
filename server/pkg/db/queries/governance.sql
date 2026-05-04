@@ -106,3 +106,24 @@ INSERT INTO ai_audit_log (
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
+
+-- name: ListGatewayAuditLog :many
+SELECT
+    l.id,
+    l.workspace_id,
+    l.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    l.action,
+    l.target_type,
+    l.target_id,
+    l.before_state,
+    l.after_state,
+    l.request_id,
+    l.created_at
+FROM ai_audit_log l
+LEFT JOIN "user" u ON u.id = l.actor_user_id
+WHERE l.workspace_id = $1
+  AND l.action LIKE 'gateway.%'
+ORDER BY l.created_at DESC
+LIMIT $2;
