@@ -5,12 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceIdProvider } from "@multica/core/hooks";
 import type {
   GatewayLLMCallListResponse,
+  GatewayBackend,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
   GatewaySessionDetail,
   GatewaySessionListResponse,
   GatewaySessionSpansResponse,
+  GatewayStatusResponse,
+  GatewayUserKeyResponse,
 } from "@multica/core/types";
 
 const { mockApi } = vi.hoisted(() => ({
@@ -23,6 +26,12 @@ const { mockApi } = vi.hoisted(() => ({
     listGatewayIngestKeys: vi.fn(),
     createGatewayIngestKey: vi.fn(),
     revokeGatewayIngestKey: vi.fn(),
+    getGatewayStatus: vi.fn(),
+    listGatewayBackends: vi.fn(),
+    createGatewayUserKey: vi.fn(),
+    createGatewayBackend: vi.fn(),
+    setGatewayDefaultBackend: vi.fn(),
+    updateGatewayCapturePolicy: vi.fn(),
   },
 }));
 
@@ -188,6 +197,57 @@ const createdIngestKey: GatewayIngestKeyResponse = {
   gateway_base_url: "http://localhost:18080",
 };
 
+const gatewayBackends: GatewayBackend[] = [
+  {
+    id: "backend-openrouter",
+    slug: "openrouter",
+    display_name: "OpenRouter",
+    backend_type: "openai_compatible",
+    base_url: "https://openrouter.ai/api/v1",
+    credential_hint: "sk-or-12...cdef",
+    enabled: true,
+    is_default: true,
+    metadata: {},
+    created_at: "2026-05-04T09:00:00Z",
+    updated_at: "2026-05-04T09:00:00Z",
+  },
+  {
+    id: "backend-local",
+    slug: "local",
+    display_name: "Local OpenAI-compatible",
+    backend_type: "openai_compatible",
+    base_url: "http://127.0.0.1:11434/v1",
+    credential_hint: "any...hing",
+    enabled: true,
+    is_default: false,
+    metadata: {},
+    created_at: "2026-05-04T09:30:00Z",
+    updated_at: "2026-05-04T09:30:00Z",
+  },
+];
+
+const gatewayStatus: GatewayStatusResponse = {
+  openai_base_url: "http://localhost:18080/v1",
+  anthropic_base_url: "http://localhost:18080",
+  capture_policy: "full_content",
+  default_backend: gatewayBackends[0]!,
+  backend_count: 2,
+  enabled_backend_count: 2,
+  has_active_key: true,
+};
+
+const gatewayUserKey: GatewayUserKeyResponse = {
+  id: "gateway-key-1",
+  key: "mgw_secret",
+  key_prefix: "mgw_secret",
+  openai_base_url: "http://localhost:18080/v1",
+  openai_api_key: "mgw_secret",
+  anthropic_base_url: "http://localhost:18080",
+  anthropic_api_key: "mgw_secret",
+  created_at: "2026-05-04T12:00:00Z",
+  last_used_at: null,
+};
+
 function renderGatewayPage() {
   const qc = new QueryClient({
     defaultOptions: {
@@ -215,6 +275,12 @@ describe("GatewayPage", () => {
     mockApi.listGatewayIngestKeys.mockResolvedValue(ingestKeys);
     mockApi.createGatewayIngestKey.mockResolvedValue(createdIngestKey);
     mockApi.revokeGatewayIngestKey.mockResolvedValue({ ...ingestKeys[0], revoked_at: "2026-05-04T12:00:00Z" });
+    mockApi.getGatewayStatus.mockResolvedValue(gatewayStatus);
+    mockApi.listGatewayBackends.mockResolvedValue(gatewayBackends);
+    mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
+    mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
+    mockApi.setGatewayDefaultBackend.mockResolvedValue({ capture_policy: "full_content", default_backend: gatewayBackends[1] });
+    mockApi.updateGatewayCapturePolicy.mockResolvedValue({ capture_policy: "metadata_only", default_backend: gatewayBackends[0] });
   });
 
   it("renders overview metrics and breakdowns", async () => {
@@ -272,6 +338,60 @@ describe("GatewayPage", () => {
     });
     expect(await screen.findByText(/MULTICA_OBSERVER_GATEWAY_BASE_URL=http:\/\/localhost:18080/)).toBeInTheDocument();
     expect(screen.getByText(/MULTICA_OBSERVER_KEY=mig_secret/)).toBeInTheDocument();
+  });
+
+  it("shows Gateway URLs and creates a user gateway key from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("http://localhost:18080/v1")).toBeInTheDocument();
+    expect(screen.getByText("http://localhost:18080")).toBeInTheDocument();
+    expect(screen.getByText("full_content")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Generate Gateway key/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayUserKey).toHaveBeenCalledWith();
+    });
+    expect(await screen.findByText(/OPENAI_API_KEY=mgw_secret/)).toBeInTheDocument();
+    expect(screen.getByText(/ANTHROPIC_API_KEY=mgw_secret/)).toBeInTheDocument();
+  });
+
+  it("adds Gateway backends, changes the default backend, and updates capture policy", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    const backendsTable = await screen.findByRole("table", { name: /Gateway backends/ });
+    expect(within(backendsTable).getByText("OpenRouter")).toBeInTheDocument();
+    expect(within(backendsTable).getByText("Local OpenAI-compatible")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "groq");
+    await user.clear(screen.getByLabelText("Backend base URL"));
+    await user.type(screen.getByLabelText("Backend base URL"), "https://api.groq.com/openai/v1");
+    await user.type(screen.getByLabelText("Backend API key"), "gsk_test");
+    await user.click(screen.getByRole("button", { name: /Add backend/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayBackend).toHaveBeenCalledWith({
+        provider: "groq",
+        base_url: "https://api.groq.com/openai/v1",
+        key: "gsk_test",
+        set_default: false,
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /Make Local OpenAI-compatible default/ }));
+    await waitFor(() => {
+      expect(mockApi.setGatewayDefaultBackend).toHaveBeenCalledWith("local");
+    });
+
+    await user.click(screen.getByRole("button", { name: "metadata_only" }));
+    await waitFor(() => {
+      expect(mockApi.updateGatewayCapturePolicy).toHaveBeenCalledWith("metadata_only");
+    });
   });
 
   it("revokes ingest keys from the Setup tab", async () => {

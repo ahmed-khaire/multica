@@ -43,14 +43,20 @@ import type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
+  CreateGatewayBackendRequest,
   CreateGatewayIngestKeyRequest,
+  GatewayBackend,
+  GatewayCapturePolicy,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
+  GatewaySettingsResponse,
   GatewaySessionListResponse,
   GatewaySessionDetail,
   GatewaySessionSpansResponse,
+  GatewayStatusResponse,
+  GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
@@ -621,6 +627,42 @@ export class ApiClient {
 
   async listGatewayLLMCalls(params?: GatewayObservabilityParams): Promise<GatewayLLMCallListResponse> {
     return this.fetch(`/api/gateway/llm-calls${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
+  async getGatewayStatus(params?: { signal?: AbortSignal }): Promise<GatewayStatusResponse> {
+    return this.fetch("/api/gateway/status", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayBackends(params?: { signal?: AbortSignal }): Promise<GatewayBackend[]> {
+    return this.fetch("/api/gateway/backends", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async createGatewayUserKey(): Promise<GatewayUserKeyResponse> {
+    return this.fetch("/api/gateway/key", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async createGatewayBackend(data: CreateGatewayBackendRequest): Promise<GatewayBackend> {
+    return this.fetch("/api/gateway/backends", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async setGatewayDefaultBackend(backendSlug: string): Promise<GatewaySettingsResponse> {
+    return this.fetch("/api/gateway/default", {
+      method: "POST",
+      body: JSON.stringify({ backend_slug: backendSlug }),
+    });
+  }
+
+  async updateGatewayCapturePolicy(capturePolicy: GatewayCapturePolicy | string): Promise<GatewaySettingsResponse> {
+    return this.fetch("/api/gateway/policy", {
+      method: "POST",
+      body: JSON.stringify({ capture_policy: capturePolicy }),
+    });
   }
 
   async listGatewayIngestKeys(params?: { signal?: AbortSignal }): Promise<GatewayIngestKeyListItem[]> {

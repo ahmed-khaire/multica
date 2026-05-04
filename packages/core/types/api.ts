@@ -104,6 +104,67 @@ export interface GatewayObservabilityParams {
   signal?: AbortSignal;
 }
 
+export type GatewayCapturePolicy = "metadata_only" | "redacted_content" | "full_content";
+
+export interface GatewayBackend {
+  id: string;
+  slug: string;
+  display_name: string;
+  backend_type: string;
+  base_url: string;
+  credential_hint: string;
+  enabled: boolean;
+  is_default: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GatewaySettingsResponse {
+  capture_policy: GatewayCapturePolicy | string;
+  default_backend: GatewayBackend | null;
+}
+
+export interface GatewayStatusResponse extends GatewaySettingsResponse {
+  openai_base_url: string;
+  anthropic_base_url: string;
+  backend_count: number;
+  enabled_backend_count: number;
+  has_active_key: boolean;
+}
+
+export interface GatewayUserKeyResponse {
+  id: string;
+  key: string;
+  key_prefix: string;
+  openai_base_url: string;
+  openai_api_key: string;
+  anthropic_base_url: string;
+  anthropic_api_key: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface GatewayUserKeyListItem {
+  id: string;
+  key_prefix: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface CreateGatewayBackendRequest {
+  provider: string;
+  slug?: string;
+  display_name?: string;
+  backend_type?: string;
+  base_url?: string;
+  key?: string;
+  enabled?: boolean;
+  set_default?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 export interface GatewayIngestKeyListItem {
   id: string;
   key_prefix: string;

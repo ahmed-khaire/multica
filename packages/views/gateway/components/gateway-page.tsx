@@ -24,8 +24,13 @@ import {
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  CreateGatewayBackendRequest,
+  GatewayBackend,
+  GatewayCapturePolicy,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
+  GatewayStatusResponse,
+  GatewayUserKeyResponse,
   GatewayBackendUsage,
   GatewayOverviewResponse,
   GatewayLLMCallListItem,
@@ -40,18 +45,21 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { api } from "@multica/core/api";
 import {
   gatewayKeys,
+  gatewayBackendsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
   gatewaySessionDetailOptions,
   gatewaySessionSpansOptions,
   gatewaySessionsOptions,
+  gatewayStatusOptions,
 } from "@multica/core/gateway/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
   Table,
@@ -74,6 +82,17 @@ const windowOptions: WindowOption[] = [
   { label: "7d", value: "7d" },
   { label: "30d", value: "30d" },
 ];
+
+const gatewayProviderPresets = [
+  { label: "OpenAI", value: "openai", baseUrl: "https://api.openai.com/v1" },
+  { label: "Groq", value: "groq", baseUrl: "https://api.groq.com/openai/v1" },
+  { label: "OpenRouter", value: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+  { label: "Local", value: "local", baseUrl: "http://127.0.0.1:11434/v1" },
+  { label: "Anthropic", value: "anthropic", baseUrl: "https://api.anthropic.com" },
+  { label: "Claude OAuth", value: "claude-oauth", baseUrl: "claude-oauth://sidecar" },
+];
+
+const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];
 
 function formatCount(value: number | null | undefined): string {
   if (!value) return "0";
@@ -428,6 +447,398 @@ function LLMCallsTable({
         ))}
       </TableBody>
     </Table>
+  );
+}
+
+function GatewayValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate text-sm font-medium">{value || "Not configured"}</p>
+    </div>
+  );
+}
+
+function gatewayBackendLabel(backend: GatewayBackend): string {
+  return backend.display_name || backend.slug;
+}
+
+function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
+  return [
+    `OPENAI_BASE_URL=${key.openai_base_url}`,
+    `OPENAI_API_KEY=${key.openai_api_key}`,
+    `ANTHROPIC_BASE_URL=${key.anthropic_base_url}`,
+    `ANTHROPIC_API_KEY=${key.anthropic_api_key}`,
+  ].join("\n");
+}
+
+function GatewayBackendsTable({
+  backends,
+  onSetDefault,
+  pendingDefaultSlug,
+}: {
+  backends: GatewayBackend[];
+  onSetDefault: (slug: string) => void;
+  pendingDefaultSlug: string;
+}) {
+  if (backends.length === 0) {
+    return (
+      <div className="flex h-40 flex-col items-center justify-center border-t text-center">
+        <Server className="size-8 text-muted-foreground/40" />
+        <p className="mt-3 text-sm font-medium">No Gateway backends</p>
+        <p className="mt-1 text-xs text-muted-foreground">Add a managed backend before routing user agent traffic.</p>
+      </div>
+    );
+  }
+
+  return (
+    <Table aria-label="Gateway backends">
+      <TableHeader>
+        <TableRow>
+          <TableHead>Backend</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>Base URL</TableHead>
+          <TableHead>Key</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="text-right">Default</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {backends.map((backend) => (
+          <TableRow key={backend.id}>
+            <TableCell>
+              <div className="flex max-w-56 flex-col">
+                <span className="truncate font-medium">{gatewayBackendLabel(backend)}</span>
+                <span className="truncate text-xs text-muted-foreground">{backend.slug}</span>
+              </div>
+            </TableCell>
+            <TableCell>{backend.backend_type}</TableCell>
+            <TableCell>
+              <span className="block max-w-72 truncate">{backend.base_url}</span>
+            </TableCell>
+            <TableCell>{backend.credential_hint}</TableCell>
+            <TableCell>
+              <Badge variant={backend.enabled ? "secondary" : "outline"}>
+                {backend.enabled ? "enabled" : "disabled"}
+              </Badge>
+            </TableCell>
+            <TableCell className="text-right">
+              {backend.is_default ? (
+                <Badge variant="secondary">Default</Badge>
+              ) : (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={pendingDefaultSlug === backend.slug}
+                  onClick={() => onSetDefault(backend.slug)}
+                  aria-label={`Make ${gatewayBackendLabel(backend)} default`}
+                >
+                  Make default
+                </Button>
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
+  const qc = useQueryClient();
+  const statusQuery = useQuery(gatewayStatusOptions(wsId));
+  const backendsQuery = useQuery(gatewayBackendsOptions(wsId));
+  const [generatedKey, setGeneratedKey] = useState<GatewayUserKeyResponse | null>(null);
+  const [provider, setProvider] = useState(gatewayProviderPresets[0]!.value);
+  const [baseUrl, setBaseUrl] = useState(gatewayProviderPresets[0]!.baseUrl);
+  const [backendKey, setBackendKey] = useState("");
+  const [backendName, setBackendName] = useState("");
+  const [setAsDefault, setSetAsDefault] = useState(false);
+
+  const invalidateConfig = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.status(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.backends(wsId) });
+  };
+
+  const createUserKeyMutation = useMutation({
+    mutationFn: () => api.createGatewayUserKey(),
+    onSuccess: (key) => {
+      setGeneratedKey(key);
+      invalidateConfig();
+    },
+  });
+
+  const createBackendMutation = useMutation({
+    mutationFn: (input: CreateGatewayBackendRequest) => api.createGatewayBackend(input),
+    onSuccess: () => {
+      setBackendKey("");
+      setBackendName("");
+      setSetAsDefault(false);
+      invalidateConfig();
+    },
+  });
+
+  const defaultMutation = useMutation({
+    mutationFn: (slug: string) => api.setGatewayDefaultBackend(slug),
+    onSuccess: invalidateConfig,
+  });
+
+  const policyMutation = useMutation({
+    mutationFn: (policy: GatewayCapturePolicy) => api.updateGatewayCapturePolicy(policy),
+    onSuccess: invalidateConfig,
+  });
+
+  const status = statusQuery.data as GatewayStatusResponse | undefined;
+  const backends = backendsQuery.data ?? [];
+  const generatedEnv = generatedKey ? gatewayUserKeyEnv(generatedKey) : "";
+  const selectedProviderRequiresKey = provider !== "claude-oauth";
+
+  const submitBackend = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const input: CreateGatewayBackendRequest = {
+      provider,
+      set_default: setAsDefault,
+    };
+    if (baseUrl.trim()) input.base_url = baseUrl.trim();
+    if (backendKey.trim()) input.key = backendKey.trim();
+    if (backendName.trim()) input.display_name = backendName.trim();
+    createBackendMutation.mutate(input);
+  };
+
+  const selectProvider = (value: string) => {
+    setProvider(value);
+    setBaseUrl(gatewayProviderPresets.find((preset) => preset.value === value)?.baseUrl ?? "");
+  };
+
+  const copyGeneratedGatewayKey = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard && generatedEnv) {
+      void navigator.clipboard.writeText(generatedEnv);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-3">
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Route className="size-4 text-muted-foreground" />
+              Gateway URLs
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {statusQuery.isLoading && !status ? (
+              <>
+                <Skeleton className="h-16 rounded-md" />
+                <Skeleton className="h-16 rounded-md" />
+              </>
+            ) : (
+              <>
+                <GatewayValue label="OpenAI-compatible" value={status?.openai_base_url ?? ""} />
+                <GatewayValue label="Anthropic-compatible" value={status?.anthropic_base_url ?? ""} />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <GatewayValue label="Default backend" value={status?.default_backend?.slug ?? "None"} />
+                  <GatewayValue label="Enabled backends" value={`${status?.enabled_backend_count ?? 0}/${status?.backend_count ?? 0}`} />
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <KeyRound className="size-4 text-muted-foreground" />
+              User Gateway Key
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Badge variant={status?.has_active_key ? "secondary" : "outline"}>
+                {status?.has_active_key ? "active key" : "no active key"}
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={createUserKeyMutation.isPending}
+                onClick={() => createUserKeyMutation.mutate()}
+              >
+                <KeyRound className="size-3.5" />
+                Generate Gateway key
+              </Button>
+            </div>
+            {generatedKey ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">Copy this secret now. It will not be shown again.</p>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={copyGeneratedGatewayKey}
+                    aria-label="Copy generated Gateway key"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </div>
+                <pre className="max-h-44 overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+                  {generatedEnv}
+                </pre>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Generate a key for Claude Code, Codex, or any OpenAI/Anthropic-compatible client.
+              </p>
+            )}
+            {createUserKeyMutation.error instanceof Error ? (
+              <p className="text-xs text-destructive">{createUserKeyMutation.error.message}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ShieldCheck className="size-4 text-muted-foreground" />
+              Capture Policy
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Current: {status?.capture_policy ?? "full_content"}</p>
+            <div className="flex flex-wrap gap-2">
+              {capturePolicies.map((policy) => (
+                <Button
+                  key={policy}
+                  type="button"
+                  size="xs"
+                  variant={status?.capture_policy === policy ? "default" : "outline"}
+                  disabled={policyMutation.isPending || status?.capture_policy === policy}
+                  onClick={() => policyMutation.mutate(policy)}
+                >
+                  {policy}
+                </Button>
+              ))}
+            </div>
+            {policyMutation.error instanceof Error ? (
+              <p className="text-xs text-destructive">{policyMutation.error.message}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Server className="size-4 text-muted-foreground" />
+              Add Backend
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-3" onSubmit={submitBackend}>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-backend-provider">Provider</Label>
+                <NativeSelect
+                  id="gateway-backend-provider"
+                  className="w-full"
+                  value={provider}
+                  onChange={(event) => selectProvider(event.target.value)}
+                >
+                  {gatewayProviderPresets.map((preset) => (
+                    <NativeSelectOption key={preset.value} value={preset.value}>
+                      {preset.label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-backend-base-url">Backend base URL</Label>
+                <Input
+                  id="gateway-backend-base-url"
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-backend-key">Backend API key</Label>
+                <Input
+                  id="gateway-backend-key"
+                  value={backendKey}
+                  onChange={(event) => setBackendKey(event.target.value)}
+                  placeholder={selectedProviderRequiresKey ? "sk-..." : "managed by sidecar"}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-backend-name">Backend name</Label>
+                <Input
+                  id="gateway-backend-name"
+                  value={backendName}
+                  onChange={(event) => setBackendName(event.target.value)}
+                  placeholder="Optional display name"
+                  autoComplete="off"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-input"
+                  checked={setAsDefault}
+                  onChange={(event) => setSetAsDefault(event.target.checked)}
+                />
+                Set as default
+              </label>
+              {createBackendMutation.error instanceof Error ? (
+                <p className="text-xs text-destructive">{createBackendMutation.error.message}</p>
+              ) : null}
+              <Button
+                type="submit"
+                size="sm"
+                disabled={
+                  createBackendMutation.isPending ||
+                  !provider ||
+                  !baseUrl.trim() ||
+                  (selectedProviderRequiresKey && !backendKey.trim())
+                }
+              >
+                <Server className="size-3.5" />
+                Add backend
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Server className="size-4 text-muted-foreground" />
+              Managed Backends
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {backendsQuery.isLoading ? (
+              <div className="space-y-2 p-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-12 rounded-md" />
+                ))}
+              </div>
+            ) : (
+              <GatewayBackendsTable
+                backends={backends}
+                pendingDefaultSlug={defaultMutation.variables ?? ""}
+                onSetDefault={(slug) => defaultMutation.mutate(slug)}
+              />
+            )}
+            {backendsQuery.error instanceof Error ? (
+              <p className="border-t p-3 text-xs text-destructive">{backendsQuery.error.message}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
 
@@ -981,7 +1392,10 @@ export function GatewayPage() {
               )}
             </TabsContent>
             <TabsContent value="setup" className="mt-3">
-              <IngestKeySetup wsId={wsId} />
+              <div className="space-y-4">
+                <GatewayConfigurationSetup wsId={wsId} />
+                <IngestKeySetup wsId={wsId} />
+              </div>
             </TabsContent>
           </Tabs>
         </div>
