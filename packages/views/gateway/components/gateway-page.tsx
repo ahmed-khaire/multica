@@ -14,8 +14,10 @@ import {
   Gauge,
   KeyRound,
   MessageSquareText,
+  Pencil,
   RefreshCw,
   Route,
+  Save,
   Server,
   ShieldCheck,
   TerminalSquare,
@@ -40,6 +42,7 @@ import type {
   GatewaySessionDetail,
   GatewaySessionListItem,
   GatewaySpanObservation,
+  UpdateGatewayBackendRequest,
 } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { api } from "@multica/core/api";
@@ -474,12 +477,42 @@ function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
 
 function GatewayBackendsTable({
   backends,
+  editBaseUrl,
+  editEnabled,
+  editKey,
+  editingBackendId,
+  editName,
+  onCancelEdit,
+  onDeleteBackend,
+  onSaveEdit,
   onSetDefault,
+  onStartEdit,
+  pendingDeleteId,
   pendingDefaultSlug,
+  pendingEditId,
+  setEditBaseUrl,
+  setEditEnabled,
+  setEditKey,
+  setEditName,
 }: {
   backends: GatewayBackend[];
+  editBaseUrl: string;
+  editEnabled: boolean;
+  editKey: string;
+  editingBackendId: string;
+  editName: string;
+  onCancelEdit: () => void;
+  onDeleteBackend: (backend: GatewayBackend) => void;
+  onSaveEdit: (backend: GatewayBackend) => void;
   onSetDefault: (slug: string) => void;
+  onStartEdit: (backend: GatewayBackend) => void;
+  pendingDeleteId: string;
   pendingDefaultSlug: string;
+  pendingEditId: string;
+  setEditBaseUrl: (value: string) => void;
+  setEditEnabled: (value: boolean) => void;
+  setEditKey: (value: string) => void;
+  setEditName: (value: string) => void;
 }) {
   if (backends.length === 0) {
     return (
@@ -500,46 +533,169 @@ function GatewayBackendsTable({
           <TableHead>Base URL</TableHead>
           <TableHead>Key</TableHead>
           <TableHead>Status</TableHead>
-          <TableHead className="text-right">Default</TableHead>
+          <TableHead className="text-right">Routing</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {backends.map((backend) => (
-          <TableRow key={backend.id}>
-            <TableCell>
-              <div className="flex max-w-56 flex-col">
-                <span className="truncate font-medium">{gatewayBackendLabel(backend)}</span>
-                <span className="truncate text-xs text-muted-foreground">{backend.slug}</span>
-              </div>
-            </TableCell>
-            <TableCell>{backend.backend_type}</TableCell>
-            <TableCell>
-              <span className="block max-w-72 truncate">{backend.base_url}</span>
-            </TableCell>
-            <TableCell>{backend.credential_hint}</TableCell>
-            <TableCell>
-              <Badge variant={backend.enabled ? "secondary" : "outline"}>
-                {backend.enabled ? "enabled" : "disabled"}
-              </Badge>
-            </TableCell>
-            <TableCell className="text-right">
-              {backend.is_default ? (
-                <Badge variant="secondary">Default</Badge>
-              ) : (
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={pendingDefaultSlug === backend.slug}
-                  onClick={() => onSetDefault(backend.slug)}
-                  aria-label={`Make ${gatewayBackendLabel(backend)} default`}
-                >
-                  Make default
-                </Button>
-              )}
-            </TableCell>
-          </TableRow>
-        ))}
+        {backends.map((backend) => {
+          const label = gatewayBackendLabel(backend);
+          const isEditing = editingBackendId === backend.id;
+          const editNameId = `gateway-edit-name-${backend.id}`;
+          const editBaseUrlId = `gateway-edit-base-url-${backend.id}`;
+          const editKeyId = `gateway-edit-key-${backend.id}`;
+
+          if (isEditing) {
+            return (
+              <TableRow key={backend.id}>
+                <TableCell>
+                  <div className="w-56 space-y-1">
+                    <Label htmlFor={editNameId} className="sr-only">
+                      Edit backend name
+                    </Label>
+                    <Input
+                      id={editNameId}
+                      aria-label="Edit backend name"
+                      value={editName}
+                      onChange={(event) => setEditName(event.target.value)}
+                      autoComplete="off"
+                    />
+                    <p className="truncate text-xs text-muted-foreground">{backend.slug}</p>
+                  </div>
+                </TableCell>
+                <TableCell>{backend.backend_type}</TableCell>
+                <TableCell>
+                  <div className="w-72">
+                    <Label htmlFor={editBaseUrlId} className="sr-only">
+                      Edit backend base URL
+                    </Label>
+                    <Input
+                      id={editBaseUrlId}
+                      aria-label="Edit backend base URL"
+                      value={editBaseUrl}
+                      onChange={(event) => setEditBaseUrl(event.target.value)}
+                      autoComplete="off"
+                    />
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="w-44">
+                    <Label htmlFor={editKeyId} className="sr-only">
+                      Rotate backend API key
+                    </Label>
+                    <Input
+                      id={editKeyId}
+                      aria-label="Rotate backend API key"
+                      value={editKey}
+                      onChange={(event) => setEditKey(event.target.value)}
+                      placeholder="Leave unchanged"
+                      autoComplete="off"
+                    />
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant={editEnabled ? "outline" : "secondary"}
+                    onClick={() => setEditEnabled(!editEnabled)}
+                  >
+                    {editEnabled ? "Disable backend" : "Enable backend"}
+                  </Button>
+                </TableCell>
+                <TableCell className="text-right">
+                  {backend.is_default ? <Badge variant="secondary">Default</Badge> : <Badge variant="outline">Optional</Badge>}
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      disabled={pendingEditId === backend.id || !editBaseUrl.trim()}
+                      onClick={() => onSaveEdit(backend)}
+                      aria-label="Save backend changes"
+                      title="Save backend changes"
+                    >
+                      <Save className="size-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      disabled={pendingEditId === backend.id}
+                      onClick={onCancelEdit}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          }
+
+          return (
+            <TableRow key={backend.id}>
+              <TableCell>
+                <div className="flex max-w-56 flex-col">
+                  <span className="truncate font-medium">{label}</span>
+                  <span className="truncate text-xs text-muted-foreground">{backend.slug}</span>
+                </div>
+              </TableCell>
+              <TableCell>{backend.backend_type}</TableCell>
+              <TableCell>
+                <span className="block max-w-72 truncate">{backend.base_url}</span>
+              </TableCell>
+              <TableCell>{backend.credential_hint}</TableCell>
+              <TableCell>
+                <Badge variant={backend.enabled ? "secondary" : "outline"}>
+                  {backend.enabled ? "enabled" : "disabled"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right">
+                {backend.is_default ? (
+                  <Badge variant="secondary">Default</Badge>
+                ) : (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={pendingDefaultSlug === backend.slug}
+                    onClick={() => onSetDefault(backend.slug)}
+                    aria-label={`Make ${label} default`}
+                  >
+                    Make default
+                  </Button>
+                )}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-1">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={Boolean(editingBackendId)}
+                    onClick={() => onStartEdit(backend)}
+                    aria-label={`Edit ${label}`}
+                    title={`Edit ${label}`}
+                  >
+                    <Pencil className="size-3" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="destructive"
+                    disabled={backend.is_default || pendingDeleteId === backend.id || Boolean(editingBackendId)}
+                    onClick={() => onDeleteBackend(backend)}
+                    aria-label={`Delete ${label}`}
+                    title={backend.is_default ? "Default backends cannot be deleted" : `Delete ${label}`}
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -555,10 +711,23 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
   const [backendKey, setBackendKey] = useState("");
   const [backendName, setBackendName] = useState("");
   const [setAsDefault, setSetAsDefault] = useState(false);
+  const [editingBackendId, setEditingBackendId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editBaseUrl, setEditBaseUrl] = useState("");
+  const [editKey, setEditKey] = useState("");
+  const [editEnabled, setEditEnabled] = useState(true);
 
   const invalidateConfig = () => {
     void qc.invalidateQueries({ queryKey: gatewayKeys.status(wsId) });
     void qc.invalidateQueries({ queryKey: gatewayKeys.backends(wsId) });
+  };
+
+  const resetBackendEdit = () => {
+    setEditingBackendId("");
+    setEditName("");
+    setEditBaseUrl("");
+    setEditKey("");
+    setEditEnabled(true);
   };
 
   const createUserKeyMutation = useMutation({
@@ -577,6 +746,20 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
       setSetAsDefault(false);
       invalidateConfig();
     },
+  });
+
+  const updateBackendMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateGatewayBackendRequest }) =>
+      api.updateGatewayBackend(id, input),
+    onSuccess: () => {
+      resetBackendEdit();
+      invalidateConfig();
+    },
+  });
+
+  const deleteBackendMutation = useMutation({
+    mutationFn: (id: string) => api.deleteGatewayBackend(id),
+    onSuccess: invalidateConfig,
   });
 
   const defaultMutation = useMutation({
@@ -604,6 +787,29 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
     if (backendKey.trim()) input.key = backendKey.trim();
     if (backendName.trim()) input.display_name = backendName.trim();
     createBackendMutation.mutate(input);
+  };
+
+  const startBackendEdit = (backend: GatewayBackend) => {
+    setEditingBackendId(backend.id);
+    setEditName(gatewayBackendLabel(backend));
+    setEditBaseUrl(backend.base_url);
+    setEditKey("");
+    setEditEnabled(backend.enabled);
+  };
+
+  const saveBackendEdit = (backend: GatewayBackend) => {
+    const input: UpdateGatewayBackendRequest = {
+      display_name: editName.trim(),
+      base_url: editBaseUrl.trim(),
+      enabled: editEnabled,
+    };
+    if (editKey.trim()) input.key = editKey.trim();
+    updateBackendMutation.mutate({ id: backend.id, input });
+  };
+
+  const deleteBackend = (backend: GatewayBackend) => {
+    if (backend.is_default) return;
+    deleteBackendMutation.mutate(backend.id);
   };
 
   const selectProvider = (value: string) => {
@@ -828,12 +1034,33 @@ function GatewayConfigurationSetup({ wsId }: { wsId: string }) {
             ) : (
               <GatewayBackendsTable
                 backends={backends}
-                pendingDefaultSlug={defaultMutation.variables ?? ""}
+                editBaseUrl={editBaseUrl}
+                editEnabled={editEnabled}
+                editKey={editKey}
+                editingBackendId={editingBackendId}
+                editName={editName}
+                onCancelEdit={resetBackendEdit}
+                onDeleteBackend={deleteBackend}
+                onSaveEdit={saveBackendEdit}
+                pendingDeleteId={deleteBackendMutation.isPending ? deleteBackendMutation.variables ?? "" : ""}
+                pendingDefaultSlug={defaultMutation.isPending ? defaultMutation.variables ?? "" : ""}
+                pendingEditId={updateBackendMutation.isPending ? updateBackendMutation.variables?.id ?? "" : ""}
                 onSetDefault={(slug) => defaultMutation.mutate(slug)}
+                onStartEdit={startBackendEdit}
+                setEditBaseUrl={setEditBaseUrl}
+                setEditEnabled={setEditEnabled}
+                setEditKey={setEditKey}
+                setEditName={setEditName}
               />
             )}
             {backendsQuery.error instanceof Error ? (
               <p className="border-t p-3 text-xs text-destructive">{backendsQuery.error.message}</p>
+            ) : null}
+            {updateBackendMutation.error instanceof Error ? (
+              <p className="border-t p-3 text-xs text-destructive">{updateBackendMutation.error.message}</p>
+            ) : null}
+            {deleteBackendMutation.error instanceof Error ? (
+              <p className="border-t p-3 text-xs text-destructive">{deleteBackendMutation.error.message}</p>
             ) : null}
           </CardContent>
         </Card>

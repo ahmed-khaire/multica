@@ -165,6 +165,18 @@ export interface CreateGatewayBackendRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface UpdateGatewayBackendRequest {
+  display_name?: string;
+  base_url?: string;
+  key?: string;
+  enabled?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DeleteGatewayBackendResponse {
+  deleted: boolean;
+}
+
 export interface GatewayIngestKeyListItem {
   id: string;
   key_prefix: string;

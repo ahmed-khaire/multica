@@ -44,6 +44,7 @@ import type {
   UpdateProjectRequest,
   ListProjectsResponse,
   CreateGatewayBackendRequest,
+  DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
   GatewayBackend,
   GatewayCapturePolicy,
@@ -58,6 +59,7 @@ import type {
   GatewayStatusResponse,
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
+  UpdateGatewayBackendRequest,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
 
@@ -648,6 +650,19 @@ export class ApiClient {
     return this.fetch("/api/gateway/backends", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  }
+
+  async updateGatewayBackend(id: string, data: UpdateGatewayBackendRequest): Promise<GatewayBackend> {
+    return this.fetch(`/api/gateway/backends/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGatewayBackend(id: string): Promise<DeleteGatewayBackendResponse> {
+    return this.fetch(`/api/gateway/backends/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
   }
 

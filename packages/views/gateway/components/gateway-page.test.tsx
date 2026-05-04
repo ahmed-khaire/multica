@@ -30,6 +30,8 @@ const { mockApi } = vi.hoisted(() => ({
     listGatewayBackends: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
+    updateGatewayBackend: vi.fn(),
+    deleteGatewayBackend: vi.fn(),
     setGatewayDefaultBackend: vi.fn(),
     updateGatewayCapturePolicy: vi.fn(),
   },
@@ -279,6 +281,14 @@ describe("GatewayPage", () => {
     mockApi.listGatewayBackends.mockResolvedValue(gatewayBackends);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
+    mockApi.updateGatewayBackend.mockResolvedValue({
+      ...gatewayBackends[1],
+      display_name: "Local Router",
+      base_url: "http://127.0.0.1:11435/v1",
+      credential_hint: "new...cret",
+      enabled: false,
+    });
+    mockApi.deleteGatewayBackend.mockResolvedValue({ deleted: true });
     mockApi.setGatewayDefaultBackend.mockResolvedValue({ capture_policy: "full_content", default_backend: gatewayBackends[1] });
     mockApi.updateGatewayCapturePolicy.mockResolvedValue({ capture_policy: "metadata_only", default_backend: gatewayBackends[0] });
   });
@@ -391,6 +401,37 @@ describe("GatewayPage", () => {
     await user.click(screen.getByRole("button", { name: "metadata_only" }));
     await waitFor(() => {
       expect(mockApi.updateGatewayCapturePolicy).toHaveBeenCalledWith("metadata_only");
+    });
+  });
+
+  it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    const backendsTable = await screen.findByRole("table", { name: /Gateway backends/ });
+    await user.click(within(backendsTable).getByRole("button", { name: /Edit Local OpenAI-compatible/ }));
+
+    await user.clear(screen.getByLabelText("Edit backend name"));
+    await user.type(screen.getByLabelText("Edit backend name"), "Local Router");
+    await user.clear(screen.getByLabelText("Edit backend base URL"));
+    await user.type(screen.getByLabelText("Edit backend base URL"), "http://127.0.0.1:11435/v1");
+    await user.type(screen.getByLabelText("Rotate backend API key"), "new-secret");
+    await user.click(screen.getByRole("button", { name: /Disable backend/ }));
+    await user.click(screen.getByRole("button", { name: /Save backend changes/ }));
+
+    await waitFor(() => {
+      expect(mockApi.updateGatewayBackend).toHaveBeenCalledWith("backend-local", {
+        display_name: "Local Router",
+        base_url: "http://127.0.0.1:11435/v1",
+        key: "new-secret",
+        enabled: false,
+      });
+    });
+
+    await user.click(within(backendsTable).getByRole("button", { name: /Delete Local OpenAI-compatible/ }));
+    await waitFor(() => {
+      expect(mockApi.deleteGatewayBackend).toHaveBeenCalledWith("backend-local");
     });
   });
 
