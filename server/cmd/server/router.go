@@ -179,6 +179,11 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 				r.Post("/key", h.CreateGatewayUserKey)
 				r.Get("/keys", h.ListGatewayUserKeys)
 				r.Post("/keys/{id}/revoke", h.RevokeGatewayUserKey)
+				r.Get("/overview", h.GatewayOverview)
+				r.Get("/sessions", h.ListGatewaySessions)
+				r.Get("/sessions/{id}", h.GetGatewaySession)
+				r.Get("/sessions/{id}/spans", h.ListGatewaySessionSpans)
+				r.Get("/llm-calls", h.ListGatewayLLMCalls)
 
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))

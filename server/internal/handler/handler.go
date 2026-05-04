@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
+	"github.com/multica-ai/multica/server/internal/gateway/observability"
 	"github.com/multica-ai/multica/server/internal/gateway/proxy"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -34,19 +35,20 @@ type dbExecutor interface {
 }
 
 type Handler struct {
-	Queries      *db.Queries
-	DB           dbExecutor
-	TxStarter    txStarter
-	Hub          *realtime.Hub
-	Bus          *events.Bus
-	TaskService  *service.TaskService
-	EmailService *service.EmailService
-	Gateway      *management.Service
-	GatewayProxy *proxy.Service
-	PingStore    *PingStore
-	UpdateStore  *UpdateStore
-	Storage      *storage.S3Storage
-	CFSigner     *auth.CloudFrontSigner
+	Queries              *db.Queries
+	DB                   dbExecutor
+	TxStarter            txStarter
+	Hub                  *realtime.Hub
+	Bus                  *events.Bus
+	TaskService          *service.TaskService
+	EmailService         *service.EmailService
+	Gateway              *management.Service
+	GatewayObservability *observability.Service
+	GatewayProxy         *proxy.Service
+	PingStore            *PingStore
+	UpdateStore          *UpdateStore
+	Storage              *storage.S3Storage
+	CFSigner             *auth.CloudFrontSigner
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, s3 *storage.S3Storage, cfSigner *auth.CloudFrontSigner) *Handler {
@@ -56,19 +58,20 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 
 	return &Handler{
-		Queries:      queries,
-		DB:           executor,
-		TxStarter:    txStarter,
-		Hub:          hub,
-		Bus:          bus,
-		TaskService:  service.NewTaskService(queries, hub, bus),
-		EmailService: emailService,
-		Gateway:      management.NewService(queries, txStarter),
-		GatewayProxy: proxy.NewService(queries, http.DefaultClient),
-		PingStore:    NewPingStore(),
-		UpdateStore:  NewUpdateStore(),
-		Storage:      s3,
-		CFSigner:     cfSigner,
+		Queries:              queries,
+		DB:                   executor,
+		TxStarter:            txStarter,
+		Hub:                  hub,
+		Bus:                  bus,
+		TaskService:          service.NewTaskService(queries, hub, bus),
+		EmailService:         emailService,
+		Gateway:              management.NewService(queries, txStarter),
+		GatewayObservability: observability.NewService(queries),
+		GatewayProxy:         proxy.NewService(queries, http.DefaultClient),
+		PingStore:            NewPingStore(),
+		UpdateStore:          NewUpdateStore(),
+		Storage:              s3,
+		CFSigner:             cfSigner,
 	}
 }
 

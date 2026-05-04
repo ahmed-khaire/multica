@@ -93,3 +93,257 @@ export interface PaginationParams {
   limit?: number;
   offset?: number;
 }
+
+// Gateway observability
+export interface GatewayObservabilityParams {
+  since?: string;
+  limit?: number;
+  status?: string;
+  backend?: string;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+export interface GatewayOverviewResponse {
+  since: string;
+  until: string;
+  bucket_width: "hour" | "day" | string;
+  summary: GatewayOverviewSummary;
+  time_series: GatewayOverviewBucket[];
+  top_models: GatewayModelUsage[];
+  top_backends: GatewayBackendUsage[];
+}
+
+export interface GatewayOverviewSummary {
+  session_count: number;
+  request_count: number;
+  llm_call_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_cost: number | null;
+  error_count: number;
+  streaming_request_count: number;
+  avg_latency_ms: number;
+}
+
+export interface GatewayOverviewBucket {
+  bucket_start: string;
+  request_count: number;
+  error_count: number;
+  total_tokens: number;
+  total_cost: number | null;
+}
+
+export interface GatewayModelUsage {
+  model: string;
+  call_count: number;
+  total_tokens: number;
+  total_cost: number | null;
+}
+
+export interface GatewayBackendUsage {
+  backend: string;
+  call_count: number;
+  error_count: number;
+  avg_latency_ms: number;
+  total_tokens: number;
+  total_cost: number | null;
+}
+
+export interface GatewaySessionListResponse {
+  sessions: GatewaySessionListItem[];
+  total: number;
+  limit: number;
+  since: string;
+}
+
+export interface GatewaySessionListItem {
+  id: string;
+  trace_id: string;
+  root_span_id: string;
+  name: string;
+  client_protocol: string;
+  client_tool_hint: string;
+  service_name: string;
+  tags: unknown;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_ms: number | null;
+  span_count: number;
+  error_count: number;
+  total_cost: number | null;
+  resource_attributes: Record<string, unknown>;
+  request_count: number;
+  llm_call_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  usage_cost: number | null;
+  request_error_count: number;
+  streaming_request_count: number;
+  avg_latency_ms: number;
+  models: string[];
+  backends: string[];
+}
+
+export interface GatewaySessionDetail extends Omit<GatewaySessionListItem, "request_count" | "llm_call_count" | "prompt_tokens" | "completion_tokens" | "total_tokens" | "usage_cost" | "request_error_count" | "streaming_request_count" | "avg_latency_ms" | "models" | "backends"> {
+  requests: GatewayRequestObservation[];
+  model_calls: GatewayModelCallObservation[];
+  events: GatewayEventObservation[];
+  logs: GatewayLogObservation[];
+  agents: GatewayAgentObservation[];
+  tools: GatewayToolObservation[];
+}
+
+export interface GatewayRequestObservation {
+  id: string;
+  session_id: string;
+  backend_id: string;
+  route: string;
+  method: string;
+  model_requested: string;
+  model_forwarded: string;
+  provider_slug: string;
+  streaming: boolean;
+  status: string;
+  http_status: number | null;
+  latency_ms: number | null;
+  error_type: string;
+  error_message: string;
+  capture_policy: string;
+  request_metadata: Record<string, unknown>;
+  response_metadata: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface GatewayModelCallObservation {
+  id: string;
+  request_id: string;
+  session_id: string;
+  backend_id: string;
+  provider_slug: string;
+  request_model: string;
+  response_model: string;
+  request_type: string;
+  streaming: boolean;
+  prompt_messages: unknown;
+  completion_messages: unknown;
+  completion_chunks: unknown;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  reasoning_tokens: number;
+  streaming_tokens: number;
+  usage_source: string;
+  prompt_cost: number | null;
+  completion_cost: number | null;
+  total_cost: number | null;
+  response_id: string;
+  finish_reason: string;
+  stop_reason: string;
+  time_to_first_token_ms: number | null;
+  time_to_generate_ms: number | null;
+  streaming_duration_ms: number | null;
+  streaming_chunk_count: number;
+  created_at: string;
+}
+
+export interface GatewayEventObservation {
+  id: string;
+  session_id: string;
+  request_id: string;
+  span_id: string;
+  event_type: string;
+  payload: unknown;
+  occurred_at: string;
+}
+
+export interface GatewayLogObservation {
+  id: string;
+  session_id: string;
+  request_id: string;
+  span_id: string;
+  severity: string;
+  body: string;
+  attributes: Record<string, unknown>;
+  occurred_at: string;
+}
+
+export interface GatewayAgentObservation {
+  id: string;
+  session_id: string;
+  span_row_id: string;
+  agent_id: string;
+  agent_name: string;
+  role: string;
+  models: unknown;
+  tools: unknown;
+  handoff_source: string;
+  handoff_destination: string;
+  reasoning_summary: string;
+  created_at: string;
+}
+
+export interface GatewayToolObservation {
+  id: string;
+  session_id: string;
+  span_row_id: string;
+  tool_id: string;
+  tool_name: string;
+  description: string;
+  parameters: unknown;
+  result: unknown;
+  status: string;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export interface GatewaySessionSpansResponse {
+  session_id: string;
+  trace_id: string;
+  spans: GatewaySpanObservation[];
+}
+
+export interface GatewaySpanObservation {
+  id: string;
+  session_id: string;
+  request_id: string;
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string;
+  name: string;
+  span_name: string;
+  span_kind: string;
+  span_type: string;
+  service_name: string;
+  start_time: string;
+  end_time: string | null;
+  duration: number;
+  duration_ms: number | null;
+  status_code: string;
+  status_message: string;
+  attributes: Record<string, unknown>;
+  resource_attributes: Record<string, unknown>;
+}
+
+export interface GatewayLLMCallListResponse {
+  calls: GatewayLLMCallListItem[];
+  total: number;
+  limit: number;
+  since: string;
+}
+
+export interface GatewayLLMCallListItem extends GatewayModelCallObservation {
+  trace_id: string;
+  session_name: string;
+  route: string;
+  request_status: string;
+  http_status: number | null;
+  latency_ms: number | null;
+  capture_policy: string;
+}

@@ -43,6 +43,12 @@ import type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
+  GatewayObservabilityParams,
+  GatewayOverviewResponse,
+  GatewaySessionListResponse,
+  GatewaySessionDetail,
+  GatewaySessionSpansResponse,
+  GatewayLLMCallListResponse,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
 
@@ -576,6 +582,42 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  // Gateway Observability
+  private gatewayObservabilityQuery(params?: GatewayObservabilityParams): string {
+    const search = new URLSearchParams();
+    if (params?.since) search.set("since", params.since);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.status) search.set("status", params.status);
+    if (params?.backend) search.set("backend", params.backend);
+    if (params?.model) search.set("model", params.model);
+    const query = search.toString();
+    return query ? `?${query}` : "";
+  }
+
+  private gatewayObservabilityInit(params?: GatewayObservabilityParams): RequestInit | undefined {
+    return params?.signal ? { signal: params.signal } : undefined;
+  }
+
+  async getGatewayOverview(params?: GatewayObservabilityParams): Promise<GatewayOverviewResponse> {
+    return this.fetch(`/api/gateway/overview${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
+  async listGatewaySessions(params?: GatewayObservabilityParams): Promise<GatewaySessionListResponse> {
+    return this.fetch(`/api/gateway/sessions${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
+  async getGatewaySession(id: string, params?: Pick<GatewayObservabilityParams, "signal">): Promise<GatewaySessionDetail> {
+    return this.fetch(`/api/gateway/sessions/${id}`, this.gatewayObservabilityInit(params));
+  }
+
+  async getGatewaySessionSpans(id: string, params?: Pick<GatewayObservabilityParams, "signal">): Promise<GatewaySessionSpansResponse> {
+    return this.fetch(`/api/gateway/sessions/${id}/spans`, this.gatewayObservabilityInit(params));
+  }
+
+  async listGatewayLLMCalls(params?: GatewayObservabilityParams): Promise<GatewayLLMCallListResponse> {
+    return this.fetch(`/api/gateway/llm-calls${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
   }
 
   // File Upload & Attachments

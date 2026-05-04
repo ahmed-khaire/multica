@@ -666,6 +666,100 @@ func (q *Queries) CreateGatewayToolObservation(ctx context.Context, arg CreateGa
 	return i, err
 }
 
+const getGatewayOverviewSummary = `-- name: GetGatewayOverviewSummary :one
+WITH filtered_sessions AS (
+    SELECT s.id, s.workspace_id, s.user_id, s.agent_id, s.task_id, s.trace_id, s.root_span_id, s.name, s.client_protocol, s.client_tool_hint, s.service_name, s.tags, s.status, s.started_at, s.ended_at, s.duration_ms, s.span_count, s.error_count, s.total_cost, s.resource_attributes
+    FROM gateway_session s
+    WHERE s.workspace_id = $1
+      AND s.started_at >= $3::timestamptz
+      AND ($4::text = '' OR s.status = $4::text)
+),
+filtered_requests AS (
+    SELECT r.id, r.session_id, r.workspace_id, r.user_id, r.backend_id, r.route, r.method, r.model_requested, r.model_forwarded, r.provider_slug, r.streaming, r.status, r.http_status, r.latency_ms, r.error_type, r.error_message, r.capture_policy, r.request_metadata, r.response_metadata, r.created_at, r.completed_at
+    FROM gateway_request r
+    JOIN filtered_sessions s ON s.id = r.session_id
+    WHERE $5::text = '' OR r.provider_slug = $5::text
+),
+filtered_model_calls AS (
+    SELECT m.id, m.request_id, m.session_id, m.workspace_id, m.backend_id, m.provider_slug, m.request_model, m.response_model, m.request_type, m.streaming, m.prompt_messages, m.completion_messages, m.completion_chunks, m.prompt_tokens, m.completion_tokens, m.total_tokens, m.cache_creation_input_tokens, m.cache_read_input_tokens, m.reasoning_tokens, m.streaming_tokens, m.usage_source, m.prompt_cost, m.completion_cost, m.total_cost, m.response_id, m.finish_reason, m.stop_reason, m.time_to_first_token_ms, m.time_to_generate_ms, m.streaming_duration_ms, m.streaming_chunk_count, m.created_at
+    FROM gateway_model_call m
+    JOIN filtered_requests r ON r.id = m.request_id
+    WHERE $2::text = ''
+       OR m.request_model = $2::text
+       OR m.response_model = $2::text
+),
+active_sessions AS (
+    SELECT s.id
+    FROM filtered_sessions s
+    WHERE ($5::text = '' AND $2::text = '')
+       OR ($2::text = '' AND EXISTS (
+            SELECT 1 FROM filtered_requests r WHERE r.session_id = s.id
+       ))
+       OR EXISTS (
+            SELECT 1 FROM filtered_model_calls m WHERE m.session_id = s.id
+       )
+)
+SELECT
+    (SELECT count(*) FROM active_sessions)::bigint AS session_count,
+    CASE
+        WHEN $2::text = '' THEN (SELECT count(*) FROM filtered_requests)::bigint
+        ELSE (SELECT count(DISTINCT request_id) FROM filtered_model_calls)::bigint
+    END AS request_count,
+    (SELECT count(*) FROM filtered_model_calls)::bigint AS llm_call_count,
+    COALESCE((SELECT sum(prompt_tokens) FROM filtered_model_calls), 0)::bigint AS prompt_tokens,
+    COALESCE((SELECT sum(completion_tokens) FROM filtered_model_calls), 0)::bigint AS completion_tokens,
+    COALESCE((SELECT sum(total_tokens) FROM filtered_model_calls), 0)::bigint AS total_tokens,
+    COALESCE((SELECT sum(total_cost) FROM filtered_model_calls), 0)::numeric AS total_cost,
+    COALESCE((SELECT sum(CASE WHEN status IN ('upstream_error', 'gateway_error', 'policy_blocked', 'client_cancelled') THEN 1 ELSE 0 END) FROM filtered_requests), 0)::bigint AS error_count,
+    COALESCE((SELECT sum(CASE WHEN streaming THEN 1 ELSE 0 END) FROM filtered_requests), 0)::bigint AS streaming_request_count,
+    COALESCE((SELECT avg(latency_ms) FILTER (WHERE latency_ms IS NOT NULL) FROM filtered_requests), 0)::bigint AS avg_latency_ms
+`
+
+type GetGatewayOverviewSummaryParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Model       string             `json:"model"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+}
+
+type GetGatewayOverviewSummaryRow struct {
+	SessionCount          int64          `json:"session_count"`
+	RequestCount          int64          `json:"request_count"`
+	LlmCallCount          int64          `json:"llm_call_count"`
+	PromptTokens          int64          `json:"prompt_tokens"`
+	CompletionTokens      int64          `json:"completion_tokens"`
+	TotalTokens           int64          `json:"total_tokens"`
+	TotalCost             pgtype.Numeric `json:"total_cost"`
+	ErrorCount            int64          `json:"error_count"`
+	StreamingRequestCount int64          `json:"streaming_request_count"`
+	AvgLatencyMs          int64          `json:"avg_latency_ms"`
+}
+
+func (q *Queries) GetGatewayOverviewSummary(ctx context.Context, arg GetGatewayOverviewSummaryParams) (GetGatewayOverviewSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getGatewayOverviewSummary,
+		arg.WorkspaceID,
+		arg.Model,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+	)
+	var i GetGatewayOverviewSummaryRow
+	err := row.Scan(
+		&i.SessionCount,
+		&i.RequestCount,
+		&i.LlmCallCount,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.TotalCost,
+		&i.ErrorCount,
+		&i.StreamingRequestCount,
+		&i.AvgLatencyMs,
+	)
+	return i, err
+}
+
 const getGatewaySession = `-- name: GetGatewaySession :one
 SELECT id, workspace_id, user_id, agent_id, task_id, trace_id, root_span_id, name, client_protocol, client_tool_hint, service_name, tags, status, started_at, ended_at, duration_ms, span_count, error_count, total_cost, resource_attributes FROM gateway_session
 WHERE workspace_id = $1 AND id = $2
@@ -702,6 +796,278 @@ func (q *Queries) GetGatewaySession(ctx context.Context, arg GetGatewaySessionPa
 		&i.ResourceAttributes,
 	)
 	return i, err
+}
+
+const listGatewayAgentObservationsForSession = `-- name: ListGatewayAgentObservationsForSession :many
+SELECT id, workspace_id, session_id, span_row_id, agent_id, agent_name, role, models, tools, handoff_source, handoff_destination, reasoning_summary, created_at FROM gateway_agent_observation
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY created_at
+`
+
+type ListGatewayAgentObservationsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayAgentObservationsForSession(ctx context.Context, arg ListGatewayAgentObservationsForSessionParams) ([]GatewayAgentObservation, error) {
+	rows, err := q.db.Query(ctx, listGatewayAgentObservationsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayAgentObservation{}
+	for rows.Next() {
+		var i GatewayAgentObservation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.SessionID,
+			&i.SpanRowID,
+			&i.AgentID,
+			&i.AgentName,
+			&i.Role,
+			&i.Models,
+			&i.Tools,
+			&i.HandoffSource,
+			&i.HandoffDestination,
+			&i.ReasoningSummary,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayEventsForSession = `-- name: ListGatewayEventsForSession :many
+SELECT id, workspace_id, session_id, request_id, span_id, event_type, payload, occurred_at FROM gateway_event
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY occurred_at
+`
+
+type ListGatewayEventsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayEventsForSession(ctx context.Context, arg ListGatewayEventsForSessionParams) ([]GatewayEvent, error) {
+	rows, err := q.db.Query(ctx, listGatewayEventsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayEvent{}
+	for rows.Next() {
+		var i GatewayEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.SessionID,
+			&i.RequestID,
+			&i.SpanID,
+			&i.EventType,
+			&i.Payload,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayLLMCalls = `-- name: ListGatewayLLMCalls :many
+SELECT
+    m.id, m.request_id, m.session_id, m.workspace_id, m.backend_id, m.provider_slug,
+    m.request_model, m.response_model, m.request_type, m.streaming,
+    m.prompt_messages, m.completion_messages, m.completion_chunks,
+    m.prompt_tokens, m.completion_tokens, m.total_tokens,
+    m.cache_creation_input_tokens, m.cache_read_input_tokens, m.reasoning_tokens, m.streaming_tokens,
+    m.usage_source, m.prompt_cost, m.completion_cost, m.total_cost,
+    m.response_id, m.finish_reason, m.stop_reason,
+    m.time_to_first_token_ms, m.time_to_generate_ms, m.streaming_duration_ms, m.streaming_chunk_count,
+    m.created_at,
+    s.trace_id, s.name AS session_name,
+    r.route, r.status AS request_status, r.http_status, r.latency_ms, r.capture_policy,
+    count(*) OVER()::bigint AS total_count
+FROM gateway_model_call m
+JOIN gateway_session s ON s.id = m.session_id
+JOIN gateway_request r ON r.id = m.request_id
+WHERE m.workspace_id = $1
+  AND m.created_at >= $3::timestamptz
+  AND ($4::text = '' OR r.status = $4::text OR s.status = $4::text)
+  AND ($5::text = '' OR m.provider_slug = $5::text)
+  AND ($6::text = '' OR m.request_model = $6::text OR m.response_model = $6::text)
+ORDER BY m.created_at DESC
+LIMIT $2
+`
+
+type ListGatewayLLMCallsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+	Model       string             `json:"model"`
+}
+
+type ListGatewayLLMCallsRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	RequestID                pgtype.UUID        `json:"request_id"`
+	SessionID                pgtype.UUID        `json:"session_id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	BackendID                pgtype.UUID        `json:"backend_id"`
+	ProviderSlug             string             `json:"provider_slug"`
+	RequestModel             string             `json:"request_model"`
+	ResponseModel            string             `json:"response_model"`
+	RequestType              string             `json:"request_type"`
+	Streaming                bool               `json:"streaming"`
+	PromptMessages           []byte             `json:"prompt_messages"`
+	CompletionMessages       []byte             `json:"completion_messages"`
+	CompletionChunks         []byte             `json:"completion_chunks"`
+	PromptTokens             int64              `json:"prompt_tokens"`
+	CompletionTokens         int64              `json:"completion_tokens"`
+	TotalTokens              int64              `json:"total_tokens"`
+	CacheCreationInputTokens int64              `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64              `json:"cache_read_input_tokens"`
+	ReasoningTokens          int64              `json:"reasoning_tokens"`
+	StreamingTokens          int64              `json:"streaming_tokens"`
+	UsageSource              string             `json:"usage_source"`
+	PromptCost               pgtype.Numeric     `json:"prompt_cost"`
+	CompletionCost           pgtype.Numeric     `json:"completion_cost"`
+	TotalCost                pgtype.Numeric     `json:"total_cost"`
+	ResponseID               pgtype.Text        `json:"response_id"`
+	FinishReason             pgtype.Text        `json:"finish_reason"`
+	StopReason               pgtype.Text        `json:"stop_reason"`
+	TimeToFirstTokenMs       pgtype.Int8        `json:"time_to_first_token_ms"`
+	TimeToGenerateMs         pgtype.Int8        `json:"time_to_generate_ms"`
+	StreamingDurationMs      pgtype.Int8        `json:"streaming_duration_ms"`
+	StreamingChunkCount      int32              `json:"streaming_chunk_count"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	TraceID                  string             `json:"trace_id"`
+	SessionName              string             `json:"session_name"`
+	Route                    string             `json:"route"`
+	RequestStatus            string             `json:"request_status"`
+	HttpStatus               pgtype.Int4        `json:"http_status"`
+	LatencyMs                pgtype.Int8        `json:"latency_ms"`
+	CapturePolicy            string             `json:"capture_policy"`
+	TotalCount               int64              `json:"total_count"`
+}
+
+func (q *Queries) ListGatewayLLMCalls(ctx context.Context, arg ListGatewayLLMCallsParams) ([]ListGatewayLLMCallsRow, error) {
+	rows, err := q.db.Query(ctx, listGatewayLLMCalls,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewayLLMCallsRow{}
+	for rows.Next() {
+		var i ListGatewayLLMCallsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RequestID,
+			&i.SessionID,
+			&i.WorkspaceID,
+			&i.BackendID,
+			&i.ProviderSlug,
+			&i.RequestModel,
+			&i.ResponseModel,
+			&i.RequestType,
+			&i.Streaming,
+			&i.PromptMessages,
+			&i.CompletionMessages,
+			&i.CompletionChunks,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.TotalTokens,
+			&i.CacheCreationInputTokens,
+			&i.CacheReadInputTokens,
+			&i.ReasoningTokens,
+			&i.StreamingTokens,
+			&i.UsageSource,
+			&i.PromptCost,
+			&i.CompletionCost,
+			&i.TotalCost,
+			&i.ResponseID,
+			&i.FinishReason,
+			&i.StopReason,
+			&i.TimeToFirstTokenMs,
+			&i.TimeToGenerateMs,
+			&i.StreamingDurationMs,
+			&i.StreamingChunkCount,
+			&i.CreatedAt,
+			&i.TraceID,
+			&i.SessionName,
+			&i.Route,
+			&i.RequestStatus,
+			&i.HttpStatus,
+			&i.LatencyMs,
+			&i.CapturePolicy,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayLogsForSession = `-- name: ListGatewayLogsForSession :many
+SELECT id, workspace_id, session_id, request_id, span_id, severity, body, attributes, occurred_at FROM gateway_log
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY occurred_at
+`
+
+type ListGatewayLogsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayLogsForSession(ctx context.Context, arg ListGatewayLogsForSessionParams) ([]GatewayLog, error) {
+	rows, err := q.db.Query(ctx, listGatewayLogsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayLog{}
+	for rows.Next() {
+		var i GatewayLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.SessionID,
+			&i.RequestID,
+			&i.SpanID,
+			&i.Severity,
+			&i.Body,
+			&i.Attributes,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listGatewayMetricRollups = `-- name: ListGatewayMetricRollups :many
@@ -754,6 +1120,192 @@ func (q *Queries) ListGatewayMetricRollups(ctx context.Context, arg ListGatewayM
 			&i.LatencyP95Ms,
 			&i.LatencyP99Ms,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayModelCallsForSession = `-- name: ListGatewayModelCallsForSession :many
+SELECT id, request_id, session_id, workspace_id, backend_id, provider_slug, request_model, response_model, request_type, streaming, prompt_messages, completion_messages, completion_chunks, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, reasoning_tokens, streaming_tokens, usage_source, prompt_cost, completion_cost, total_cost, response_id, finish_reason, stop_reason, time_to_first_token_ms, time_to_generate_ms, streaming_duration_ms, streaming_chunk_count, created_at FROM gateway_model_call
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY created_at
+`
+
+type ListGatewayModelCallsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayModelCallsForSession(ctx context.Context, arg ListGatewayModelCallsForSessionParams) ([]GatewayModelCall, error) {
+	rows, err := q.db.Query(ctx, listGatewayModelCallsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayModelCall{}
+	for rows.Next() {
+		var i GatewayModelCall
+		if err := rows.Scan(
+			&i.ID,
+			&i.RequestID,
+			&i.SessionID,
+			&i.WorkspaceID,
+			&i.BackendID,
+			&i.ProviderSlug,
+			&i.RequestModel,
+			&i.ResponseModel,
+			&i.RequestType,
+			&i.Streaming,
+			&i.PromptMessages,
+			&i.CompletionMessages,
+			&i.CompletionChunks,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.TotalTokens,
+			&i.CacheCreationInputTokens,
+			&i.CacheReadInputTokens,
+			&i.ReasoningTokens,
+			&i.StreamingTokens,
+			&i.UsageSource,
+			&i.PromptCost,
+			&i.CompletionCost,
+			&i.TotalCost,
+			&i.ResponseID,
+			&i.FinishReason,
+			&i.StopReason,
+			&i.TimeToFirstTokenMs,
+			&i.TimeToGenerateMs,
+			&i.StreamingDurationMs,
+			&i.StreamingChunkCount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayOverviewBuckets = `-- name: ListGatewayOverviewBuckets :many
+SELECT
+    date_trunc($2::text, r.created_at)::timestamptz AS bucket_start,
+    count(DISTINCT r.id)::bigint AS request_count,
+    COALESCE(sum(CASE WHEN r.status IN ('upstream_error', 'gateway_error', 'policy_blocked', 'client_cancelled') THEN 1 ELSE 0 END), 0)::bigint AS error_count,
+    COALESCE(sum(m.total_tokens), 0)::bigint AS total_tokens,
+    COALESCE(sum(m.total_cost), 0)::numeric AS total_cost
+FROM gateway_request r
+JOIN gateway_session s ON s.id = r.session_id
+LEFT JOIN gateway_model_call m ON m.request_id = r.id
+WHERE r.workspace_id = $1
+  AND r.created_at >= $3::timestamptz
+  AND ($4::text = '' OR r.status = $4::text OR s.status = $4::text)
+  AND ($5::text = '' OR r.provider_slug = $5::text)
+  AND ($6::text = '' OR m.request_model = $6::text OR m.response_model = $6::text)
+GROUP BY bucket_start
+ORDER BY bucket_start ASC
+`
+
+type ListGatewayOverviewBucketsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	BucketWidth string             `json:"bucket_width"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+	Model       string             `json:"model"`
+}
+
+type ListGatewayOverviewBucketsRow struct {
+	BucketStart  pgtype.Timestamptz `json:"bucket_start"`
+	RequestCount int64              `json:"request_count"`
+	ErrorCount   int64              `json:"error_count"`
+	TotalTokens  int64              `json:"total_tokens"`
+	TotalCost    pgtype.Numeric     `json:"total_cost"`
+}
+
+func (q *Queries) ListGatewayOverviewBuckets(ctx context.Context, arg ListGatewayOverviewBucketsParams) ([]ListGatewayOverviewBucketsRow, error) {
+	rows, err := q.db.Query(ctx, listGatewayOverviewBuckets,
+		arg.WorkspaceID,
+		arg.BucketWidth,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewayOverviewBucketsRow{}
+	for rows.Next() {
+		var i ListGatewayOverviewBucketsRow
+		if err := rows.Scan(
+			&i.BucketStart,
+			&i.RequestCount,
+			&i.ErrorCount,
+			&i.TotalTokens,
+			&i.TotalCost,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayRequestsForSession = `-- name: ListGatewayRequestsForSession :many
+SELECT id, session_id, workspace_id, user_id, backend_id, route, method, model_requested, model_forwarded, provider_slug, streaming, status, http_status, latency_ms, error_type, error_message, capture_policy, request_metadata, response_metadata, created_at, completed_at FROM gateway_request
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY created_at
+`
+
+type ListGatewayRequestsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayRequestsForSession(ctx context.Context, arg ListGatewayRequestsForSessionParams) ([]GatewayRequest, error) {
+	rows, err := q.db.Query(ctx, listGatewayRequestsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayRequest{}
+	for rows.Next() {
+		var i GatewayRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.BackendID,
+			&i.Route,
+			&i.Method,
+			&i.ModelRequested,
+			&i.ModelForwarded,
+			&i.ProviderSlug,
+			&i.Streaming,
+			&i.Status,
+			&i.HttpStatus,
+			&i.LatencyMs,
+			&i.ErrorType,
+			&i.ErrorMessage,
+			&i.CapturePolicy,
+			&i.RequestMetadata,
+			&i.ResponseMetadata,
+			&i.CreatedAt,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -820,6 +1372,165 @@ func (q *Queries) ListGatewaySessions(ctx context.Context, arg ListGatewaySessio
 	return items, nil
 }
 
+const listGatewaySessionsDashboard = `-- name: ListGatewaySessionsDashboard :many
+WITH request_stats AS (
+    SELECT
+        session_id,
+        count(*)::bigint AS request_count,
+        COALESCE(sum(CASE WHEN status IN ('upstream_error', 'gateway_error', 'policy_blocked', 'client_cancelled') THEN 1 ELSE 0 END), 0)::bigint AS request_error_count,
+        COALESCE(sum(CASE WHEN streaming THEN 1 ELSE 0 END), 0)::bigint AS streaming_request_count,
+        COALESCE(avg(latency_ms) FILTER (WHERE latency_ms IS NOT NULL), 0)::bigint AS avg_latency_ms,
+        array_remove(array_agg(DISTINCT NULLIF(provider_slug, '')), NULL)::text[] AS backends
+    FROM gateway_request
+    WHERE workspace_id = $1
+    GROUP BY session_id
+),
+model_stats AS (
+    SELECT
+        session_id,
+        count(*)::bigint AS llm_call_count,
+        COALESCE(sum(prompt_tokens), 0)::bigint AS prompt_tokens,
+        COALESCE(sum(completion_tokens), 0)::bigint AS completion_tokens,
+        COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
+        COALESCE(sum(total_cost), 0)::numeric AS total_cost,
+        array_remove(array_agg(DISTINCT COALESCE(NULLIF(response_model, ''), NULLIF(request_model, ''))), NULL)::text[] AS models
+    FROM gateway_model_call
+    WHERE workspace_id = $1
+    GROUP BY session_id
+)
+SELECT
+    s.id, s.workspace_id, s.user_id, s.agent_id, s.task_id, s.trace_id, s.root_span_id,
+    s.name, s.client_protocol, s.client_tool_hint, s.service_name, s.tags, s.status,
+    s.started_at, s.ended_at, s.duration_ms, s.span_count, s.error_count, s.total_cost,
+    s.resource_attributes,
+    COALESCE(rs.request_count, 0)::bigint AS request_count,
+    COALESCE(ms.llm_call_count, 0)::bigint AS llm_call_count,
+    COALESCE(ms.prompt_tokens, 0)::bigint AS prompt_tokens,
+    COALESCE(ms.completion_tokens, 0)::bigint AS completion_tokens,
+    COALESCE(ms.total_tokens, 0)::bigint AS total_tokens,
+    COALESCE(ms.total_cost, 0)::numeric AS usage_cost,
+    COALESCE(rs.request_error_count, 0)::bigint AS request_error_count,
+    COALESCE(rs.streaming_request_count, 0)::bigint AS streaming_request_count,
+    COALESCE(rs.avg_latency_ms, 0)::bigint AS avg_latency_ms,
+    COALESCE(ms.models, ARRAY[]::text[]) AS models,
+    COALESCE(rs.backends, ARRAY[]::text[]) AS backends,
+    count(*) OVER()::bigint AS total_count
+FROM gateway_session s
+LEFT JOIN request_stats rs ON rs.session_id = s.id
+LEFT JOIN model_stats ms ON ms.session_id = s.id
+WHERE s.workspace_id = $1
+  AND s.started_at >= $3::timestamptz
+  AND ($4::text = '' OR s.status = $4::text)
+  AND ($5::text = '' OR EXISTS (
+      SELECT 1 FROM gateway_request r
+      WHERE r.session_id = s.id AND r.provider_slug = $5::text
+  ))
+ORDER BY s.started_at DESC
+LIMIT $2
+`
+
+type ListGatewaySessionsDashboardParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+}
+
+type ListGatewaySessionsDashboardRow struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	UserID                pgtype.UUID        `json:"user_id"`
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	TaskID                pgtype.UUID        `json:"task_id"`
+	TraceID               string             `json:"trace_id"`
+	RootSpanID            pgtype.Text        `json:"root_span_id"`
+	Name                  string             `json:"name"`
+	ClientProtocol        string             `json:"client_protocol"`
+	ClientToolHint        string             `json:"client_tool_hint"`
+	ServiceName           string             `json:"service_name"`
+	Tags                  []byte             `json:"tags"`
+	Status                string             `json:"status"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	EndedAt               pgtype.Timestamptz `json:"ended_at"`
+	DurationMs            pgtype.Int8        `json:"duration_ms"`
+	SpanCount             int32              `json:"span_count"`
+	ErrorCount            int32              `json:"error_count"`
+	TotalCost             pgtype.Numeric     `json:"total_cost"`
+	ResourceAttributes    []byte             `json:"resource_attributes"`
+	RequestCount          int64              `json:"request_count"`
+	LlmCallCount          int64              `json:"llm_call_count"`
+	PromptTokens          int64              `json:"prompt_tokens"`
+	CompletionTokens      int64              `json:"completion_tokens"`
+	TotalTokens           int64              `json:"total_tokens"`
+	UsageCost             pgtype.Numeric     `json:"usage_cost"`
+	RequestErrorCount     int64              `json:"request_error_count"`
+	StreamingRequestCount int64              `json:"streaming_request_count"`
+	AvgLatencyMs          int64              `json:"avg_latency_ms"`
+	Models                []string           `json:"models"`
+	Backends              []string           `json:"backends"`
+	TotalCount            int64              `json:"total_count"`
+}
+
+func (q *Queries) ListGatewaySessionsDashboard(ctx context.Context, arg ListGatewaySessionsDashboardParams) ([]ListGatewaySessionsDashboardRow, error) {
+	rows, err := q.db.Query(ctx, listGatewaySessionsDashboard,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewaySessionsDashboardRow{}
+	for rows.Next() {
+		var i ListGatewaySessionsDashboardRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.AgentID,
+			&i.TaskID,
+			&i.TraceID,
+			&i.RootSpanID,
+			&i.Name,
+			&i.ClientProtocol,
+			&i.ClientToolHint,
+			&i.ServiceName,
+			&i.Tags,
+			&i.Status,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationMs,
+			&i.SpanCount,
+			&i.ErrorCount,
+			&i.TotalCost,
+			&i.ResourceAttributes,
+			&i.RequestCount,
+			&i.LlmCallCount,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.TotalTokens,
+			&i.UsageCost,
+			&i.RequestErrorCount,
+			&i.StreamingRequestCount,
+			&i.AvgLatencyMs,
+			&i.Models,
+			&i.Backends,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGatewaySpansForSession = `-- name: ListGatewaySpansForSession :many
 SELECT id, session_id, request_id, workspace_id, trace_id, span_id, parent_span_id, span_kind, name, service_name, status_code, status_message, started_at, ended_at, duration_ms, attributes, resource_attributes, created_at FROM gateway_span
 WHERE workspace_id = $1 AND session_id = $2
@@ -859,6 +1570,190 @@ func (q *Queries) ListGatewaySpansForSession(ctx context.Context, arg ListGatewa
 			&i.Attributes,
 			&i.ResourceAttributes,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayToolObservationsForSession = `-- name: ListGatewayToolObservationsForSession :many
+SELECT id, workspace_id, session_id, span_row_id, tool_id, tool_name, description, parameters, result, status, duration_ms, created_at FROM gateway_tool_observation
+WHERE workspace_id = $1 AND session_id = $2
+ORDER BY created_at
+`
+
+type ListGatewayToolObservationsForSessionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) ListGatewayToolObservationsForSession(ctx context.Context, arg ListGatewayToolObservationsForSessionParams) ([]GatewayToolObservation, error) {
+	rows, err := q.db.Query(ctx, listGatewayToolObservationsForSession, arg.WorkspaceID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayToolObservation{}
+	for rows.Next() {
+		var i GatewayToolObservation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.SessionID,
+			&i.SpanRowID,
+			&i.ToolID,
+			&i.ToolName,
+			&i.Description,
+			&i.Parameters,
+			&i.Result,
+			&i.Status,
+			&i.DurationMs,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayTopBackends = `-- name: ListGatewayTopBackends :many
+SELECT
+    COALESCE(NULLIF(r.provider_slug, ''), '(unknown)')::text AS backend,
+    count(*)::bigint AS call_count,
+    COALESCE(sum(CASE WHEN r.status IN ('upstream_error', 'gateway_error', 'policy_blocked', 'client_cancelled') THEN 1 ELSE 0 END), 0)::bigint AS error_count,
+    COALESCE(avg(r.latency_ms) FILTER (WHERE r.latency_ms IS NOT NULL), 0)::bigint AS avg_latency_ms,
+    COALESCE(sum(m.total_tokens), 0)::bigint AS total_tokens,
+    COALESCE(sum(m.total_cost), 0)::numeric AS total_cost
+FROM gateway_request r
+JOIN gateway_session s ON s.id = r.session_id
+LEFT JOIN gateway_model_call m ON m.request_id = r.id
+WHERE r.workspace_id = $1
+  AND r.created_at >= $3::timestamptz
+  AND ($4::text = '' OR r.status = $4::text OR s.status = $4::text)
+  AND ($5::text = '' OR r.provider_slug = $5::text)
+  AND ($6::text = '' OR m.request_model = $6::text OR m.response_model = $6::text)
+GROUP BY backend
+ORDER BY call_count DESC, error_count DESC, backend ASC
+LIMIT $2
+`
+
+type ListGatewayTopBackendsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+	Model       string             `json:"model"`
+}
+
+type ListGatewayTopBackendsRow struct {
+	Backend      string         `json:"backend"`
+	CallCount    int64          `json:"call_count"`
+	ErrorCount   int64          `json:"error_count"`
+	AvgLatencyMs int64          `json:"avg_latency_ms"`
+	TotalTokens  int64          `json:"total_tokens"`
+	TotalCost    pgtype.Numeric `json:"total_cost"`
+}
+
+func (q *Queries) ListGatewayTopBackends(ctx context.Context, arg ListGatewayTopBackendsParams) ([]ListGatewayTopBackendsRow, error) {
+	rows, err := q.db.Query(ctx, listGatewayTopBackends,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewayTopBackendsRow{}
+	for rows.Next() {
+		var i ListGatewayTopBackendsRow
+		if err := rows.Scan(
+			&i.Backend,
+			&i.CallCount,
+			&i.ErrorCount,
+			&i.AvgLatencyMs,
+			&i.TotalTokens,
+			&i.TotalCost,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGatewayTopModels = `-- name: ListGatewayTopModels :many
+SELECT
+    COALESCE(NULLIF(m.response_model, ''), NULLIF(m.request_model, ''), '(unknown)')::text AS model,
+    count(*)::bigint AS call_count,
+    COALESCE(sum(m.total_tokens), 0)::bigint AS total_tokens,
+    COALESCE(sum(m.total_cost), 0)::numeric AS total_cost
+FROM gateway_model_call m
+JOIN gateway_request r ON r.id = m.request_id
+JOIN gateway_session s ON s.id = m.session_id
+WHERE m.workspace_id = $1
+  AND m.created_at >= $3::timestamptz
+  AND ($4::text = '' OR r.status = $4::text OR s.status = $4::text)
+  AND ($5::text = '' OR m.provider_slug = $5::text)
+  AND ($6::text = '' OR m.request_model = $6::text OR m.response_model = $6::text)
+GROUP BY model
+ORDER BY call_count DESC, total_tokens DESC, model ASC
+LIMIT $2
+`
+
+type ListGatewayTopModelsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Status      string             `json:"status"`
+	Backend     string             `json:"backend"`
+	Model       string             `json:"model"`
+}
+
+type ListGatewayTopModelsRow struct {
+	Model       string         `json:"model"`
+	CallCount   int64          `json:"call_count"`
+	TotalTokens int64          `json:"total_tokens"`
+	TotalCost   pgtype.Numeric `json:"total_cost"`
+}
+
+func (q *Queries) ListGatewayTopModels(ctx context.Context, arg ListGatewayTopModelsParams) ([]ListGatewayTopModelsRow, error) {
+	rows, err := q.db.Query(ctx, listGatewayTopModels,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.Since,
+		arg.Status,
+		arg.Backend,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGatewayTopModelsRow{}
+	for rows.Next() {
+		var i ListGatewayTopModelsRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.CallCount,
+			&i.TotalTokens,
+			&i.TotalCost,
 		); err != nil {
 			return nil, err
 		}
