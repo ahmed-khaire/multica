@@ -10,7 +10,7 @@ const (
 	CaptureMetadataOnly    = "metadata_only"
 	CaptureRedactedContent = "redacted_content"
 	CaptureFullContent     = "full_content"
-	DefaultCapturePolicy   = CaptureRedactedContent
+	DefaultCapturePolicy   = CaptureFullContent
 )
 
 type ProviderPreset struct {

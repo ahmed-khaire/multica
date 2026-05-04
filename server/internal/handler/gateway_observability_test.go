@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -238,11 +239,11 @@ func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObser
 	t.Helper()
 
 	traceID := "gateway-observability-" + suffix
-	if _, err := testPool.Exec(t.Context(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID); err != nil {
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID); err != nil {
 		t.Fatalf("cleanup gateway telemetry: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := testPool.Exec(t.Context(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID); err != nil {
+		if _, err := testPool.Exec(context.Background(), `DELETE FROM gateway_session WHERE workspace_id = $1 AND trace_id = $2`, testWorkspaceID, traceID); err != nil {
 			t.Fatalf("cleanup seeded gateway telemetry: %v", err)
 		}
 	})
@@ -320,7 +321,8 @@ func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObser
 		t.Fatalf("insert root span: %v", err)
 	}
 
-	if _, err := testPool.Exec(t.Context(), `
+	var childSpanID string
+	if err := testPool.QueryRow(t.Context(), `
 		INSERT INTO gateway_span (
 			session_id, request_id, workspace_id, trace_id, span_id, parent_span_id,
 			span_kind, name, service_name, status_code, started_at, ended_at, duration_ms,
@@ -332,21 +334,22 @@ func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObser
 			now() - interval '29 minutes 50 seconds', now() - interval '29 minutes 49 seconds', 500,
 			'{"gen_ai.request.model":"gpt-observe"}'::jsonb, '{"service.name":"multica-gateway"}'::jsonb
 		)
-	`, sessionID, requestID, testWorkspaceID, traceID, "llm-"+suffix, "root-"+suffix); err != nil {
+		RETURNING id
+	`, sessionID, requestID, testWorkspaceID, traceID, "llm-"+suffix, "root-"+suffix).Scan(&childSpanID); err != nil {
 		t.Fatalf("insert child span: %v", err)
 	}
 
 	if _, err := testPool.Exec(t.Context(), `
 		INSERT INTO gateway_event (workspace_id, session_id, request_id, span_id, event_type, payload, occurred_at)
 		VALUES ($1, $2, $3, $4, 'llm_call', '{"model":"gpt-observe"}'::jsonb, now() - interval '29 minutes')
-	`, testWorkspaceID, sessionID, requestID, spanID); err != nil {
+	`, testWorkspaceID, sessionID, requestID, childSpanID); err != nil {
 		t.Fatalf("insert gateway event: %v", err)
 	}
 
 	if _, err := testPool.Exec(t.Context(), `
 		INSERT INTO gateway_log (workspace_id, session_id, request_id, span_id, severity, body, attributes, occurred_at)
 		VALUES ($1, $2, $3, $4, 'info', 'gateway request completed', '{"status":"success"}'::jsonb, now() - interval '29 minutes')
-	`, testWorkspaceID, sessionID, requestID, spanID); err != nil {
+	`, testWorkspaceID, sessionID, requestID, childSpanID); err != nil {
 		t.Fatalf("insert gateway log: %v", err)
 	}
 

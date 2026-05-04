@@ -220,6 +220,14 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 
 	svc := NewService(db.New(pool), pool)
 
+	initialSettings, err := svc.Settings(ctx, fixture.workspaceID)
+	if err != nil {
+		t.Fatalf("Settings returned error: %v", err)
+	}
+	if initialSettings.CapturePolicy != CaptureFullContent {
+		t.Fatalf("initial capture policy = %q, want %q", initialSettings.CapturePolicy, CaptureFullContent)
+	}
+
 	backend, err := svc.CreateBackend(ctx, CreateBackendInput{
 		WorkspaceID: fixture.workspaceID,
 		ActorUserID: fixture.userID,
@@ -261,8 +269,8 @@ func TestManagementServiceBackendFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
 	}
-	if status.CapturePolicy != CaptureRedactedContent {
-		t.Fatalf("capture policy = %q, want %q", status.CapturePolicy, CaptureRedactedContent)
+	if status.CapturePolicy != CaptureFullContent {
+		t.Fatalf("capture policy = %q, want %q", status.CapturePolicy, CaptureFullContent)
 	}
 	if status.DefaultBackend == nil || status.DefaultBackend.Slug != "groq" {
 		t.Fatalf("default backend = %+v, want groq", status.DefaultBackend)

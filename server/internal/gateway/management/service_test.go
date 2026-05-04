@@ -136,6 +136,12 @@ func TestValidateCapturePolicy(t *testing.T) {
 	}
 }
 
+func TestDefaultCapturePolicyIsFullContent(t *testing.T) {
+	if DefaultCapturePolicy != CaptureFullContent {
+		t.Fatalf("DefaultCapturePolicy = %q, want %q", DefaultCapturePolicy, CaptureFullContent)
+	}
+}
+
 func TestCredentialHint(t *testing.T) {
 	tests := []struct {
 		name   string
