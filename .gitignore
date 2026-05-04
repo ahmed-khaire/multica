@@ -27,6 +27,11 @@ server/migrate
 server/daemon
 server/multica
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Test artifacts
 test-results/
 apps/web/test-results/
