@@ -295,6 +295,42 @@ func (q *Queries) CreateAISystemInventory(ctx context.Context, arg CreateAISyste
 	return i, err
 }
 
+const getActiveAIPolicyExceptionForProvider = `-- name: GetActiveAIPolicyExceptionForProvider :one
+SELECT id, workspace_id, policy_id, requester_user_id, approver_user_id, reason, scope, status, expires_at, evidence_references, created_at, updated_at FROM ai_policy_exception
+WHERE workspace_id = $1
+  AND status = 'approved'
+  AND (expires_at IS NULL OR expires_at > now())
+  AND (scope @> $2 OR scope @> $3)
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type GetActiveAIPolicyExceptionForProviderParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Scope       []byte      `json:"scope"`
+	Scope_2     []byte      `json:"scope_2"`
+}
+
+func (q *Queries) GetActiveAIPolicyExceptionForProvider(ctx context.Context, arg GetActiveAIPolicyExceptionForProviderParams) (AiPolicyException, error) {
+	row := q.db.QueryRow(ctx, getActiveAIPolicyExceptionForProvider, arg.WorkspaceID, arg.Scope, arg.Scope_2)
+	var i AiPolicyException
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PolicyID,
+		&i.RequesterUserID,
+		&i.ApproverUserID,
+		&i.Reason,
+		&i.Scope,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.EvidenceReferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listAIControlMappingsWithEvidence = `-- name: ListAIControlMappingsWithEvidence :many
 SELECT
     m.id, m.workspace_id, m.framework, m.control_id, m.control_title, m.mapped_policy_ids, m.mapped_evidence_queries, m.status, m.owner_user_id, m.updated_at,
@@ -448,6 +484,51 @@ func (q *Queries) ListAIIncidents(ctx context.Context, arg ListAIIncidentsParams
 			&i.RemediationNotes,
 			&i.OpenedAt,
 			&i.ClosedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAIPolicyExceptions = `-- name: ListAIPolicyExceptions :many
+SELECT id, workspace_id, policy_id, requester_user_id, approver_user_id, reason, scope, status, expires_at, evidence_references, created_at, updated_at FROM ai_policy_exception
+WHERE workspace_id = $1
+ORDER BY updated_at DESC
+LIMIT $2
+`
+
+type ListAIPolicyExceptionsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListAIPolicyExceptions(ctx context.Context, arg ListAIPolicyExceptionsParams) ([]AiPolicyException, error) {
+	rows, err := q.db.Query(ctx, listAIPolicyExceptions, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AiPolicyException{}
+	for rows.Next() {
+		var i AiPolicyException
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.PolicyID,
+			&i.RequesterUserID,
+			&i.ApproverUserID,
+			&i.Reason,
+			&i.Scope,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.EvidenceReferences,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -625,6 +706,100 @@ func (q *Queries) ListGatewayAuditLog(ctx context.Context, arg ListGatewayAuditL
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateAIIncident = `-- name: UpdateAIIncident :one
+UPDATE ai_incident
+SET
+    status = $3,
+    remediation_notes = $4,
+    closed_at = CASE WHEN $3 = 'closed' THEN now() ELSE closed_at END
+WHERE workspace_id = $1
+  AND id = $2
+RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at
+`
+
+type UpdateAIIncidentParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ID               pgtype.UUID `json:"id"`
+	Status           string      `json:"status"`
+	RemediationNotes string      `json:"remediation_notes"`
+}
+
+func (q *Queries) UpdateAIIncident(ctx context.Context, arg UpdateAIIncidentParams) (AiIncident, error) {
+	row := q.db.QueryRow(ctx, updateAIIncident,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.Status,
+		arg.RemediationNotes,
+	)
+	var i AiIncident
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Severity,
+		&i.Category,
+		&i.LinkedRequestID,
+		&i.LinkedSessionID,
+		&i.LinkedSpanRowID,
+		&i.LinkedPolicyID,
+		&i.LinkedProviderRiskID,
+		&i.Summary,
+		&i.Status,
+		&i.RemediationNotes,
+		&i.OpenedAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
+const updateAIPolicyException = `-- name: UpdateAIPolicyException :one
+UPDATE ai_policy_exception
+SET
+    status = $3,
+    approver_user_id = CASE
+        WHEN $3 IN ('approved', 'denied', 'revoked') THEN $2
+        ELSE approver_user_id
+    END,
+    expires_at = $4,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND id = $5
+RETURNING id, workspace_id, policy_id, requester_user_id, approver_user_id, reason, scope, status, expires_at, evidence_references, created_at, updated_at
+`
+
+type UpdateAIPolicyExceptionParams struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ApproverUserID pgtype.UUID        `json:"approver_user_id"`
+	Status         string             `json:"status"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	ID             pgtype.UUID        `json:"id"`
+}
+
+func (q *Queries) UpdateAIPolicyException(ctx context.Context, arg UpdateAIPolicyExceptionParams) (AiPolicyException, error) {
+	row := q.db.QueryRow(ctx, updateAIPolicyException,
+		arg.WorkspaceID,
+		arg.ApproverUserID,
+		arg.Status,
+		arg.ExpiresAt,
+		arg.ID,
+	)
+	var i AiPolicyException
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PolicyID,
+		&i.RequesterUserID,
+		&i.ApproverUserID,
+		&i.Reason,
+		&i.Scope,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.EvidenceReferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const upsertAIControlMapping = `-- name: UpsertAIControlMapping :one

@@ -174,6 +174,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 			// Gateway
 			r.Route("/api/gateway", func(r chi.Router) {
 				r.Get("/status", h.GatewayStatus)
+				r.Get("/doctor", h.GatewayDoctor)
 				r.Get("/settings", h.GetGatewaySettings)
 				r.Get("/backends", h.ListGatewayBackends)
 				r.Get("/key", h.GetGatewayUserKey)
@@ -201,6 +202,10 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/governance/evidence", h.ListGatewayEvidence)
 					r.Get("/governance/control-mappings", h.ListGatewayControlMappings)
 					r.Get("/governance/incidents", h.ListGatewayIncidents)
+					r.Patch("/governance/incidents/{id}", h.UpdateGatewayIncident)
+					r.Get("/governance/exceptions", h.ListGatewayPolicyExceptions)
+					r.Post("/governance/exceptions", h.CreateGatewayPolicyException)
+					r.Patch("/governance/exceptions/{id}", h.UpdateGatewayPolicyException)
 					r.Post("/default", h.SetGatewayDefaultBackend)
 					r.Post("/policy", h.UpdateGatewayPolicy)
 				})

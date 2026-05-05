@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -45,34 +46,58 @@ func NewResolver(queries *db.Queries) *Resolver {
 }
 
 func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, protocol string) (BackendTarget, error) {
+	return r.ResolveBackend(ctx, workspaceID, protocol, "")
+}
+
+func (r *Resolver) ResolveBackend(ctx context.Context, workspaceID, protocol, backendSlug string) (BackendTarget, error) {
 	workspaceUUID, err := parseUUID(workspaceID)
 	if err != nil {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "invalid workspace", "invalid_workspace", err)
 	}
 	settings, err := r.queries.GetGatewayWorkspaceSettings(ctx, workspaceUUID)
-	if errors.Is(err, pgx.ErrNoRows) || !settings.DefaultBackendID.Valid {
-		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway default backend is not configured", "gateway_default_backend_missing", ErrDefaultBackendNotConfigured)
-	}
-	if err != nil {
-		return BackendTarget{}, err
-	}
-	backend, err := r.queries.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
-		WorkspaceID: workspaceUUID,
-		ID:          settings.DefaultBackendID,
-	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway default backend is not configured", "gateway_default_backend_missing", ErrDefaultBackendNotConfigured)
 	}
 	if err != nil {
 		return BackendTarget{}, err
 	}
+
+	backendSlug = strings.TrimSpace(backendSlug)
+	var backend db.GatewayBackend
+	if backendSlug != "" {
+		backend, err = r.queries.GetGatewayBackendBySlug(ctx, db.GetGatewayBackendBySlugParams{
+			WorkspaceID: workspaceUUID,
+			Slug:        backendSlug,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway backend is not configured", "gateway_backend_missing", ErrDefaultBackendNotConfigured)
+		}
+		if err != nil {
+			return BackendTarget{}, err
+		}
+	} else {
+		if !settings.DefaultBackendID.Valid {
+			return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway default backend is not configured", "gateway_default_backend_missing", ErrDefaultBackendNotConfigured)
+		}
+		backend, err = r.queries.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
+			WorkspaceID: workspaceUUID,
+			ID:          settings.DefaultBackendID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway default backend is not configured", "gateway_default_backend_missing", ErrDefaultBackendNotConfigured)
+		}
+		if err != nil {
+			return BackendTarget{}, err
+		}
+	}
+
 	if !backend.Enabled {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway backend is disabled", "gateway_backend_disabled", ErrBackendDisabled)
 	}
 	if !CompatibleBackendType(protocol, backend.BackendType) {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway backend is not compatible with requested protocol", "gateway_backend_incompatible", ErrIncompatibleBackend)
 	}
-	reason, blocked, providerRiskID, err := r.providerRiskBlockReason(ctx, workspaceUUID, backend)
+	reason, blocked, providerRiskID, policyExceptionID, err := r.providerRiskBlockReason(ctx, workspaceUUID, backend)
 	if err != nil {
 		return BackendTarget{}, err
 	}
@@ -98,19 +123,20 @@ func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, proto
 		return BackendTarget{}, err
 	}
 	return BackendTarget{
-		ID:             util.UUIDToString(backend.ID),
-		Slug:           backend.Slug,
-		BackendType:    backend.BackendType,
-		BaseURL:        backend.BaseUrl,
-		UpstreamSecret: secret,
-		CapturePolicy:  settings.CapturePolicy,
+		ID:                util.UUIDToString(backend.ID),
+		Slug:              backend.Slug,
+		BackendType:       backend.BackendType,
+		BaseURL:           backend.BaseUrl,
+		UpstreamSecret:    secret,
+		CapturePolicy:     settings.CapturePolicy,
+		PolicyExceptionID: policyExceptionID,
 	}, nil
 }
 
-func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, string, error) {
+func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, string, string, error) {
 	risks, err := r.queries.ListAIThirdPartyRisk(ctx, workspaceID)
 	if err != nil {
-		return "", false, "", err
+		return "", false, "", "", err
 	}
 	backendID := util.UUIDToString(backend.ID)
 	for _, risk := range risks {
@@ -118,9 +144,47 @@ func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgty
 			continue
 		}
 		reason, blocked := ProviderRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
-		return reason, blocked, util.UUIDToString(risk.ID), nil
+		if blocked {
+			exceptionID, err := r.activeProviderExceptionID(ctx, workspaceID, backendID, backend.Slug)
+			if err != nil {
+				return "", false, "", "", err
+			}
+			if exceptionID != "" {
+				return reason, false, util.UUIDToString(risk.ID), exceptionID, nil
+			}
+		}
+		return reason, blocked, util.UUIDToString(risk.ID), "", nil
 	}
-	return "", false, "", nil
+	return "", false, "", "", nil
+}
+
+func (r *Resolver) activeProviderExceptionID(ctx context.Context, workspaceID pgtype.UUID, backendID, providerSlug string) (string, error) {
+	byID, err := json.Marshal(map[string]string{
+		"resource_type": "provider",
+		"resource_id":   backendID,
+	})
+	if err != nil {
+		return "", err
+	}
+	byLabel, err := json.Marshal(map[string]string{
+		"resource_type":  "provider",
+		"resource_label": providerSlug,
+	})
+	if err != nil {
+		return "", err
+	}
+	exception, err := r.queries.GetActiveAIPolicyExceptionForProvider(ctx, db.GetActiveAIPolicyExceptionForProviderParams{
+		WorkspaceID: workspaceID,
+		Scope:       byID,
+		Scope_2:     byLabel,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return util.UUIDToString(exception.ID), nil
 }
 
 func ProviderRiskBlockReason(contractStatus, securityReviewStatus string) (string, bool) {

@@ -38,6 +38,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "ingest-keys"] as const,
   status: (wsId: string) =>
     [...gatewayKeys.all(wsId), "status"] as const,
+  doctor: (wsId: string) =>
+    [...gatewayKeys.all(wsId), "doctor"] as const,
   backends: (wsId: string) =>
     [...gatewayKeys.all(wsId), "backends"] as const,
   audit: (wsId: string, limit = 20) =>
@@ -52,6 +54,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "control-mappings"] as const,
   incidents: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "incidents", limit] as const,
+  policyExceptions: (wsId: string, limit = 20) =>
+    [...gatewayKeys.all(wsId), "policy-exceptions", limit] as const,
 };
 
 export function gatewayOverviewOptions(wsId: string, params?: GatewayObservabilityParams) {
@@ -114,6 +118,14 @@ export function gatewayStatusOptions(wsId: string) {
   });
 }
 
+export function gatewayDoctorOptions(wsId: string, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.doctor(wsId),
+    queryFn: ({ signal }) => api.getGatewayDoctor({ signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
 export function gatewayBackendsOptions(wsId: string) {
   return queryOptions({
     queryKey: gatewayKeys.backends(wsId),
@@ -168,6 +180,14 @@ export function gatewayIncidentsOptions(wsId: string, limit = 20, enabled = true
   return queryOptions({
     queryKey: gatewayKeys.incidents(wsId, limit),
     queryFn: ({ signal }) => api.listGatewayIncidents({ limit, signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayPolicyExceptionsOptions(wsId: string, limit = 20, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.policyExceptions(wsId, limit),
+    queryFn: ({ signal }) => api.listGatewayPolicyExceptions({ limit, signal }),
     enabled: !!wsId && enabled,
   });
 }

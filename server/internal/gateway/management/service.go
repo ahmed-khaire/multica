@@ -35,6 +35,21 @@ var governanceStatuses = map[string]struct{}{
 	"expired":     {},
 }
 
+var incidentStatuses = map[string]struct{}{
+	"open":          {},
+	"investigating": {},
+	"remediated":    {},
+	"closed":        {},
+}
+
+var policyExceptionStatuses = map[string]struct{}{
+	"requested": {},
+	"approved":  {},
+	"denied":    {},
+	"expired":   {},
+	"revoked":   {},
+}
+
 type defaultControlMapping struct {
 	ControlID             string
 	ControlTitle          string
@@ -607,6 +622,461 @@ func (s *Service) Status(ctx context.Context, workspaceID, userID, serverBaseURL
 	}, nil
 }
 
+func (s *Service) Doctor(ctx context.Context, workspaceID, userID, serverBaseURL string) (DoctorResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return DoctorResponse{}, err
+	}
+	userUUID, err := uuidValue(userID, "user_id")
+	if err != nil {
+		return DoctorResponse{}, err
+	}
+
+	checks := make([]DoctorCheck, 0, 12)
+	add := func(check DoctorCheck) {
+		checks = append(checks, check)
+	}
+
+	urls := BuildGatewayURLs(serverBaseURL)
+	add(DoctorCheck{
+		ID:       "gateway_urls",
+		Category: "gateway",
+		Status:   "pass",
+		Title:    "Gateway base URLs",
+		Detail:   "OpenAI-compatible and Anthropic-compatible Gateway URLs are available.",
+		Metadata: map[string]any{
+			"openai_base_url":    urls.OpenAIBaseURL,
+			"anthropic_base_url": urls.AnthropicBaseURL,
+		},
+	})
+
+	box, secretErr := s.loadBox()
+	if secretErr != nil {
+		add(DoctorCheck{
+			ID:          "gateway_secret",
+			Category:    "gateway",
+			Status:      "fail",
+			Title:       "Gateway secret key",
+			Detail:      "Gateway cannot encrypt or decrypt managed provider credentials.",
+			Remediation: "Set MULTICA_GATEWAY_SECRET_KEY to a base64-encoded 32-byte key and restart the server.",
+		})
+	} else {
+		add(DoctorCheck{
+			ID:       "gateway_secret",
+			Category: "gateway",
+			Status:   "pass",
+			Title:    "Gateway secret key",
+			Detail:   "Gateway credential encryption is configured.",
+		})
+	}
+
+	if _, err := s.queries.GetActiveGatewayUserKey(ctx, db.GetActiveGatewayUserKeyParams{
+		WorkspaceID: workspaceUUID,
+		UserID:      userUUID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		add(DoctorCheck{
+			ID:          "gateway_key",
+			Category:    "workspace",
+			Status:      "warning",
+			Title:       "User Gateway key",
+			Detail:      "No active Gateway key exists for this user.",
+			Remediation: "Run multica gateway key or generate a key from Settings -> Gateway.",
+		})
+	} else if err != nil {
+		return DoctorResponse{}, err
+	} else {
+		add(DoctorCheck{
+			ID:       "gateway_key",
+			Category: "workspace",
+			Status:   "pass",
+			Title:    "User Gateway key",
+			Detail:   "This user has an active Gateway key.",
+		})
+	}
+
+	settings, err := getSettingsOrDefaultWithQueries(ctx, s.queries, workspaceUUID)
+	if err != nil {
+		return DoctorResponse{}, err
+	}
+	if err := ValidateCapturePolicy(settings.CapturePolicy); err != nil {
+		add(DoctorCheck{
+			ID:          "capture_policy",
+			Category:    "policy",
+			Status:      "fail",
+			Title:       "Capture policy",
+			Detail:      "Workspace capture policy is invalid.",
+			Remediation: "Set capture policy to metadata_only, redacted_content, or full_content.",
+		})
+	} else {
+		add(DoctorCheck{
+			ID:       "capture_policy",
+			Category: "policy",
+			Status:   "pass",
+			Title:    "Capture policy",
+			Detail:   "Workspace capture policy is explicit.",
+			Metadata: map[string]any{"capture_policy": settings.CapturePolicy},
+		})
+	}
+
+	backends, err := s.queries.ListGatewayBackends(ctx, workspaceUUID)
+	if err != nil {
+		return DoctorResponse{}, err
+	}
+	enabledBackends := 0
+	for _, backend := range backends {
+		if backend.Enabled {
+			enabledBackends++
+		}
+	}
+	if len(backends) == 0 {
+		add(DoctorCheck{
+			ID:          "backend_count",
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Managed backends",
+			Detail:      "No Gateway backends are configured.",
+			Remediation: "Ask an admin to add an enterprise-managed backend with multica gateway add.",
+		})
+	} else {
+		add(DoctorCheck{
+			ID:       "backend_count",
+			Category: "backend",
+			Status:   "pass",
+			Title:    "Managed backends",
+			Detail:   "Gateway has managed backends configured.",
+			Metadata: map[string]any{"backend_count": len(backends), "enabled_backend_count": enabledBackends},
+		})
+	}
+
+	var defaultBackend *db.GatewayBackend
+	if !settings.DefaultBackendID.Valid {
+		add(DoctorCheck{
+			ID:          "default_backend",
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Default backend",
+			Detail:      "Gateway does not have a default backend.",
+			Remediation: "Set a default backend with multica gateway default <backend-slug>.",
+		})
+	} else {
+		backend, err := s.queries.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
+			WorkspaceID: workspaceUUID,
+			ID:          settings.DefaultBackendID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			add(DoctorCheck{
+				ID:          "default_backend",
+				Category:    "backend",
+				Status:      "fail",
+				Title:       "Default backend",
+				Detail:      "Configured default backend no longer exists.",
+				Remediation: "Choose an existing backend as the default.",
+			})
+		} else if err != nil {
+			return DoctorResponse{}, err
+		} else {
+			defaultBackend = &backend
+			status := "pass"
+			detail := "Default backend exists and is enabled."
+			remediation := ""
+			if !backend.Enabled {
+				status = "fail"
+				detail = "Default backend exists but is disabled."
+				remediation = "Enable this backend or choose another default backend."
+			}
+			add(DoctorCheck{
+				ID:          "default_backend",
+				Category:    "backend",
+				Status:      status,
+				Title:       "Default backend",
+				Detail:      detail,
+				Remediation: remediation,
+				Metadata: map[string]any{
+					"backend_id":   uuidString(backend.ID),
+					"backend_slug": backend.Slug,
+					"backend_type": backend.BackendType,
+				},
+			})
+		}
+	}
+
+	if defaultBackend != nil {
+		if secretErr != nil {
+			add(DoctorCheck{
+				ID:          "backend_credential",
+				Category:    "backend",
+				Status:      "fail",
+				Title:       "Default backend credential",
+				Detail:      "Credential decryption cannot run because the Gateway secret is unavailable.",
+				Remediation: "Fix MULTICA_GATEWAY_SECRET_KEY and restart the server.",
+			})
+		} else if _, err := box.DecryptString(defaultBackend.EncryptedCredential); err != nil {
+			add(DoctorCheck{
+				ID:          "backend_credential",
+				Category:    "backend",
+				Status:      "fail",
+				Title:       "Default backend credential",
+				Detail:      "Gateway could not decrypt the default backend credential.",
+				Remediation: "Rotate the backend credential or restore the original Gateway secret key.",
+			})
+		} else {
+			add(DoctorCheck{
+				ID:       "backend_credential",
+				Category: "backend",
+				Status:   "pass",
+				Title:    "Default backend credential",
+				Detail:   "Gateway can decrypt the default backend credential.",
+			})
+		}
+		s.addProviderRiskDoctorCheck(ctx, workspaceUUID, *defaultBackend, add)
+	}
+
+	s.addObservabilityDoctorCheck(ctx, workspaceUUID, add)
+	s.addGovernanceDoctorChecks(ctx, workspaceUUID, add)
+
+	return DoctorResponse{
+		Status:      doctorOverallStatus(checks),
+		Checks:      checks,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+func (s *Service) addProviderRiskDoctorCheck(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend, add func(DoctorCheck)) {
+	risks, err := s.queries.ListAIThirdPartyRisk(ctx, workspaceID)
+	if err != nil {
+		add(DoctorCheck{
+			ID:          "provider_risk",
+			Category:    "policy",
+			Status:      "warning",
+			Title:       "Provider risk register",
+			Detail:      "Provider risk could not be checked.",
+			Remediation: "Review Gateway provider risk configuration.",
+		})
+		return
+	}
+	backendID := uuidString(backend.ID)
+	for _, risk := range risks {
+		if risk.ProviderName != backend.Slug && optionalUUIDString(risk.BackendID) != backendID {
+			continue
+		}
+		reason, blocked := providerRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
+		if !blocked {
+			add(DoctorCheck{
+				ID:       "provider_risk",
+				Category: "policy",
+				Status:   "pass",
+				Title:    "Provider risk register",
+				Detail:   "Default backend provider risk status allows routing.",
+				Metadata: map[string]any{
+					"provider_name":          risk.ProviderName,
+					"contract_status":        risk.ContractStatus,
+					"security_review_status": risk.SecurityReviewStatus,
+				},
+			})
+			return
+		}
+		exceptionID, err := s.activeProviderExceptionID(ctx, workspaceID, backendID, backend.Slug)
+		if err != nil {
+			add(DoctorCheck{
+				ID:          "provider_risk",
+				Category:    "policy",
+				Status:      "fail",
+				Title:       "Provider risk register",
+				Detail:      "Default backend is blocked and policy exceptions could not be checked.",
+				Remediation: "Review provider risk and exception records.",
+			})
+			return
+		}
+		if exceptionID != "" {
+			add(DoctorCheck{
+				ID:          "provider_risk",
+				Category:    "policy",
+				Status:      "warning",
+				Title:       "Provider risk register",
+				Detail:      "Default backend is blocked by provider risk but has an active exception.",
+				Remediation: "Review the exception expiry and complete the underlying provider risk remediation.",
+				Metadata: map[string]any{
+					"provider_name":       risk.ProviderName,
+					"reason_code":         reason,
+					"policy_exception_id": exceptionID,
+				},
+			})
+			return
+		}
+		add(DoctorCheck{
+			ID:          "provider_risk",
+			Category:    "policy",
+			Status:      "fail",
+			Title:       "Provider risk register",
+			Detail:      "Default backend is blocked by provider risk.",
+			Remediation: "Approve the provider risk review, choose another backend, or approve a temporary policy exception.",
+			Metadata: map[string]any{
+				"provider_name": risk.ProviderName,
+				"reason_code":   reason,
+			},
+		})
+		return
+	}
+	add(DoctorCheck{
+		ID:          "provider_risk",
+		Category:    "policy",
+		Status:      "warning",
+		Title:       "Provider risk register",
+		Detail:      "Default backend does not have a provider risk assessment.",
+		Remediation: "Add a provider risk record before broad enterprise rollout.",
+	})
+}
+
+func (s *Service) addObservabilityDoctorCheck(ctx context.Context, workspaceID pgtype.UUID, add func(DoctorCheck)) {
+	summary, err := s.queries.GetGatewayOverviewSummary(ctx, db.GetGatewayOverviewSummaryParams{
+		WorkspaceID: workspaceID,
+		Since:       pgtype.Timestamptz{Time: time.Now().Add(-7 * 24 * time.Hour), Valid: true},
+	})
+	if err != nil {
+		add(DoctorCheck{
+			ID:          "recent_traffic",
+			Category:    "observability",
+			Status:      "warning",
+			Title:       "Recent Gateway traffic",
+			Detail:      "Recent Gateway traffic could not be checked.",
+			Remediation: "Review Gateway telemetry storage and database connectivity.",
+		})
+		return
+	}
+	if summary.RequestCount == 0 {
+		add(DoctorCheck{
+			ID:          "recent_traffic",
+			Category:    "observability",
+			Status:      "warning",
+			Title:       "Recent Gateway traffic",
+			Detail:      "No Gateway requests were observed in the last 7 days.",
+			Remediation: "Send a test request through the generated OpenAI or Anthropic Gateway base URL.",
+		})
+		return
+	}
+	add(DoctorCheck{
+		ID:       "recent_traffic",
+		Category: "observability",
+		Status:   "pass",
+		Title:    "Recent Gateway traffic",
+		Detail:   "Gateway telemetry has recent requests.",
+		Metadata: map[string]any{
+			"request_count":           summary.RequestCount,
+			"llm_call_count":          summary.LlmCallCount,
+			"streaming_request_count": summary.StreamingRequestCount,
+		},
+	})
+}
+
+func (s *Service) addGovernanceDoctorChecks(ctx context.Context, workspaceID pgtype.UUID, add func(DoctorCheck)) {
+	since := pgtype.Timestamptz{Time: time.Now().Add(-30 * 24 * time.Hour), Valid: true}
+	decisions, decisionErr := s.queries.ListGatewayPolicyDecisions(ctx, db.ListGatewayPolicyDecisionsParams{
+		WorkspaceID: workspaceID,
+		Limit:       10,
+		Since:       since,
+	})
+	if decisionErr == nil && len(decisions) > 0 {
+		add(DoctorCheck{ID: "policy_decisions", Category: "governance", Status: "pass", Title: "Policy decisions", Detail: "Gateway policy decisions are being recorded.", Metadata: map[string]any{"recent_count": len(decisions)}})
+	} else if decisionErr != nil {
+		add(DoctorCheck{ID: "policy_decisions", Category: "governance", Status: "warning", Title: "Policy decisions", Detail: "Policy decisions could not be checked.", Remediation: "Review Gateway policy decision storage."})
+	} else {
+		add(DoctorCheck{ID: "policy_decisions", Category: "governance", Status: "warning", Title: "Policy decisions", Detail: "No policy decisions were recorded in the last 30 days.", Remediation: "Policy decisions appear when Gateway enforces or records governance outcomes."})
+	}
+
+	evidence, evidenceErr := s.queries.ListAIEvidence(ctx, db.ListAIEvidenceParams{WorkspaceID: workspaceID, Limit: 10})
+	if evidenceErr == nil && len(evidence) > 0 {
+		add(DoctorCheck{ID: "evidence", Category: "governance", Status: "pass", Title: "Evidence records", Detail: "Gateway governance evidence exists.", Metadata: map[string]any{"recent_count": len(evidence)}})
+	} else if evidenceErr != nil {
+		add(DoctorCheck{ID: "evidence", Category: "governance", Status: "warning", Title: "Evidence records", Detail: "Evidence records could not be checked.", Remediation: "Review governance evidence storage."})
+	} else {
+		add(DoctorCheck{ID: "evidence", Category: "governance", Status: "warning", Title: "Evidence records", Detail: "No Gateway governance evidence exists yet.", Remediation: "Evidence is generated when Gateway governance decisions create auditable records."})
+	}
+
+	controls, controlsErr := s.queries.ListAIControlMappingsWithEvidence(ctx, workspaceID)
+	if controlsErr == nil && len(controls) > 0 {
+		add(DoctorCheck{ID: "control_mappings", Category: "governance", Status: "pass", Title: "Control mappings", Detail: "Gateway compliance control mappings are configured.", Metadata: map[string]any{"control_count": len(controls)}})
+	} else if controlsErr != nil {
+		add(DoctorCheck{ID: "control_mappings", Category: "governance", Status: "warning", Title: "Control mappings", Detail: "Compliance control mappings could not be checked.", Remediation: "Review Gateway compliance mapping storage."})
+	} else {
+		add(DoctorCheck{ID: "control_mappings", Category: "governance", Status: "warning", Title: "Control mappings", Detail: "Gateway compliance control mappings are not initialized.", Remediation: "Open Settings -> Gateway -> Compliance Controls or initialize default mappings."})
+	}
+
+	incidents, incidentErr := s.queries.ListAIIncidents(ctx, db.ListAIIncidentsParams{WorkspaceID: workspaceID, Limit: 100})
+	if incidentErr != nil {
+		add(DoctorCheck{ID: "open_incidents", Category: "governance", Status: "warning", Title: "Open incidents", Detail: "Gateway incidents could not be checked.", Remediation: "Review incident storage."})
+		return
+	}
+	openCount := 0
+	for _, incident := range incidents {
+		if incident.Status != "closed" && incident.Status != "remediated" {
+			openCount++
+		}
+	}
+	if openCount > 0 {
+		add(DoctorCheck{ID: "open_incidents", Category: "governance", Status: "warning", Title: "Open incidents", Detail: fmt.Sprintf("%d Gateway incident(s) need review.", openCount), Remediation: "Review and remediate open Gateway incidents.", Metadata: map[string]any{"open_count": openCount}})
+	} else {
+		add(DoctorCheck{ID: "open_incidents", Category: "governance", Status: "pass", Title: "Open incidents", Detail: "No open Gateway incidents need review."})
+	}
+}
+
+func (s *Service) activeProviderExceptionID(ctx context.Context, workspaceID pgtype.UUID, backendID, providerSlug string) (string, error) {
+	byID, err := json.Marshal(map[string]string{
+		"resource_type": "provider",
+		"resource_id":   backendID,
+	})
+	if err != nil {
+		return "", err
+	}
+	byLabel, err := json.Marshal(map[string]string{
+		"resource_type":  "provider",
+		"resource_label": providerSlug,
+	})
+	if err != nil {
+		return "", err
+	}
+	exception, err := s.queries.GetActiveAIPolicyExceptionForProvider(ctx, db.GetActiveAIPolicyExceptionForProviderParams{
+		WorkspaceID: workspaceID,
+		Scope:       byID,
+		Scope_2:     byLabel,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return uuidString(exception.ID), nil
+}
+
+func providerRiskBlockReason(contractStatus, securityReviewStatus string) (string, bool) {
+	contractStatus = strings.ToLower(strings.TrimSpace(contractStatus))
+	securityReviewStatus = strings.ToLower(strings.TrimSpace(securityReviewStatus))
+	switch {
+	case securityReviewStatus == "rejected" || contractStatus == "rejected":
+		return "provider_risk_rejected", true
+	case securityReviewStatus == "expired" || contractStatus == "expired":
+		return "provider_risk_expired", true
+	default:
+		return "", false
+	}
+}
+
+func doctorOverallStatus(checks []DoctorCheck) string {
+	hasWarning := false
+	for _, check := range checks {
+		if check.Status == "fail" {
+			return "unhealthy"
+		}
+		if check.Status == "warning" {
+			hasWarning = true
+		}
+	}
+	if hasWarning {
+		return "healthy_with_warnings"
+	}
+	return "healthy"
+}
+
 func (s *Service) ListBackends(ctx context.Context, workspaceID string) ([]BackendResponse, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -1070,6 +1540,156 @@ func (s *Service) ListIncidents(ctx context.Context, workspaceID string, limit i
 	return items, nil
 }
 
+func (s *Service) UpdateIncident(ctx context.Context, input UpdateIncidentInput) (IncidentItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	incidentUUID, err := uuidValue(input.IncidentID, "incident_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	if _, ok := incidentStatuses[status]; !ok {
+		return IncidentItem{}, fmt.Errorf("%w: invalid incident status", ErrInvalidGatewayBackend)
+	}
+
+	var row db.AiIncident
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.UpdateAIIncident(ctx, db.UpdateAIIncidentParams{
+			WorkspaceID:      workspaceUUID,
+			ID:               incidentUUID,
+			Status:           status,
+			RemediationNotes: strings.TrimSpace(input.RemediationNotes),
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.incident.update", "ai_incident", uuidString(row.ID), nil, incidentItem(row))
+	}); err != nil {
+		return IncidentItem{}, err
+	}
+	return incidentItem(row), nil
+}
+
+func (s *Service) ListPolicyExceptions(ctx context.Context, workspaceID string, limit int32) ([]PolicyExceptionItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := s.queries.ListAIPolicyExceptions(ctx, db.ListAIPolicyExceptionsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]PolicyExceptionItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, policyExceptionItem(row))
+	}
+	return items, nil
+}
+
+func (s *Service) CreatePolicyException(ctx context.Context, input CreatePolicyExceptionInput) (PolicyExceptionItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return PolicyExceptionItem{}, fmt.Errorf("%w: reason is required", ErrInvalidGatewayBackend)
+	}
+	scope, err := policyExceptionScope(input.ResourceType, input.ResourceID, input.ResourceLabel)
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	expiresAt, err := optionalRFC3339(input.ExpiresAt, "expires_at")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+
+	var row db.AiPolicyException
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.CreateAIPolicyException(ctx, db.CreateAIPolicyExceptionParams{
+			WorkspaceID:        workspaceUUID,
+			RequesterUserID:    actorUUID,
+			Reason:             reason,
+			Scope:              scope,
+			Status:             "requested",
+			ExpiresAt:          expiresAt,
+			EvidenceReferences: []byte("[]"),
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy_exception.create", "ai_policy_exception", uuidString(row.ID), nil, policyExceptionItem(row))
+	}); err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	return policyExceptionItem(row), nil
+}
+
+func (s *Service) UpdatePolicyException(ctx context.Context, input UpdatePolicyExceptionInput) (PolicyExceptionItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	exceptionUUID, err := uuidValue(input.ExceptionID, "exception_id")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	if _, ok := policyExceptionStatuses[status]; !ok {
+		return PolicyExceptionItem{}, fmt.Errorf("%w: invalid policy exception status", ErrInvalidGatewayBackend)
+	}
+	expiresAt, err := optionalRFC3339(input.ExpiresAt, "expires_at")
+	if err != nil {
+		return PolicyExceptionItem{}, err
+	}
+
+	var row db.AiPolicyException
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.UpdateAIPolicyException(ctx, db.UpdateAIPolicyExceptionParams{
+			WorkspaceID:    workspaceUUID,
+			ApproverUserID: actorUUID,
+			Status:         status,
+			ExpiresAt:      expiresAt,
+			ID:             exceptionUUID,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy_exception.update", "ai_policy_exception", uuidString(row.ID), nil, policyExceptionItem(row))
+	}); err != nil {
+		return PolicyExceptionItem{}, err
+	}
+	return policyExceptionItem(row), nil
+}
+
 func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, workspaceID pgtype.UUID) error {
 	for _, control := range defaultGatewayControlMappings {
 		mappedEvidenceQueries, err := json.Marshal(control.MappedEvidenceQueries)
@@ -1331,6 +1951,41 @@ func incidentItem(row db.AiIncident) IncidentItem {
 		OpenedAt:             textTimestamp(row.OpenedAt),
 		ClosedAt:             optionalTimestamp(row.ClosedAt),
 	}
+}
+
+func policyExceptionItem(row db.AiPolicyException) PolicyExceptionItem {
+	return PolicyExceptionItem{
+		ID:                 uuidString(row.ID),
+		PolicyID:           optionalUUIDString(row.PolicyID),
+		RequesterUserID:    optionalUUIDString(row.RequesterUserID),
+		ApproverUserID:     optionalUUIDString(row.ApproverUserID),
+		Reason:             row.Reason,
+		Scope:              auditJSON(row.Scope),
+		Status:             row.Status,
+		ExpiresAt:          optionalTimestamp(row.ExpiresAt),
+		EvidenceReferences: auditJSON(row.EvidenceReferences),
+		CreatedAt:          textTimestamp(row.CreatedAt),
+		UpdatedAt:          textTimestamp(row.UpdatedAt),
+	}
+}
+
+func policyExceptionScope(resourceType, resourceID, resourceLabel string) ([]byte, error) {
+	scope := map[string]string{
+		"resource_type": strings.TrimSpace(resourceType),
+	}
+	if scope["resource_type"] == "" {
+		return nil, fmt.Errorf("%w: resource_type is required", ErrInvalidGatewayBackend)
+	}
+	if resourceID = strings.TrimSpace(resourceID); resourceID != "" {
+		scope["resource_id"] = resourceID
+	}
+	if resourceLabel = strings.TrimSpace(resourceLabel); resourceLabel != "" {
+		scope["resource_label"] = resourceLabel
+	}
+	if scope["resource_id"] == "" && scope["resource_label"] == "" {
+		return nil, fmt.Errorf("%w: resource_id or resource_label is required", ErrInvalidGatewayBackend)
+	}
+	return json.Marshal(scope)
 }
 
 func controlEvidenceTimestamp(value any) string {

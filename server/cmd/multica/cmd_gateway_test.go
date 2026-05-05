@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -39,6 +39,67 @@ func TestGatewayTestRootDoesNotReparentProductionCommand(t *testing.T) {
 
 	if gatewayCmd.Parent() != rootCmd {
 		t.Fatalf("gatewayCmd parent after helper execution = %p, want rootCmd %p", gatewayCmd.Parent(), rootCmd)
+	}
+}
+
+func TestGatewayDoctorCommandShowsHealthReport(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/doctor" {
+			t.Errorf("path = %s, want /api/gateway/doctor", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":       "healthy_with_warnings",
+			"generated_at": "2026-05-05T10:00:00Z",
+			"checks": []map[string]any{
+				{
+					"id":          "gateway_key",
+					"category":    "workspace",
+					"status":      "pass",
+					"title":       "User Gateway key",
+					"detail":      "This user has an active Gateway key.",
+					"remediation": "",
+				},
+				{
+					"id":          "open_incidents",
+					"category":    "governance",
+					"status":      "warning",
+					"title":       "Open incidents",
+					"detail":      "2 Gateway incident(s) need review.",
+					"remediation": "Review and remediate open Gateway incidents.",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "doctor", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway doctor: %v", err)
+	}
+	if !called {
+		t.Fatal("server was not called")
+	}
+	if !strings.Contains(out, "Observer Gateway Doctor") {
+		t.Fatalf("output = %q, want doctor heading", out)
+	}
+	if !strings.Contains(out, "Result: healthy_with_warnings") {
+		t.Fatalf("output = %q, want overall result", out)
+	}
+	if !strings.Contains(out, "User Gateway key") || !strings.Contains(out, "Open incidents") {
+		t.Fatalf("output = %q, want check titles", out)
+	}
+	if !strings.Contains(out, "Review and remediate open Gateway incidents.") {
+		t.Fatalf("output = %q, want remediation", out)
 	}
 }
 

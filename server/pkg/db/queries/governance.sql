@@ -110,6 +110,35 @@ INSERT INTO ai_policy_exception (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
+-- name: ListAIPolicyExceptions :many
+SELECT * FROM ai_policy_exception
+WHERE workspace_id = $1
+ORDER BY updated_at DESC
+LIMIT $2;
+
+-- name: UpdateAIPolicyException :one
+UPDATE ai_policy_exception
+SET
+    status = $3,
+    approver_user_id = CASE
+        WHEN $3 IN ('approved', 'denied', 'revoked') THEN $2
+        ELSE approver_user_id
+    END,
+    expires_at = $4,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND id = $5
+RETURNING *;
+
+-- name: GetActiveAIPolicyExceptionForProvider :one
+SELECT * FROM ai_policy_exception
+WHERE workspace_id = $1
+  AND status = 'approved'
+  AND (expires_at IS NULL OR expires_at > now())
+  AND (scope @> $2 OR scope @> $3)
+ORDER BY updated_at DESC
+LIMIT 1;
+
 -- name: CreateAIIncident :one
 INSERT INTO ai_incident (
     workspace_id, severity, category, linked_request_id, linked_session_id,
@@ -124,6 +153,16 @@ SELECT * FROM ai_incident
 WHERE workspace_id = $1
 ORDER BY opened_at DESC
 LIMIT $2;
+
+-- name: UpdateAIIncident :one
+UPDATE ai_incident
+SET
+    status = $3,
+    remediation_notes = $4,
+    closed_at = CASE WHEN $3 = 'closed' THEN now() ELSE closed_at END
+WHERE workspace_id = $1
+  AND id = $2
+RETURNING *;
 
 -- name: CreateAIAuditLog :one
 INSERT INTO ai_audit_log (

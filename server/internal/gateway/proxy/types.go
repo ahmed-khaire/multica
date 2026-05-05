@@ -24,23 +24,25 @@ type AuthContext struct {
 }
 
 type BackendTarget struct {
-	ID             string
-	Slug           string
-	BackendType    string
-	BaseURL        string
-	UpstreamSecret string
-	CapturePolicy  string
+	ID                string
+	Slug              string
+	BackendType       string
+	BaseURL           string
+	UpstreamSecret    string
+	CapturePolicy     string
+	PolicyExceptionID string
 }
 
 type RequestSummary struct {
-	Model     string
-	Stream    bool
-	Body      []byte
-	BodyJSON  map[string]any
-	Protocol  string
-	Surface   string
-	RoutePath string
-	Method    string
+	Model               string
+	Stream              bool
+	Body                []byte
+	BodyJSON            map[string]any
+	Protocol            string
+	Surface             string
+	RoutePath           string
+	Method              string
+	ExplicitBackendSlug string
 }
 
 type ProxyResult struct {

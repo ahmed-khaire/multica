@@ -8,12 +8,14 @@ import type {
   GatewayBackend,
   GatewayAuditLogItem,
   GatewayControlMappingItem,
+  GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
   GatewayPolicyDecisionItem,
+  GatewayPolicyExceptionItem,
   GatewayProviderRisk,
   GatewaySessionDetail,
   GatewaySessionListResponse,
@@ -51,6 +53,11 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayEvidence: vi.fn(),
     listGatewayControlMappings: vi.fn(),
     listGatewayIncidents: vi.fn(),
+    listGatewayPolicyExceptions: vi.fn(),
+    getGatewayDoctor: vi.fn(),
+    createGatewayPolicyException: vi.fn(),
+    updateGatewayPolicyException: vi.fn(),
+    updateGatewayIncident: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
@@ -265,6 +272,37 @@ const gatewayStatus: GatewayStatusResponse = {
   has_active_key: true,
 };
 
+const gatewayDoctor: GatewayDoctorResponse = {
+  status: "healthy_with_warnings",
+  generated_at: "2026-05-04T13:00:00Z",
+  checks: [
+    {
+      id: "gateway_key",
+      category: "workspace",
+      status: "pass",
+      title: "User Gateway key",
+      detail: "This user has an active Gateway key.",
+      remediation: "",
+    },
+    {
+      id: "default_backend",
+      category: "backend",
+      status: "pass",
+      title: "Default backend",
+      detail: "Default backend exists and is enabled.",
+      remediation: "",
+    },
+    {
+      id: "open_incidents",
+      category: "governance",
+      status: "warning",
+      title: "Open incidents",
+      detail: "2 Gateway incident(s) need review.",
+      remediation: "Review and remediate open Gateway incidents.",
+    },
+  ],
+};
+
 const gatewayUserKey: GatewayUserKeyResponse = {
   id: "gateway-key-1",
   key: "mgw_secret",
@@ -395,6 +433,26 @@ const gatewayIncidents: GatewayIncidentItem[] = [
   },
 ];
 
+const gatewayPolicyExceptions: GatewayPolicyExceptionItem[] = [
+  {
+    id: "exception-1",
+    policy_id: "",
+    requester_user_id: "user-1",
+    approver_user_id: "",
+    reason: "Temporary exception for incident response",
+    scope: {
+      resource_type: "provider",
+      resource_id: "backend-openrouter",
+      resource_label: "openrouter",
+    },
+    status: "requested",
+    expires_at: null,
+    evidence_references: [],
+    created_at: "2026-05-04T12:49:00Z",
+    updated_at: "2026-05-04T12:49:00Z",
+  },
+];
+
 const adminMembers = [
   {
     id: "member-1",
@@ -444,6 +502,20 @@ describe("GatewayPage", () => {
     mockApi.listGatewayEvidence.mockResolvedValue(gatewayEvidence);
     mockApi.listGatewayControlMappings.mockResolvedValue(gatewayControlMappings);
     mockApi.listGatewayIncidents.mockResolvedValue(gatewayIncidents);
+    mockApi.listGatewayPolicyExceptions.mockResolvedValue(gatewayPolicyExceptions);
+    mockApi.getGatewayDoctor.mockResolvedValue(gatewayDoctor);
+    mockApi.createGatewayPolicyException.mockResolvedValue(gatewayPolicyExceptions[0]);
+    mockApi.updateGatewayPolicyException.mockResolvedValue({
+      ...gatewayPolicyExceptions[0],
+      status: "approved",
+      approver_user_id: "user-1",
+      expires_at: "2026-12-31T00:00:00Z",
+    });
+    mockApi.updateGatewayIncident.mockResolvedValue({
+      ...gatewayIncidents[0],
+      status: "remediated",
+      remediation_notes: "Provider review completed.",
+    });
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -596,6 +668,24 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayEvidence).not.toHaveBeenCalled();
     expect(mockApi.listGatewayControlMappings).not.toHaveBeenCalled();
     expect(mockApi.listGatewayIncidents).not.toHaveBeenCalled();
+    expect(mockApi.listGatewayPolicyExceptions).not.toHaveBeenCalled();
+    expect(mockApi.getGatewayDoctor).not.toHaveBeenCalled();
+  });
+
+  it("shows Gateway health for admins from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Gateway Health")).toBeInTheDocument();
+    expect(screen.getByText("healthy_with_warnings")).toBeInTheDocument();
+    const healthTable = await screen.findByRole("table", { name: /Gateway health checks/ });
+    expect(within(healthTable).getByText("User Gateway key")).toBeInTheDocument();
+    expect(within(healthTable).getByText("Default backend")).toBeInTheDocument();
+    expect(within(healthTable).getByText("Open incidents")).toBeInTheDocument();
+    expect(within(healthTable).getByText("Review and remediate open Gateway incidents.")).toBeInTheDocument();
+    expect(mockApi.getGatewayDoctor).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
@@ -703,6 +793,44 @@ describe("GatewayPage", () => {
     expect(within(incidentsTable).getByText("Gateway blocked provider openrouter: provider_risk_rejected")).toBeInTheDocument();
     expect(within(incidentsTable).getByText("open")).toBeInTheDocument();
     expect(mockApi.listGatewayIncidents).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
+  });
+
+  it("updates Gateway incidents from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    const incidentsTable = await screen.findByRole("table", { name: /Gateway incidents/ });
+    await user.click(within(incidentsTable).getByRole("button", { name: /Mark incident remediated/ }));
+
+    await waitFor(() => {
+      expect(mockApi.updateGatewayIncident).toHaveBeenCalledWith("incident-1", {
+        status: "remediated",
+        remediation_notes: "Provider review completed.",
+      });
+    });
+  });
+
+  it("shows and approves Gateway policy exceptions from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Policy Exceptions")).toBeInTheDocument();
+    const exceptionsTable = await screen.findByRole("table", { name: /Gateway policy exceptions/ });
+    expect(within(exceptionsTable).getByText("Temporary exception for incident response")).toBeInTheDocument();
+    expect(within(exceptionsTable).getByText("requested")).toBeInTheDocument();
+    await user.click(within(exceptionsTable).getByRole("button", { name: /Approve exception/ }));
+
+    await waitFor(() => {
+      expect(mockApi.updateGatewayPolicyException).toHaveBeenCalledWith("exception-1", {
+        status: "approved",
+        expires_at: expect.any(String),
+      });
+    });
+    expect(mockApi.listGatewayPolicyExceptions).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

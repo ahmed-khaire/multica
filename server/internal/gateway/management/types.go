@@ -56,6 +56,22 @@ type StatusResponse struct {
 	HasActiveKey        bool             `json:"has_active_key"`
 }
 
+type DoctorResponse struct {
+	Status      string        `json:"status"`
+	Checks      []DoctorCheck `json:"checks"`
+	GeneratedAt string        `json:"generated_at"`
+}
+
+type DoctorCheck struct {
+	ID          string         `json:"id"`
+	Category    string         `json:"category"`
+	Status      string         `json:"status"`
+	Title       string         `json:"title"`
+	Detail      string         `json:"detail"`
+	Remediation string         `json:"remediation"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
 type UserKeyResponse struct {
 	ID               string  `json:"id"`
 	Key              string  `json:"key"`
@@ -204,6 +220,20 @@ type IncidentItem struct {
 	ClosedAt             *string `json:"closed_at"`
 }
 
+type PolicyExceptionItem struct {
+	ID                 string  `json:"id"`
+	PolicyID           string  `json:"policy_id"`
+	RequesterUserID    string  `json:"requester_user_id"`
+	ApproverUserID     string  `json:"approver_user_id"`
+	Reason             string  `json:"reason"`
+	Scope              any     `json:"scope"`
+	Status             string  `json:"status"`
+	ExpiresAt          *string `json:"expires_at"`
+	EvidenceReferences any     `json:"evidence_references"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
@@ -269,6 +299,32 @@ type UpsertProviderRiskInput struct {
 	LastAssessmentAt     string
 	NextReviewAt         string
 	ActiveExceptionCount int32
+}
+
+type CreatePolicyExceptionInput struct {
+	WorkspaceID   string
+	ActorUserID   string
+	Reason        string
+	ResourceType  string
+	ResourceID    string
+	ResourceLabel string
+	ExpiresAt     string
+}
+
+type UpdatePolicyExceptionInput struct {
+	WorkspaceID string
+	ActorUserID string
+	ExceptionID string
+	Status      string
+	ExpiresAt   string
+}
+
+type UpdateIncidentInput struct {
+	WorkspaceID      string
+	ActorUserID      string
+	IncidentID       string
+	Status           string
+	RemediationNotes string
 }
 
 var providerPresets = map[string]ProviderPreset{

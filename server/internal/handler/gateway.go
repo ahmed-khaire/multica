@@ -69,6 +69,24 @@ type gatewayProviderRiskRequest struct {
 	ActiveExceptionCount int32    `json:"active_exception_count"`
 }
 
+type gatewayUpdateIncidentRequest struct {
+	Status           string `json:"status"`
+	RemediationNotes string `json:"remediation_notes"`
+}
+
+type gatewayCreatePolicyExceptionRequest struct {
+	Reason        string `json:"reason"`
+	ResourceType  string `json:"resource_type"`
+	ResourceID    string `json:"resource_id"`
+	ResourceLabel string `json:"resource_label"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+type gatewayUpdatePolicyExceptionRequest struct {
+	Status    string `json:"status"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 func (h *Handler) GatewayStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -76,6 +94,16 @@ func (h *Handler) GatewayStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.Status(r.Context(), workspaceID, userID, gatewayServerBaseURL(r))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) GatewayDoctor(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.Doctor(r.Context(), workspaceID, userID, gatewayServerBaseURL(r))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
@@ -324,6 +352,89 @@ func (h *Handler) ListGatewayIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.ListIncidents(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) UpdateGatewayIncident(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayUpdateIncidentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpdateIncident(r.Context(), management.UpdateIncidentInput{
+		WorkspaceID:      workspaceID,
+		ActorUserID:      userID,
+		IncidentID:       chi.URLParam(r, "id"),
+		Status:           req.Status,
+		RemediationNotes: req.RemediationNotes,
+	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) ListGatewayPolicyExceptions(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	limit, ok := gatewayAuditLimit(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListPolicyExceptions(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) CreateGatewayPolicyException(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayCreatePolicyExceptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.CreatePolicyException(r.Context(), management.CreatePolicyExceptionInput{
+		WorkspaceID:   workspaceID,
+		ActorUserID:   userID,
+		Reason:        req.Reason,
+		ResourceType:  req.ResourceType,
+		ResourceID:    req.ResourceID,
+		ResourceLabel: req.ResourceLabel,
+		ExpiresAt:     req.ExpiresAt,
+	})
+	h.writeGatewayResult(w, http.StatusCreated, resp, err)
+}
+
+func (h *Handler) UpdateGatewayPolicyException(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayUpdatePolicyExceptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpdatePolicyException(r.Context(), management.UpdatePolicyExceptionInput{
+		WorkspaceID: workspaceID,
+		ActorUserID: userID,
+		ExceptionID: chi.URLParam(r, "id"),
+		Status:      req.Status,
+		ExpiresAt:   req.ExpiresAt,
+	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 

@@ -77,7 +77,7 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 
-	target, err := s.Resolver.ResolveDefaultBackend(r.Context(), authCtx.WorkspaceID, protocol)
+	target, err := s.Resolver.ResolveBackend(r.Context(), authCtx.WorkspaceID, protocol, summary.ExplicitBackendSlug)
 	if err != nil {
 		gwErr := normalizeGatewayError(err)
 		if errors.Is(gwErr, ErrProviderRiskBlocked) {
@@ -87,6 +87,9 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 	summary.RoutePath = routePathFor(surface, target)
+	if target.PolicyExceptionID != "" {
+		s.recordExceptionAllow(context.Background(), authCtx, target)
+	}
 
 	obs := s.Recorder.Start(r.Context(), authCtx, target, summary)
 	result, err := s.Forwarder.Forward(r.Context(), w, r, target, summary)
@@ -107,6 +110,46 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 	s.Recorder.Complete(context.Background(), obs, result)
+}
+
+func (s *Service) recordExceptionAllow(ctx context.Context, authCtx AuthContext, target BackendTarget) {
+	if s.Queries == nil {
+		return
+	}
+	workspaceID, err := parseUUID(authCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	userID, err := parseUUID(authCtx.UserID)
+	if err != nil {
+		return
+	}
+	matchedRules, err := json.Marshal([]map[string]string{{
+		"id":                  "provider_risk_exception_active",
+		"action":              "allow_with_exception",
+		"policy_exception_id": target.PolicyExceptionID,
+	}})
+	if err != nil {
+		matchedRules = []byte("[]")
+	}
+	evidenceRefs, err := json.Marshal([]map[string]string{{
+		"policy_exception_id": target.PolicyExceptionID,
+	}})
+	if err != nil {
+		evidenceRefs = []byte("[]")
+	}
+	_, _ = s.Queries.RecordGatewayPolicyDecision(ctx, db.RecordGatewayPolicyDecisionParams{
+		WorkspaceID:        workspaceID,
+		SubjectUserID:      userID,
+		ResourceType:       "provider",
+		ResourceID:         target.ID,
+		ResourceLabel:      target.Slug,
+		Decision:           "allow",
+		ReasonCode:         "provider_risk_exception_active",
+		MatchedRules:       matchedRules,
+		ApprovalStatus:     pgtype.Text{String: "approved", Valid: true},
+		EvidenceReferences: evidenceRefs,
+	})
 }
 
 func (s *Service) recordPolicyBlock(ctx context.Context, authCtx AuthContext, gwErr GatewayError) {
@@ -205,9 +248,10 @@ func providerRiskBlockSeverity(code string) string {
 
 func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary, error) {
 	summary := RequestSummary{
-		Protocol: protocol,
-		Surface:  surface,
-		Method:   r.Method,
+		Protocol:            protocol,
+		Surface:             surface,
+		Method:              r.Method,
+		ExplicitBackendSlug: strings.TrimSpace(r.Header.Get("X-Multica-Backend")),
 	}
 	if r.Body == nil || r.Method == http.MethodGet {
 		return summary, nil

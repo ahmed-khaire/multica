@@ -33,6 +33,7 @@ import type {
   GatewayBackend,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
+  GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
@@ -46,6 +47,7 @@ import type {
   GatewayModelUsage,
   GatewayOverviewBucket,
   GatewayPolicyDecisionItem,
+  GatewayPolicyExceptionItem,
   GatewaySessionDetail,
   GatewaySessionListItem,
   GatewaySpanObservation,
@@ -61,12 +63,14 @@ import {
   gatewayAuditOptions,
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
+  gatewayDoctorOptions,
   gatewayEvidenceOptions,
   gatewayIncidentsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
   gatewayPolicyDecisionsOptions,
+  gatewayPolicyExceptionsOptions,
   gatewayProviderRisksOptions,
   gatewaySessionDetailOptions,
   gatewaySessionSpansOptions,
@@ -161,6 +165,12 @@ function statusVariant(status: string): "secondary" | "destructive" | "outline" 
   if (status.includes("error") || status === "policy_blocked" || status === "client_cancelled") {
     return "destructive";
   }
+  return "outline";
+}
+
+function doctorStatusVariant(status: string): "secondary" | "destructive" | "outline" {
+  if (status === "healthy" || status === "pass") return "secondary";
+  if (status === "unhealthy" || status === "fail") return "destructive";
   return "outline";
 }
 
@@ -507,6 +517,18 @@ function commaList(value: string): string[] {
 
 function joinList(values: string[] | undefined): string {
   return (values ?? []).join(", ");
+}
+
+function policyExceptionScopeLabel(scope: unknown): string {
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return "workspace";
+  const typed = scope as Record<string, unknown>;
+  const resource = typeof typed.resource_label === "string"
+    ? typed.resource_label
+    : typeof typed.resource_id === "string"
+      ? typed.resource_id
+      : "workspace";
+  const resourceType = typeof typed.resource_type === "string" ? typed.resource_type : "resource";
+  return `${resourceType}: ${resource}`;
 }
 
 function GatewayBackendsTable({
@@ -1148,6 +1170,102 @@ function GatewayConfigurationSetup({
   );
 }
 
+function GatewayHealthPanel({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const doctorQuery = useQuery(gatewayDoctorOptions(wsId, canManage));
+  const doctor = doctorQuery.data as GatewayDoctorResponse | undefined;
+  const checks = doctor?.checks ?? [];
+
+  if (!canManage) return null;
+
+  const refreshDoctor = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.doctor(wsId) });
+  };
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-3 text-sm">
+          <span className="flex items-center gap-2">
+            <Gauge className="size-4 text-muted-foreground" />
+            Gateway Health
+          </span>
+          <span className="flex items-center gap-2">
+            <Badge variant={doctorStatusVariant(doctor?.status ?? "unknown")}>
+              {doctor?.status ?? "checking"}
+            </Badge>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              onClick={refreshDoctor}
+              aria-label="Refresh Gateway health"
+              title="Refresh Gateway health"
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {doctorQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : checks.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <Gauge className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No health checks returned</p>
+            <p className="mt-1 text-xs text-muted-foreground">Run the doctor again after Gateway is configured.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway health checks">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Check</TableHead>
+                <TableHead>Detail</TableHead>
+                <TableHead>Remediation</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {checks.map((check) => (
+                <TableRow key={check.id}>
+                  <TableCell>
+                    <Badge variant={doctorStatusVariant(check.status)}>{check.status}</Badge>
+                  </TableCell>
+                  <TableCell>{check.category}</TableCell>
+                  <TableCell>
+                    <span className="font-medium">{check.title}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="line-clamp-2 max-w-md text-sm">{check.detail}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="line-clamp-2 max-w-md text-sm text-muted-foreground">{check.remediation || "None"}</span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {doctorQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{doctorQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function GatewayGovernanceSetup({
   canManage,
   wsId,
@@ -1709,8 +1827,20 @@ function GatewayIncidents({
   canManage: boolean;
   wsId: string;
 }) {
+  const qc = useQueryClient();
   const incidentsQuery = useQuery(gatewayIncidentsOptions(wsId, 20, canManage));
   const rows = incidentsQuery.data ?? [];
+  const updateIncidentMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.updateGatewayIncident(id, {
+        status: "remediated",
+        remediation_notes: "Provider review completed.",
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gatewayKeys.incidents(wsId, 20) });
+      void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+    },
+  });
 
   if (!canManage) return null;
 
@@ -1744,6 +1874,7 @@ function GatewayIncidents({
                 <TableHead>Summary</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Opened</TableHead>
+                <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1762,6 +1893,23 @@ function GatewayIncidents({
                     <Badge variant={row.status === "open" ? "secondary" : "outline"}>{row.status}</Badge>
                   </TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.opened_at)}</TableCell>
+                  <TableCell className="text-right">
+                    {row.status === "closed" || row.status === "remediated" ? (
+                      <Badge variant="outline">Done</Badge>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={updateIncidentMutation.isPending && updateIncidentMutation.variables === row.id}
+                        onClick={() => updateIncidentMutation.mutate(row.id)}
+                        aria-label="Mark incident remediated"
+                      >
+                        <ShieldCheck className="size-3.5" />
+                        Remediate
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -1769,6 +1917,110 @@ function GatewayIncidents({
         )}
         {incidentsQuery.error instanceof Error ? (
           <p className="border-t p-3 text-xs text-destructive">{incidentsQuery.error.message}</p>
+        ) : null}
+        {updateIncidentMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{updateIncidentMutation.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GatewayPolicyExceptions({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const exceptionsQuery = useQuery(gatewayPolicyExceptionsOptions(wsId, 20, canManage));
+  const rows = exceptionsQuery.data ?? [];
+  const approveExceptionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.updateGatewayPolicyException(id, {
+        status: "approved",
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gatewayKeys.policyExceptions(wsId, 20) });
+      void qc.invalidateQueries({ queryKey: gatewayKeys.policyDecisions(wsId, 20) });
+      void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+    },
+  });
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          Policy Exceptions
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {exceptionsQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <ShieldCheck className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No policy exceptions requested</p>
+            <p className="mt-1 text-xs text-muted-foreground">Temporary provider approvals and other governance overrides will appear here.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway policy exceptions">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Scope</TableHead>
+                <TableHead className="text-right">Expires</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayPolicyExceptionItem) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <Badge variant={row.status === "approved" ? "secondary" : "outline"}>{row.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.reason}</span>
+                  </TableCell>
+                  <TableCell>{policyExceptionScopeLabel(row.scope)}</TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatNullableTime(row.expires_at)}</TableCell>
+                  <TableCell className="text-right">
+                    {row.status === "requested" ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={approveExceptionMutation.isPending && approveExceptionMutation.variables === row.id}
+                        onClick={() => approveExceptionMutation.mutate(row.id)}
+                        aria-label="Approve exception"
+                      >
+                        <ShieldCheck className="size-3.5" />
+                        Approve
+                      </Button>
+                    ) : (
+                      <Badge variant="outline">{row.status}</Badge>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {exceptionsQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{exceptionsQuery.error.message}</p>
+        ) : null}
+        {approveExceptionMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{approveExceptionMutation.error.message}</p>
         ) : null}
       </CardContent>
     </Card>
@@ -2328,6 +2580,7 @@ export function GatewayPage() {
             </TabsContent>
             <TabsContent value="setup" className="mt-3">
               <div className="space-y-4">
+                <GatewayHealthPanel canManage={canManage} wsId={wsId} />
                 <GatewayConfigurationSetup
                   canManage={canManage}
                   memberRole={memberRole}
@@ -2337,6 +2590,7 @@ export function GatewayPage() {
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
                 <GatewayComplianceControls canManage={canManage} wsId={wsId} />
                 <GatewayIncidents canManage={canManage} wsId={wsId} />
+                <GatewayPolicyExceptions canManage={canManage} wsId={wsId} />
                 <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
                 <GatewayEvidence canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />

@@ -133,6 +133,25 @@ export interface GatewayStatusResponse extends GatewaySettingsResponse {
   has_active_key: boolean;
 }
 
+export type GatewayDoctorStatus = "healthy" | "healthy_with_warnings" | "unhealthy";
+export type GatewayDoctorCheckStatus = "pass" | "warning" | "fail";
+
+export interface GatewayDoctorCheck {
+  id: string;
+  category: string;
+  status: GatewayDoctorCheckStatus;
+  title: string;
+  detail: string;
+  remediation: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface GatewayDoctorResponse {
+  status: GatewayDoctorStatus;
+  checks: GatewayDoctorCheck[];
+  generated_at: string;
+}
+
 export interface GatewayUserKeyResponse {
   id: string;
   key: string;
@@ -256,6 +275,38 @@ export interface GatewayIncidentItem {
   remediation_notes: string;
   opened_at: string;
   closed_at: string | null;
+}
+
+export interface GatewayPolicyExceptionItem {
+  id: string;
+  policy_id: string;
+  requester_user_id: string;
+  approver_user_id: string;
+  reason: string;
+  scope: unknown;
+  status: string;
+  expires_at: string | null;
+  evidence_references: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGatewayPolicyExceptionRequest {
+  reason: string;
+  resource_type: string;
+  resource_id?: string;
+  resource_label?: string;
+  expires_at?: string;
+}
+
+export interface UpdateGatewayPolicyExceptionRequest {
+  status: string;
+  expires_at?: string;
+}
+
+export interface UpdateGatewayIncidentRequest {
+  status: string;
+  remediation_notes?: string;
 }
 
 export interface GatewayProviderRisk {

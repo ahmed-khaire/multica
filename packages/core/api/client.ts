@@ -44,12 +44,14 @@ import type {
   UpdateProjectRequest,
   ListProjectsResponse,
   CreateGatewayBackendRequest,
+  CreateGatewayPolicyExceptionRequest,
   DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
+  GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
@@ -57,6 +59,7 @@ import type {
   GatewayObservabilityParams,
   GatewayOverviewResponse,
   GatewayPolicyDecisionItem,
+  GatewayPolicyExceptionItem,
   GatewayProviderRisk,
   GatewaySettingsResponse,
   GatewaySessionListResponse,
@@ -66,6 +69,8 @@ import type {
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
   UpdateGatewayBackendRequest,
+  UpdateGatewayIncidentRequest,
+  UpdateGatewayPolicyExceptionRequest,
   UpsertGatewayProviderRiskRequest,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
@@ -642,6 +647,10 @@ export class ApiClient {
     return this.fetch("/api/gateway/status", params?.signal ? { signal: params.signal } : undefined);
   }
 
+  async getGatewayDoctor(params?: { signal?: AbortSignal }): Promise<GatewayDoctorResponse> {
+    return this.fetch("/api/gateway/doctor", params?.signal ? { signal: params.signal } : undefined);
+  }
+
   async listGatewayBackends(params?: { signal?: AbortSignal }): Promise<GatewayBackend[]> {
     return this.fetch("/api/gateway/backends", params?.signal ? { signal: params.signal } : undefined);
   }
@@ -707,6 +716,34 @@ export class ApiClient {
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     const query = search.toString();
     return this.fetch(`/api/gateway/governance/incidents${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async updateGatewayIncident(id: string, data: UpdateGatewayIncidentRequest): Promise<GatewayIncidentItem> {
+    return this.fetch(`/api/gateway/governance/incidents/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listGatewayPolicyExceptions(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayPolicyExceptionItem[]> {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/gateway/governance/exceptions${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async createGatewayPolicyException(data: CreateGatewayPolicyExceptionRequest): Promise<GatewayPolicyExceptionItem> {
+    return this.fetch("/api/gateway/governance/exceptions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateGatewayPolicyException(id: string, data: UpdateGatewayPolicyExceptionRequest): Promise<GatewayPolicyExceptionItem> {
+    return this.fetch(`/api/gateway/governance/exceptions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   async upsertGatewayProviderRisk(data: UpsertGatewayProviderRiskRequest): Promise<GatewayProviderRisk> {

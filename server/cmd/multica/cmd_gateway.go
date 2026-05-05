@@ -27,6 +27,12 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewayStatus,
 	}
 
+	doctorCmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Diagnose Observer Gateway setup and health",
+		RunE:  runGatewayDoctor,
+	}
+
 	keyCmd := &cobra.Command{
 		Use:   "key",
 		Short: "Create or print your Observer Gateway key",
@@ -93,6 +99,7 @@ func newGatewayCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(doctorCmd)
 	cmd.AddCommand(keyCmd)
 	cmd.AddCommand(keysCmd)
 	cmd.AddCommand(revokeCmd)
@@ -105,6 +112,7 @@ func newGatewayCommand() *cobra.Command {
 	cmd.AddCommand(policyCmd)
 
 	statusCmd.Flags().String("output", "table", "Output format: table or json")
+	doctorCmd.Flags().String("output", "table", "Output format: table or json")
 	keyCmd.Flags().String("output", "env", "Output format: env or json")
 	keysCmd.Flags().String("output", "table", "Output format: table or json")
 	ingestKeyCmd.Flags().String("app-id", "", "Application identifier attached to ingested traces")
@@ -149,6 +157,22 @@ type gatewayStatusDTO struct {
 	BackendCount        int                `json:"backend_count"`
 	EnabledBackendCount int                `json:"enabled_backend_count"`
 	HasActiveKey        bool               `json:"has_active_key"`
+}
+
+type gatewayDoctorDTO struct {
+	Status      string                  `json:"status"`
+	Checks      []gatewayDoctorCheckDTO `json:"checks"`
+	GeneratedAt string                  `json:"generated_at"`
+}
+
+type gatewayDoctorCheckDTO struct {
+	ID          string         `json:"id"`
+	Category    string         `json:"category"`
+	Status      string         `json:"status"`
+	Title       string         `json:"title"`
+	Detail      string         `json:"detail"`
+	Remediation string         `json:"remediation"`
+	Metadata    map[string]any `json:"metadata"`
 }
 
 type gatewayKeyDTO struct {
@@ -270,6 +294,46 @@ func runGatewayStatus(cmd *cobra.Command, _ []string) error {
 		{"ACTIVE KEY", yesNo(resp.HasActiveKey)},
 	}
 	cli.PrintTable(cmd.OutOrStdout(), []string{"FIELD", "VALUE"}, rows)
+	return nil
+}
+
+func runGatewayDoctor(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var resp gatewayDoctorDTO
+	if err := client.GetJSON(ctx, "/api/gateway/doctor", &resp); err != nil {
+		return fmt.Errorf("run gateway doctor: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintln(w, "Observer Gateway Doctor")
+	fmt.Fprintf(w, "Result: %s\n", resp.Status)
+	if resp.GeneratedAt != "" {
+		fmt.Fprintf(w, "Generated: %s\n", resp.GeneratedAt)
+	}
+	fmt.Fprintln(w)
+
+	rows := make([][]string, 0, len(resp.Checks))
+	for _, check := range resp.Checks {
+		rows = append(rows, []string{
+			check.Status,
+			check.Category,
+			check.Title,
+			check.Detail,
+			check.Remediation,
+		})
+	}
+	cli.PrintTable(w, []string{"STATUS", "CATEGORY", "CHECK", "DETAIL", "REMEDIATION"}, rows)
 	return nil
 }
 

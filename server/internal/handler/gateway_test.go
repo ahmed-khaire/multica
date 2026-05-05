@@ -10,9 +10,29 @@ import (
 	"testing"
 )
 
+type doctorCheckAssertion struct {
+	ID       string `json:"id"`
+	Category string `json:"category"`
+	Status   string `json:"status"`
+	Title    string `json:"title"`
+}
+
 func setGatewaySecret(t *testing.T) {
 	t.Helper()
 	t.Setenv("MULTICA_GATEWAY_SECRET_KEY", base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
+}
+
+func assertDoctorCheck(t *testing.T, checks []doctorCheckAssertion, id, status string) {
+	t.Helper()
+	for _, check := range checks {
+		if check.ID == id {
+			if check.Status != status {
+				t.Fatalf("doctor check %s status = %q, want %q", id, check.Status, status)
+			}
+			return
+		}
+	}
+	t.Fatalf("doctor check %s not found in %#v", id, checks)
 }
 
 func TestGatewayCreateKeyHandler(t *testing.T) {
@@ -47,12 +67,72 @@ func TestGatewayCreateKeyHandler(t *testing.T) {
 	}
 }
 
+func TestGatewayDoctorHandlerReportsHealthyWithWarnings(t *testing.T) {
+	setGatewaySecret(t)
+
+	keyW := httptest.NewRecorder()
+	keyReq := newRequest("POST", "/api/gateway/key", nil)
+	testHandler.CreateGatewayUserKey(keyW, keyReq)
+	if keyW.Code != http.StatusOK {
+		t.Fatalf("CreateGatewayUserKey: expected 200, got %d: %s", keyW.Code, keyW.Body.String())
+	}
+
+	backendW := httptest.NewRecorder()
+	backendReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider":    "local",
+		"slug":        "doctor-local",
+		"key":         "anything",
+		"set_default": true,
+	})
+	testHandler.CreateGatewayBackend(backendW, backendReq)
+	if backendW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", backendW.Code, backendW.Body.String())
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_incident (
+			workspace_id, severity, category, summary, status, remediation_notes
+		)
+		VALUES (
+			$1, 'medium', 'gateway_provider_risk_block',
+			'Gateway blocked provider local: provider_risk_expired',
+			'open', 'Review provider contract.'
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert incident: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/doctor", nil)
+	req.Host = "api.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	testHandler.GatewayDoctor(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GatewayDoctor: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Status string                 `json:"status"`
+		Checks []doctorCheckAssertion `json:"checks"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("GatewayDoctor: failed to decode response: %v", err)
+	}
+	if resp.Status != "healthy_with_warnings" {
+		t.Fatalf("GatewayDoctor: status = %q, want healthy_with_warnings; checks = %#v", resp.Status, resp.Checks)
+	}
+	assertDoctorCheck(t, resp.Checks, "gateway_key", "pass")
+	assertDoctorCheck(t, resp.Checks, "default_backend", "pass")
+	assertDoctorCheck(t, resp.Checks, "open_incidents", "warning")
+}
+
 func TestGatewayCreateBackendRedactsCredential(t *testing.T) {
 	setGatewaySecret(t)
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/gateway/backends", map[string]any{
 		"provider": "openrouter",
+		"slug":     "credential-openrouter",
 		"key":      "sk-or-1234567890abcdef",
 	})
 
@@ -124,6 +204,7 @@ func TestGatewayAuditHandlerListsBackendChanges(t *testing.T) {
 	createW := httptest.NewRecorder()
 	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
 		"provider": "local",
+		"slug":     "audit-local",
 		"key":      "anything",
 	})
 
@@ -191,6 +272,7 @@ func TestGatewayProviderRiskHandlersUpsertAndList(t *testing.T) {
 	createW := httptest.NewRecorder()
 	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
 		"provider": "openrouter",
+		"slug":     "risk-openrouter",
 		"key":      "sk-or-1234567890abcdef",
 	})
 
@@ -247,22 +329,38 @@ func TestGatewayProviderRiskHandlersUpsertAndList(t *testing.T) {
 	if len(resp) == 0 {
 		t.Fatal("ListGatewayProviderRisks: expected at least one risk row")
 	}
-	if resp[0].ProviderName != "openrouter" {
-		t.Fatalf("ListGatewayProviderRisks: provider_name = %q, want openrouter", resp[0].ProviderName)
+	var risk *struct {
+		BackendID            string   `json:"backend_id"`
+		ProviderName         string   `json:"provider_name"`
+		ApprovedUseCases     []string `json:"approved_use_cases"`
+		DataCategories       []string `json:"data_categories"`
+		ContractStatus       string   `json:"contract_status"`
+		SecurityReviewStatus string   `json:"security_review_status"`
+		RiskScore            int      `json:"risk_score"`
+		NextReviewAt         *string  `json:"next_review_at"`
 	}
-	if resp[0].BackendID != backend.ID {
-		t.Fatalf("ListGatewayProviderRisks: backend_id = %q, want %q", resp[0].BackendID, backend.ID)
+	for i := range resp {
+		if resp[i].BackendID == backend.ID {
+			risk = &resp[i]
+			break
+		}
 	}
-	if resp[0].RiskScore != 64 {
-		t.Fatalf("ListGatewayProviderRisks: risk_score = %d, want 64", resp[0].RiskScore)
+	if risk == nil {
+		t.Fatalf("ListGatewayProviderRisks: missing backend_id %q in %#v", backend.ID, resp)
 	}
-	if resp[0].SecurityReviewStatus != "approved" || resp[0].ContractStatus != "approved" {
-		t.Fatalf("ListGatewayProviderRisks: statuses = %s/%s, want approved/approved", resp[0].SecurityReviewStatus, resp[0].ContractStatus)
+	if risk.ProviderName != "openrouter" {
+		t.Fatalf("ListGatewayProviderRisks: provider_name = %q, want openrouter", risk.ProviderName)
 	}
-	if len(resp[0].ApprovedUseCases) != 2 || resp[0].ApprovedUseCases[1] != "code review" {
-		t.Fatalf("ListGatewayProviderRisks: approved_use_cases = %#v, want code review", resp[0].ApprovedUseCases)
+	if risk.RiskScore != 64 {
+		t.Fatalf("ListGatewayProviderRisks: risk_score = %d, want 64", risk.RiskScore)
 	}
-	if resp[0].NextReviewAt == nil || *resp[0].NextReviewAt == "" {
+	if risk.SecurityReviewStatus != "approved" || risk.ContractStatus != "approved" {
+		t.Fatalf("ListGatewayProviderRisks: statuses = %s/%s, want approved/approved", risk.SecurityReviewStatus, risk.ContractStatus)
+	}
+	if len(risk.ApprovedUseCases) != 2 || risk.ApprovedUseCases[1] != "code review" {
+		t.Fatalf("ListGatewayProviderRisks: approved_use_cases = %#v, want code review", risk.ApprovedUseCases)
+	}
+	if risk.NextReviewAt == nil || *risk.NextReviewAt == "" {
 		t.Fatal("ListGatewayProviderRisks: expected next_review_at")
 	}
 }
@@ -477,6 +575,117 @@ func TestGatewayIncidentHandlerListsOpenIncidents(t *testing.T) {
 	}
 	if resp[0].OpenedAt == "" {
 		t.Fatal("ListGatewayIncidents: expected opened_at")
+	}
+}
+
+func TestGatewayIncidentHandlerUpdatesStatus(t *testing.T) {
+	var incidentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO ai_incident (
+			workspace_id, severity, category, summary, status, remediation_notes
+		)
+		VALUES (
+			$1, 'high', 'gateway_provider_risk_block',
+			'Gateway blocked provider openrouter: provider_risk_rejected',
+			'open', ''
+		)
+		RETURNING id::text
+	`, testWorkspaceID).Scan(&incidentID); err != nil {
+		t.Fatalf("insert incident: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("PATCH", "/api/gateway/governance/incidents/"+incidentID, map[string]any{
+		"status":            "remediated",
+		"remediation_notes": "Provider review completed and backend remains disabled.",
+	})
+	req = withURLParam(req, "id", incidentID)
+	testHandler.UpdateGatewayIncident(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayIncident: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Status           string `json:"status"`
+		RemediationNotes string `json:"remediation_notes"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("UpdateGatewayIncident: decode response: %v", err)
+	}
+	if resp.Status != "remediated" {
+		t.Fatalf("UpdateGatewayIncident: status = %q, want remediated", resp.Status)
+	}
+	if resp.RemediationNotes == "" {
+		t.Fatal("UpdateGatewayIncident: expected remediation notes")
+	}
+}
+
+func TestGatewayPolicyExceptionHandlersCreateListAndApprove(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/exceptions", map[string]any{
+		"reason":         "Temporary exception for incident response",
+		"resource_type":  "provider",
+		"resource_id":    "backend-openrouter",
+		"resource_label": "openrouter",
+	})
+	testHandler.CreateGatewayPolicyException(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayPolicyException: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var created struct {
+		ID     string         `json:"id"`
+		Status string         `json:"status"`
+		Scope  map[string]any `json:"scope"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayPolicyException: decode response: %v", err)
+	}
+	if created.ID == "" || created.Status != "requested" {
+		t.Fatalf("CreateGatewayPolicyException: response = %#v, want requested with id", created)
+	}
+	if created.Scope["resource_id"] != "backend-openrouter" {
+		t.Fatalf("CreateGatewayPolicyException: scope = %#v, want resource_id", created.Scope)
+	}
+
+	updateW := httptest.NewRecorder()
+	updateReq := newRequest("PATCH", "/api/gateway/governance/exceptions/"+created.ID, map[string]any{
+		"status":     "approved",
+		"expires_at": "2026-12-31T00:00:00Z",
+	})
+	updateReq = withURLParam(updateReq, "id", created.ID)
+	testHandler.UpdateGatewayPolicyException(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayPolicyException: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+
+	var updated struct {
+		Status     string  `json:"status"`
+		ApproverID string  `json:"approver_user_id"`
+		ExpiresAt  *string `json:"expires_at"`
+	}
+	if err := json.NewDecoder(updateW.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateGatewayPolicyException: decode response: %v", err)
+	}
+	if updated.Status != "approved" || updated.ApproverID == "" || updated.ExpiresAt == nil {
+		t.Fatalf("UpdateGatewayPolicyException: response = %#v, want approved with approver and expiry", updated)
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/governance/exceptions?limit=10", nil)
+	testHandler.ListGatewayPolicyExceptions(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayPolicyExceptions: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listed []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listed); err != nil {
+		t.Fatalf("ListGatewayPolicyExceptions: decode response: %v", err)
+	}
+	if len(listed) == 0 || listed[0].ID == "" {
+		t.Fatalf("ListGatewayPolicyExceptions: expected exception rows, got %#v", listed)
 	}
 }
 
