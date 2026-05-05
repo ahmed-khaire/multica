@@ -62,3 +62,52 @@ func TestGatewayErrorsWrapSentinel(t *testing.T) {
 		t.Fatalf("GatewayError should wrap ErrDefaultBackendNotConfigured")
 	}
 }
+
+func TestProviderRiskBlockReasonBlocksRejectedOrExpiredGovernance(t *testing.T) {
+	tests := []struct {
+		name                 string
+		contractStatus       string
+		securityReviewStatus string
+		wantBlocked          bool
+		wantReason           string
+	}{
+		{
+			name:                 "rejected security review",
+			contractStatus:       "approved",
+			securityReviewStatus: "rejected",
+			wantBlocked:          true,
+			wantReason:           "provider_risk_rejected",
+		},
+		{
+			name:                 "expired contract",
+			contractStatus:       "expired",
+			securityReviewStatus: "approved",
+			wantBlocked:          true,
+			wantReason:           "provider_risk_expired",
+		},
+		{
+			name:                 "approved governance",
+			contractStatus:       "approved",
+			securityReviewStatus: "approved",
+			wantBlocked:          false,
+		},
+		{
+			name:                 "missing risk register status",
+			contractStatus:       "",
+			securityReviewStatus: "",
+			wantBlocked:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReason, gotBlocked := ProviderRiskBlockReason(tt.contractStatus, tt.securityReviewStatus)
+			if gotBlocked != tt.wantBlocked {
+				t.Fatalf("blocked = %v, want %v", gotBlocked, tt.wantBlocked)
+			}
+			if gotReason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", gotReason, tt.wantReason)
+			}
+		})
+	}
+}

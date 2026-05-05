@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -78,7 +79,11 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 
 	target, err := s.Resolver.ResolveDefaultBackend(r.Context(), authCtx.WorkspaceID, protocol)
 	if err != nil {
-		writeProviderError(w, protocol, normalizeGatewayError(err))
+		gwErr := normalizeGatewayError(err)
+		if errors.Is(gwErr, ErrProviderRiskBlocked) {
+			s.recordPolicyBlock(context.Background(), authCtx, gwErr)
+		}
+		writeProviderError(w, protocol, gwErr)
 		return
 	}
 	summary.RoutePath = routePathFor(surface, target)
@@ -102,6 +107,48 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 	s.Recorder.Complete(context.Background(), obs, result)
+}
+
+func (s *Service) recordPolicyBlock(ctx context.Context, authCtx AuthContext, gwErr GatewayError) {
+	if s.Queries == nil {
+		return
+	}
+	workspaceID, err := parseUUID(authCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	userID, err := parseUUID(authCtx.UserID)
+	if err != nil {
+		return
+	}
+	resourceType := gwErr.ResourceType
+	if resourceType == "" {
+		resourceType = "gateway"
+	}
+	resourceID := gwErr.ResourceID
+	resourceLabel := gwErr.ResourceLabel
+	matchedRules, err := json.Marshal([]map[string]string{{
+		"id":          gwErr.Code,
+		"action":      "block",
+		"reason_code": gwErr.Code,
+	}})
+	if err != nil {
+		matchedRules = []byte("[]")
+	}
+	if _, err := s.Queries.RecordGatewayPolicyDecision(ctx, db.RecordGatewayPolicyDecisionParams{
+		WorkspaceID:        workspaceID,
+		SubjectUserID:      userID,
+		ResourceType:       resourceType,
+		ResourceID:         resourceID,
+		ResourceLabel:      resourceLabel,
+		Decision:           "block",
+		ReasonCode:         gwErr.Code,
+		MatchedRules:       matchedRules,
+		ApprovalStatus:     pgtype.Text{},
+		EvidenceReferences: []byte("[]"),
+	}); err != nil {
+		return
+	}
 }
 
 func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary, error) {

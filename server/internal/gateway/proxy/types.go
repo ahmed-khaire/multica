@@ -13,6 +13,7 @@ const (
 	StatusSuccess       = "success"
 	StatusUpstreamError = "upstream_error"
 	StatusGatewayError  = "gateway_error"
+	StatusPolicyBlocked = "policy_blocked"
 )
 
 type AuthContext struct {

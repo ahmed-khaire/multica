@@ -72,6 +72,22 @@ func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, proto
 	if !CompatibleBackendType(protocol, backend.BackendType) {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway backend is not compatible with requested protocol", "gateway_backend_incompatible", ErrIncompatibleBackend)
 	}
+	reason, blocked, err := r.providerRiskBlockReason(ctx, workspaceUUID, backend)
+	if err != nil {
+		return BackendTarget{}, err
+	}
+	if blocked {
+		return BackendTarget{}, GatewayError{
+			StatusCode:    http.StatusForbidden,
+			PublicMessage: "gateway provider is blocked by workspace governance",
+			ErrorType:     "invalid_request_error",
+			Code:          reason,
+			Cause:         ErrProviderRiskBlocked,
+			ResourceType:  "provider",
+			ResourceID:    util.UUIDToString(backend.ID),
+			ResourceLabel: backend.Slug,
+		}
+	}
 	box, err := r.loadBox()
 	if err != nil {
 		return BackendTarget{}, RoutingError(http.StatusServiceUnavailable, "gateway secret key is not configured", "gateway_secret_unavailable", ErrGatewaySecretNotConfigured)
@@ -88,6 +104,35 @@ func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, proto
 		UpstreamSecret: secret,
 		CapturePolicy:  settings.CapturePolicy,
 	}, nil
+}
+
+func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, error) {
+	risks, err := r.queries.ListAIThirdPartyRisk(ctx, workspaceID)
+	if err != nil {
+		return "", false, err
+	}
+	backendID := util.UUIDToString(backend.ID)
+	for _, risk := range risks {
+		if risk.ProviderName != backend.Slug && util.UUIDToString(risk.BackendID) != backendID {
+			continue
+		}
+		reason, blocked := ProviderRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
+		return reason, blocked, nil
+	}
+	return "", false, nil
+}
+
+func ProviderRiskBlockReason(contractStatus, securityReviewStatus string) (string, bool) {
+	contractStatus = strings.ToLower(strings.TrimSpace(contractStatus))
+	securityReviewStatus = strings.ToLower(strings.TrimSpace(securityReviewStatus))
+	switch {
+	case securityReviewStatus == "rejected" || contractStatus == "rejected":
+		return "provider_risk_rejected", true
+	case securityReviewStatus == "expired" || contractStatus == "expired":
+		return "provider_risk_expired", true
+	default:
+		return "", false
+	}
 }
 
 func parseUUID(value string) (pgtype.UUID, error) {

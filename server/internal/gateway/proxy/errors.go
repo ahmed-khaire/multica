@@ -11,6 +11,7 @@ var (
 	ErrBackendDisabled             = errors.New("gateway backend is disabled")
 	ErrIncompatibleBackend         = errors.New("gateway backend is not compatible with requested protocol")
 	ErrGatewaySecretNotConfigured  = errors.New("gateway secret key is not configured")
+	ErrProviderRiskBlocked         = errors.New("gateway provider risk blocks this request")
 )
 
 type GatewayError struct {
@@ -19,6 +20,9 @@ type GatewayError struct {
 	ErrorType     string
 	Code          string
 	Cause         error
+	ResourceType  string
+	ResourceID    string
+	ResourceLabel string
 }
 
 func (e GatewayError) Error() string {

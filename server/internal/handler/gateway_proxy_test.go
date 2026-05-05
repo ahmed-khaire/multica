@@ -186,6 +186,71 @@ func TestGatewayProxyStreamingPassThrough(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyBlocksRejectedProviderRisk(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	backendID := createGatewayProxyBackend(t, "local", "local-risk-rejected-proxy-test", upstream.URL+"/v1", "sk-upstream-risk")
+	upsertW := httptest.NewRecorder()
+	upsertReq := newRequest(http.MethodPost, "/api/gateway/governance/provider-risks", map[string]any{
+		"provider_name":          "local-risk-rejected-proxy-test",
+		"backend_id":             backendID,
+		"security_review_status": "rejected",
+		"contract_status":        "approved",
+		"risk_score":             95,
+		"approved_use_cases":     []string{"sandbox only"},
+		"active_exception_count": 0,
+		"review_cadence_days":    90,
+	})
+	testHandler.UpsertGatewayProviderRisk(upsertW, upsertReq)
+	if upsertW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayProviderRisk status = %d: %s", upsertW.Code, upsertW.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+	if sawUpstream {
+		t.Fatal("upstream should not be called for rejected provider risk")
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	errBody, ok := resp["error"].(map[string]any)
+	if !ok || errBody["code"] != "provider_risk_rejected" {
+		t.Fatalf("blocked error body = %#v, want provider_risk_rejected", resp)
+	}
+
+	var decisionCount int
+	if err := testPool.QueryRow(req.Context(), `
+		SELECT count(*)
+		FROM gateway_policy_decision
+		WHERE workspace_id = $1
+		  AND resource_label = 'local-risk-rejected-proxy-test'
+		  AND decision = 'block'
+		  AND reason_code = 'provider_risk_rejected'
+	`, testWorkspaceID).Scan(&decisionCount); err != nil {
+		t.Fatalf("count policy decisions: %v", err)
+	}
+	if decisionCount == 0 {
+		t.Fatal("expected provider risk block to record a policy decision")
+	}
+}
+
 func createGatewayProxyKey(t *testing.T) string {
 	t.Helper()
 
@@ -208,7 +273,7 @@ func createGatewayProxyKey(t *testing.T) string {
 	return resp.Key
 }
 
-func createGatewayProxyBackend(t *testing.T, provider, slug, baseURL, key string) {
+func createGatewayProxyBackend(t *testing.T, provider, slug, baseURL, key string) string {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -223,4 +288,14 @@ func createGatewayProxyBackend(t *testing.T, provider, slug, baseURL, key string
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateGatewayBackend(%s) status = %d: %s", slug, w.Code, w.Body.String())
 	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode backend response: %v", err)
+	}
+	if resp.ID == "" {
+		t.Fatalf("CreateGatewayBackend(%s) returned empty id", slug)
+	}
+	return resp.ID
 }
