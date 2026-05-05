@@ -191,6 +191,26 @@ export interface GatewayAuditLogItem {
   created_at: string;
 }
 
+export interface GatewayPolicyDecisionItem {
+  id: string;
+  policy_id: string;
+  policy_version: number | null;
+  subject_user_id: string;
+  subject_agent_id: string;
+  resource_type: string;
+  resource_id: string;
+  resource_label: string;
+  decision: string;
+  reason_code: string;
+  matched_rules: unknown;
+  request_id: string;
+  session_id: string;
+  span_row_id: string;
+  approval_status: string;
+  evidence_references: unknown;
+  created_at: string;
+}
+
 export interface GatewayProviderRisk {
   id: string;
   backend_id: string;

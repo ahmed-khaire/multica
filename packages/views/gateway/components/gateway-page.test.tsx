@@ -10,6 +10,7 @@ import type {
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
+  GatewayPolicyDecisionItem,
   GatewayProviderRisk,
   GatewaySessionDetail,
   GatewaySessionListResponse,
@@ -43,6 +44,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayBackends: vi.fn(),
     listGatewayAudit: vi.fn(),
     listGatewayProviderRisks: vi.fn(),
+    listGatewayPolicyDecisions: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
@@ -312,6 +314,28 @@ const gatewayProviderRisks: GatewayProviderRisk[] = [
   },
 ];
 
+const gatewayPolicyDecisions: GatewayPolicyDecisionItem[] = [
+  {
+    id: "decision-1",
+    policy_id: "",
+    policy_version: null,
+    subject_user_id: "user-1",
+    subject_agent_id: "",
+    resource_type: "provider",
+    resource_id: "backend-openrouter",
+    resource_label: "openrouter",
+    decision: "block",
+    reason_code: "provider_risk_rejected",
+    matched_rules: [{ id: "provider_risk_rejected", action: "block" }],
+    request_id: "",
+    session_id: "",
+    span_row_id: "",
+    approval_status: "",
+    evidence_references: [],
+    created_at: "2026-05-04T12:45:00Z",
+  },
+];
+
 const adminMembers = [
   {
     id: "member-1",
@@ -357,6 +381,7 @@ describe("GatewayPage", () => {
     mockApi.listGatewayBackends.mockResolvedValue(gatewayBackends);
     mockApi.listGatewayAudit.mockResolvedValue(gatewayAudit);
     mockApi.listGatewayProviderRisks.mockResolvedValue(gatewayProviderRisks);
+    mockApi.listGatewayPolicyDecisions.mockResolvedValue(gatewayPolicyDecisions);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -505,6 +530,7 @@ describe("GatewayPage", () => {
     expect(screen.queryByRole("button", { name: /Create ingest key/ })).not.toBeInTheDocument();
     expect(mockApi.listGatewayAudit).not.toHaveBeenCalled();
     expect(mockApi.listGatewayProviderRisks).not.toHaveBeenCalled();
+    expect(mockApi.listGatewayPolicyDecisions).not.toHaveBeenCalled();
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
@@ -555,6 +581,20 @@ describe("GatewayPage", () => {
         risk_score: 64,
       });
     });
+  });
+
+  it("shows Gateway policy decisions for admins from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Policy Decisions")).toBeInTheDocument();
+    const decisionsTable = await screen.findByRole("table", { name: /Gateway policy decisions/ });
+    expect(within(decisionsTable).getByText("block")).toBeInTheDocument();
+    expect(within(decisionsTable).getByText("provider_risk_rejected")).toBeInTheDocument();
+    expect(within(decisionsTable).getByText("openrouter")).toBeInTheDocument();
+    expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

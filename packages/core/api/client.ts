@@ -53,6 +53,7 @@ import type {
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
+  GatewayPolicyDecisionItem,
   GatewayProviderRisk,
   GatewaySettingsResponse,
   GatewaySessionListResponse,
@@ -678,6 +679,13 @@ export class ApiClient {
 
   async listGatewayProviderRisks(params?: { signal?: AbortSignal }): Promise<GatewayProviderRisk[]> {
     return this.fetch("/api/gateway/governance/provider-risks", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayPolicyDecisions(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayPolicyDecisionItem[]> {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/gateway/governance/policy-decisions${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
   }
 
   async upsertGatewayProviderRisk(data: UpsertGatewayProviderRiskRequest): Promise<GatewayProviderRisk> {

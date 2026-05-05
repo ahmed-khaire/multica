@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -263,6 +264,49 @@ func TestGatewayProviderRiskHandlersUpsertAndList(t *testing.T) {
 	}
 	if resp[0].NextReviewAt == nil || *resp[0].NextReviewAt == "" {
 		t.Fatal("ListGatewayProviderRisks: expected next_review_at")
+	}
+}
+
+func TestGatewayPolicyDecisionHandlerListsRecentDecisions(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, subject_user_id, resource_type, resource_id, resource_label,
+			decision, reason_code, matched_rules, evidence_references
+		)
+		VALUES ($1, $2, 'provider', 'backend-openrouter', 'openrouter',
+			'block', 'provider_risk_rejected', '[{"id":"provider_risk_rejected"}]'::jsonb, '[]'::jsonb)
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("insert policy decision: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/governance/policy-decisions?limit=10", nil)
+	testHandler.ListGatewayPolicyDecisions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListGatewayPolicyDecisions: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []struct {
+		ResourceType  string `json:"resource_type"`
+		ResourceLabel string `json:"resource_label"`
+		Decision      string `json:"decision"`
+		ReasonCode    string `json:"reason_code"`
+		CreatedAt     string `json:"created_at"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayPolicyDecisions: decode response: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Fatal("ListGatewayPolicyDecisions: expected at least one decision")
+	}
+	if resp[0].Decision != "block" || resp[0].ReasonCode != "provider_risk_rejected" {
+		t.Fatalf("ListGatewayPolicyDecisions: first decision = %#v, want provider_risk_rejected block", resp[0])
+	}
+	if resp[0].ResourceType != "provider" || resp[0].ResourceLabel != "openrouter" {
+		t.Fatalf("ListGatewayPolicyDecisions: resource = %s/%s, want provider/openrouter", resp[0].ResourceType, resp[0].ResourceLabel)
+	}
+	if resp[0].CreatedAt == "" {
+		t.Fatal("ListGatewayPolicyDecisions: expected created_at")
 	}
 }
 

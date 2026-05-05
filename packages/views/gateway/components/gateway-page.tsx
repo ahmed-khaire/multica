@@ -42,6 +42,7 @@ import type {
   GatewayModelCallObservation,
   GatewayModelUsage,
   GatewayOverviewBucket,
+  GatewayPolicyDecisionItem,
   GatewaySessionDetail,
   GatewaySessionListItem,
   GatewaySpanObservation,
@@ -59,6 +60,7 @@ import {
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
+  gatewayPolicyDecisionsOptions,
   gatewayProviderRisksOptions,
   gatewaySessionDetailOptions,
   gatewaySessionSpansOptions,
@@ -1459,6 +1461,78 @@ function GatewayAuditHistory({
   );
 }
 
+function GatewayPolicyDecisions({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const decisionsQuery = useQuery(gatewayPolicyDecisionsOptions(wsId, 20, canManage));
+  const rows = decisionsQuery.data ?? [];
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          Policy Decisions
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {decisionsQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <ShieldCheck className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No policy decisions recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Gateway governance blocks and warnings will appear here.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway policy decisions">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Decision</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Resource</TableHead>
+                <TableHead className="text-right">Time</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayPolicyDecisionItem) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <Badge variant={row.decision === "block" ? "destructive" : "outline"}>{row.decision}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{row.reason_code}</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-64 flex-col">
+                      <span className="truncate font-medium">{row.resource_label || row.resource_id}</span>
+                      <span className="truncate text-xs text-muted-foreground">{row.resource_type}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.created_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {decisionsQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{decisionsQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IngestKeySetup({ wsId }: { wsId: string }) {
   const qc = useQueryClient();
   const [appId, setAppId] = useState("");
@@ -2019,6 +2093,7 @@ export function GatewayPage() {
                   wsId={wsId}
                 />
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
+                <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />
                 {canManage ? <IngestKeySetup wsId={wsId} /> : null}
               </div>

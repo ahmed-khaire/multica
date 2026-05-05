@@ -135,6 +135,20 @@ func optionalUUIDString(id pgtype.UUID) string {
 	return uuidString(id)
 }
 
+func optionalInt4(value pgtype.Int4) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Int32
+}
+
+func optionalTextString(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
 func textTimestamp(ts pgtype.Timestamptz) string {
 	return util.TimestampToString(ts)
 }
@@ -911,6 +925,34 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID string, limit int32
 	return items, nil
 }
 
+func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, limit int32) ([]PolicyDecisionItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := s.queries.ListGatewayPolicyDecisions(ctx, db.ListGatewayPolicyDecisionsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+		Since:       pgtype.Timestamptz{Time: time.Now().Add(-30 * 24 * time.Hour), Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]PolicyDecisionItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, policyDecisionItem(row))
+	}
+	return items, nil
+}
+
 func (s *Service) ListProviderRisks(ctx context.Context, workspaceID string) ([]ProviderRiskResponse, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -1074,6 +1116,28 @@ func providerRiskResponse(row db.AiThirdPartyRisk) ProviderRiskResponse {
 		ActiveExceptionCount: row.ActiveExceptionCount,
 		CreatedAt:            textTimestamp(row.CreatedAt),
 		UpdatedAt:            textTimestamp(row.UpdatedAt),
+	}
+}
+
+func policyDecisionItem(row db.GatewayPolicyDecision) PolicyDecisionItem {
+	return PolicyDecisionItem{
+		ID:                 uuidString(row.ID),
+		PolicyID:           optionalUUIDString(row.PolicyID),
+		PolicyVersion:      optionalInt4(row.PolicyVersion),
+		SubjectUserID:      optionalUUIDString(row.SubjectUserID),
+		SubjectAgentID:     optionalUUIDString(row.SubjectAgentID),
+		ResourceType:       row.ResourceType,
+		ResourceID:         row.ResourceID,
+		ResourceLabel:      row.ResourceLabel,
+		Decision:           row.Decision,
+		ReasonCode:         row.ReasonCode,
+		MatchedRules:       auditJSON(row.MatchedRules),
+		RequestID:          optionalUUIDString(row.RequestID),
+		SessionID:          optionalUUIDString(row.SessionID),
+		SpanRowID:          optionalUUIDString(row.SpanRowID),
+		ApprovalStatus:     optionalTextString(row.ApprovalStatus),
+		EvidenceReferences: auditJSON(row.EvidenceReferences),
+		CreatedAt:          textTimestamp(row.CreatedAt),
 	}
 }
 

@@ -137,6 +137,26 @@ type ProviderRiskResponse struct {
 	UpdatedAt            string   `json:"updated_at"`
 }
 
+type PolicyDecisionItem struct {
+	ID                 string `json:"id"`
+	PolicyID           string `json:"policy_id"`
+	PolicyVersion      *int32 `json:"policy_version"`
+	SubjectUserID      string `json:"subject_user_id"`
+	SubjectAgentID     string `json:"subject_agent_id"`
+	ResourceType       string `json:"resource_type"`
+	ResourceID         string `json:"resource_id"`
+	ResourceLabel      string `json:"resource_label"`
+	Decision           string `json:"decision"`
+	ReasonCode         string `json:"reason_code"`
+	MatchedRules       any    `json:"matched_rules"`
+	RequestID          string `json:"request_id"`
+	SessionID          string `json:"session_id"`
+	SpanRowID          string `json:"span_row_id"`
+	ApprovalStatus     string `json:"approval_status"`
+	EvidenceReferences any    `json:"evidence_references"`
+	CreatedAt          string `json:"created_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
