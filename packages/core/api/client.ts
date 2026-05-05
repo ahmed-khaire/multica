@@ -51,6 +51,7 @@ import type {
   GatewayCapturePolicy,
   GatewayControlMappingItem,
   GatewayEvidenceItem,
+  GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
@@ -699,6 +700,13 @@ export class ApiClient {
 
   async listGatewayControlMappings(params?: { signal?: AbortSignal }): Promise<GatewayControlMappingItem[]> {
     return this.fetch("/api/gateway/governance/control-mappings", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayIncidents(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayIncidentItem[]> {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/gateway/governance/incidents${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
   }
 
   async upsertGatewayProviderRisk(data: UpsertGatewayProviderRiskRequest): Promise<GatewayProviderRisk> {

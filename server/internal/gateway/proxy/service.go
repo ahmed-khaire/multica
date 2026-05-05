@@ -174,6 +174,15 @@ func (s *Service) recordPolicyBlock(ctx context.Context, authCtx AuthContext, gw
 		Payload:              payload,
 		AttachmentRef:        "",
 	})
+	_, _ = s.Queries.CreateAIIncident(ctx, db.CreateAIIncidentParams{
+		WorkspaceID:          workspaceID,
+		Severity:             providerRiskBlockSeverity(gwErr.Code),
+		Category:             "gateway_provider_risk_block",
+		LinkedProviderRiskID: optionalParsedUUID(gwErr.ProviderRiskID),
+		Summary:              fmt.Sprintf("Gateway blocked provider %s: %s", resourceLabel, gwErr.Code),
+		Status:               "open",
+		RemediationNotes:     "Review provider risk register before enabling this backend.",
+	})
 }
 
 func optionalParsedUUID(value string) pgtype.UUID {
@@ -185,6 +194,13 @@ func optionalParsedUUID(value string) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return id
+}
+
+func providerRiskBlockSeverity(code string) string {
+	if code == "provider_risk_rejected" {
+		return "high"
+	}
+	return "medium"
 }
 
 func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary, error) {

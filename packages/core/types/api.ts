@@ -242,6 +242,22 @@ export interface GatewayControlMappingItem {
   updated_at: string;
 }
 
+export interface GatewayIncidentItem {
+  id: string;
+  severity: string;
+  category: string;
+  linked_request_id: string;
+  linked_session_id: string;
+  linked_span_row_id: string;
+  linked_policy_id: string;
+  linked_provider_risk_id: string;
+  summary: string;
+  status: string;
+  remediation_notes: string;
+  opened_at: string;
+  closed_at: string | null;
+}
+
 export interface GatewayProviderRisk {
   id: string;
   backend_id: string;

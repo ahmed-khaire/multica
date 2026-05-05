@@ -412,6 +412,53 @@ func (q *Queries) ListAIEvidence(ctx context.Context, arg ListAIEvidenceParams) 
 	return items, nil
 }
 
+const listAIIncidents = `-- name: ListAIIncidents :many
+SELECT id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at FROM ai_incident
+WHERE workspace_id = $1
+ORDER BY opened_at DESC
+LIMIT $2
+`
+
+type ListAIIncidentsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListAIIncidents(ctx context.Context, arg ListAIIncidentsParams) ([]AiIncident, error) {
+	rows, err := q.db.Query(ctx, listAIIncidents, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AiIncident{}
+	for rows.Next() {
+		var i AiIncident
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Severity,
+			&i.Category,
+			&i.LinkedRequestID,
+			&i.LinkedSessionID,
+			&i.LinkedSpanRowID,
+			&i.LinkedPolicyID,
+			&i.LinkedProviderRiskID,
+			&i.Summary,
+			&i.Status,
+			&i.RemediationNotes,
+			&i.OpenedAt,
+			&i.ClosedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAISystemInventory = `-- name: ListAISystemInventory :many
 SELECT id, workspace_id, name, owner_user_id, intended_purpose, business_process, autonomy_level, external_impact_level, data_domains, risk_classification, approval_state, linked_agent_ids, linked_backend_ids, linked_tool_refs, created_at, updated_at FROM ai_system_inventory
 WHERE workspace_id = $1

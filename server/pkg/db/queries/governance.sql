@@ -119,6 +119,12 @@ INSERT INTO ai_incident (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
+-- name: ListAIIncidents :many
+SELECT * FROM ai_incident
+WHERE workspace_id = $1
+ORDER BY opened_at DESC
+LIMIT $2;
+
 -- name: CreateAIAuditLog :one
 INSERT INTO ai_audit_log (
     workspace_id, actor_user_id, action, target_type, target_id,

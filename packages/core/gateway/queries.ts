@@ -50,6 +50,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "evidence", limit] as const,
   controlMappings: (wsId: string) =>
     [...gatewayKeys.all(wsId), "control-mappings"] as const,
+  incidents: (wsId: string, limit = 20) =>
+    [...gatewayKeys.all(wsId), "incidents", limit] as const,
 };
 
 export function gatewayOverviewOptions(wsId: string, params?: GatewayObservabilityParams) {
@@ -158,6 +160,14 @@ export function gatewayControlMappingsOptions(wsId: string, enabled = true) {
   return queryOptions({
     queryKey: gatewayKeys.controlMappings(wsId),
     queryFn: ({ signal }) => api.listGatewayControlMappings({ signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayIncidentsOptions(wsId: string, limit = 20, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.incidents(wsId, limit),
+    queryFn: ({ signal }) => api.listGatewayIncidents({ limit, signal }),
     enabled: !!wsId && enabled,
   });
 }

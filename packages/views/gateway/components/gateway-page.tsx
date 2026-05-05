@@ -34,6 +34,7 @@ import type {
   GatewayCapturePolicy,
   GatewayControlMappingItem,
   GatewayEvidenceItem,
+  GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayStatusResponse,
@@ -61,6 +62,7 @@ import {
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
   gatewayEvidenceOptions,
+  gatewayIncidentsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
@@ -1700,6 +1702,79 @@ function GatewayComplianceControls({
   );
 }
 
+function GatewayIncidents({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const incidentsQuery = useQuery(gatewayIncidentsOptions(wsId, 20, canManage));
+  const rows = incidentsQuery.data ?? [];
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <AlertTriangle className="size-4 text-muted-foreground" />
+          Incidents
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {incidentsQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <AlertTriangle className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No Gateway incidents recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Provider risk blocks and compliance events will appear here.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway incidents">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Severity</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Summary</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Opened</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayIncidentItem) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <Badge variant={row.severity === "critical" || row.severity === "high" ? "destructive" : "outline"}>{row.severity}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{row.category}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.summary}</span>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.status === "open" ? "secondary" : "outline"}>{row.status}</Badge>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.opened_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {incidentsQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{incidentsQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IngestKeySetup({ wsId }: { wsId: string }) {
   const qc = useQueryClient();
   const [appId, setAppId] = useState("");
@@ -2261,6 +2336,7 @@ export function GatewayPage() {
                 />
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
                 <GatewayComplianceControls canManage={canManage} wsId={wsId} />
+                <GatewayIncidents canManage={canManage} wsId={wsId} />
                 <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
                 <GatewayEvidence canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />

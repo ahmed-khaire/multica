@@ -264,6 +264,22 @@ func TestGatewayProxyBlocksRejectedProviderRisk(t *testing.T) {
 	if evidenceCount == 0 {
 		t.Fatal("expected provider risk block to create evidence")
 	}
+
+	var incidentCount int
+	if err := testPool.QueryRow(req.Context(), `
+		SELECT count(*)
+		FROM ai_incident
+		WHERE workspace_id = $1
+		  AND linked_provider_risk_id IS NOT NULL
+		  AND category = 'gateway_provider_risk_block'
+		  AND status = 'open'
+		  AND summary LIKE '%provider_risk_rejected%'
+	`, testWorkspaceID).Scan(&incidentCount); err != nil {
+		t.Fatalf("count incidents: %v", err)
+	}
+	if incidentCount == 0 {
+		t.Fatal("expected provider risk block to create an incident")
+	}
 }
 
 func createGatewayProxyKey(t *testing.T) string {

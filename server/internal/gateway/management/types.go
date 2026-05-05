@@ -188,6 +188,22 @@ type ControlMappingItem struct {
 	UpdatedAt               string `json:"updated_at"`
 }
 
+type IncidentItem struct {
+	ID                   string  `json:"id"`
+	Severity             string  `json:"severity"`
+	Category             string  `json:"category"`
+	LinkedRequestID      string  `json:"linked_request_id"`
+	LinkedSessionID      string  `json:"linked_session_id"`
+	LinkedSpanRowID      string  `json:"linked_span_row_id"`
+	LinkedPolicyID       string  `json:"linked_policy_id"`
+	LinkedProviderRiskID string  `json:"linked_provider_risk_id"`
+	Summary              string  `json:"summary"`
+	Status               string  `json:"status"`
+	RemediationNotes     string  `json:"remediation_notes"`
+	OpenedAt             string  `json:"opened_at"`
+	ClosedAt             *string `json:"closed_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string

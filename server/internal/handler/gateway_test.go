@@ -434,6 +434,52 @@ func TestGatewayControlMappingHandlerListsEvidenceCoverage(t *testing.T) {
 	}
 }
 
+func TestGatewayIncidentHandlerListsOpenIncidents(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_incident (
+			workspace_id, severity, category, summary, status, remediation_notes
+		)
+		VALUES (
+			$1, 'high', 'gateway_provider_risk_block',
+			'Gateway blocked provider openrouter: provider_risk_rejected',
+			'open', 'Review provider risk register before enabling backend.'
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert incident: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/governance/incidents?limit=10", nil)
+	testHandler.ListGatewayIncidents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListGatewayIncidents: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []struct {
+		Severity         string `json:"severity"`
+		Category         string `json:"category"`
+		Summary          string `json:"summary"`
+		Status           string `json:"status"`
+		RemediationNotes string `json:"remediation_notes"`
+		OpenedAt         string `json:"opened_at"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayIncidents: decode response: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Fatal("ListGatewayIncidents: expected at least one incident")
+	}
+	if resp[0].Category != "gateway_provider_risk_block" || resp[0].Severity != "high" {
+		t.Fatalf("ListGatewayIncidents: first incident = %#v, want high gateway_provider_risk_block", resp[0])
+	}
+	if resp[0].Status != "open" {
+		t.Fatalf("ListGatewayIncidents: status = %q, want open", resp[0].Status)
+	}
+	if resp[0].OpenedAt == "" {
+		t.Fatal("ListGatewayIncidents: expected opened_at")
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

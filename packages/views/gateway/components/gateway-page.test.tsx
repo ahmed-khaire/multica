@@ -9,6 +9,7 @@ import type {
   GatewayAuditLogItem,
   GatewayControlMappingItem,
   GatewayEvidenceItem,
+  GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
@@ -49,6 +50,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayPolicyDecisions: vi.fn(),
     listGatewayEvidence: vi.fn(),
     listGatewayControlMappings: vi.fn(),
+    listGatewayIncidents: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
@@ -375,6 +377,24 @@ const gatewayControlMappings: GatewayControlMappingItem[] = [
   },
 ];
 
+const gatewayIncidents: GatewayIncidentItem[] = [
+  {
+    id: "incident-1",
+    severity: "high",
+    category: "gateway_provider_risk_block",
+    linked_request_id: "",
+    linked_session_id: "",
+    linked_span_row_id: "",
+    linked_policy_id: "",
+    linked_provider_risk_id: "risk-openrouter",
+    summary: "Gateway blocked provider openrouter: provider_risk_rejected",
+    status: "open",
+    remediation_notes: "Review provider risk register before enabling backend.",
+    opened_at: "2026-05-04T12:48:00Z",
+    closed_at: null,
+  },
+];
+
 const adminMembers = [
   {
     id: "member-1",
@@ -423,6 +443,7 @@ describe("GatewayPage", () => {
     mockApi.listGatewayPolicyDecisions.mockResolvedValue(gatewayPolicyDecisions);
     mockApi.listGatewayEvidence.mockResolvedValue(gatewayEvidence);
     mockApi.listGatewayControlMappings.mockResolvedValue(gatewayControlMappings);
+    mockApi.listGatewayIncidents.mockResolvedValue(gatewayIncidents);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -574,6 +595,7 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayPolicyDecisions).not.toHaveBeenCalled();
     expect(mockApi.listGatewayEvidence).not.toHaveBeenCalled();
     expect(mockApi.listGatewayControlMappings).not.toHaveBeenCalled();
+    expect(mockApi.listGatewayIncidents).not.toHaveBeenCalled();
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
@@ -666,6 +688,21 @@ describe("GatewayPage", () => {
     expect(within(controlsTable).getByText("covered")).toBeInTheDocument();
     expect(within(controlsTable).getByText("Evidence 1")).toBeInTheDocument();
     expect(mockApi.listGatewayControlMappings).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+  });
+
+  it("shows Gateway incidents for admins from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Incidents")).toBeInTheDocument();
+    const incidentsTable = await screen.findByRole("table", { name: /Gateway incidents/ });
+    expect(within(incidentsTable).getByText("high")).toBeInTheDocument();
+    expect(within(incidentsTable).getByText("gateway_provider_risk_block")).toBeInTheDocument();
+    expect(within(incidentsTable).getByText("Gateway blocked provider openrouter: provider_risk_rejected")).toBeInTheDocument();
+    expect(within(incidentsTable).getByText("open")).toBeInTheDocument();
+    expect(mockApi.listGatewayIncidents).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

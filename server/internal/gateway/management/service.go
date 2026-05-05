@@ -1043,6 +1043,33 @@ func (s *Service) ListControlMappings(ctx context.Context, workspaceID string) (
 	return items, nil
 }
 
+func (s *Service) ListIncidents(ctx context.Context, workspaceID string, limit int32) ([]IncidentItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := s.queries.ListAIIncidents(ctx, db.ListAIIncidentsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]IncidentItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, incidentItem(row))
+	}
+	return items, nil
+}
+
 func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, workspaceID pgtype.UUID) error {
 	for _, control := range defaultGatewayControlMappings {
 		mappedEvidenceQueries, err := json.Marshal(control.MappedEvidenceQueries)
@@ -1285,6 +1312,24 @@ func controlMappingItem(row db.ListAIControlMappingsWithEvidenceRow) ControlMapp
 		EvidenceCount:           row.EvidenceCount,
 		LastEvidenceGeneratedAt: controlEvidenceTimestamp(row.LastEvidenceGeneratedAt),
 		UpdatedAt:               textTimestamp(row.UpdatedAt),
+	}
+}
+
+func incidentItem(row db.AiIncident) IncidentItem {
+	return IncidentItem{
+		ID:                   uuidString(row.ID),
+		Severity:             row.Severity,
+		Category:             row.Category,
+		LinkedRequestID:      optionalUUIDString(row.LinkedRequestID),
+		LinkedSessionID:      optionalUUIDString(row.LinkedSessionID),
+		LinkedSpanRowID:      optionalUUIDString(row.LinkedSpanRowID),
+		LinkedPolicyID:       optionalUUIDString(row.LinkedPolicyID),
+		LinkedProviderRiskID: optionalUUIDString(row.LinkedProviderRiskID),
+		Summary:              row.Summary,
+		Status:               row.Status,
+		RemediationNotes:     row.RemediationNotes,
+		OpenedAt:             textTimestamp(row.OpenedAt),
+		ClosedAt:             optionalTimestamp(row.ClosedAt),
 	}
 }
 
