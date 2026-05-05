@@ -32,6 +32,7 @@ import type {
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
+  GatewayControlMappingItem,
   GatewayEvidenceItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -58,6 +59,7 @@ import {
   gatewayKeys,
   gatewayAuditOptions,
   gatewayBackendsOptions,
+  gatewayControlMappingsOptions,
   gatewayEvidenceOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
@@ -1622,6 +1624,82 @@ function GatewayEvidence({
   );
 }
 
+function GatewayComplianceControls({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const controlsQuery = useQuery(gatewayControlMappingsOptions(wsId, canManage));
+  const rows = controlsQuery.data ?? [];
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Boxes className="size-4 text-muted-foreground" />
+          Compliance Controls
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {controlsQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <Boxes className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No compliance controls mapped</p>
+            <p className="mt-1 text-xs text-muted-foreground">Gateway controls will appear after governance mappings are created.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway compliance controls">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Control</TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Evidence</TableHead>
+                <TableHead className="text-right">Updated</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayControlMappingItem) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <div className="flex max-w-52 flex-col">
+                      <span className="truncate font-medium">{row.control_id}</span>
+                      <span className="truncate text-xs text-muted-foreground">{row.framework}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.control_title}</span>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.status === "gap" ? "destructive" : "outline"}>{row.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.evidence_count > 0 ? "secondary" : "outline"}>Evidence {row.evidence_count}</Badge>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.updated_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {controlsQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{controlsQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IngestKeySetup({ wsId }: { wsId: string }) {
   const qc = useQueryClient();
   const [appId, setAppId] = useState("");
@@ -2182,6 +2260,7 @@ export function GatewayPage() {
                   wsId={wsId}
                 />
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
+                <GatewayComplianceControls canManage={canManage} wsId={wsId} />
                 <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
                 <GatewayEvidence canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />

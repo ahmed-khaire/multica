@@ -66,6 +66,26 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *;
 
+-- name: ListAIControlMappingsWithEvidence :many
+SELECT
+    m.*,
+    COALESCE(evidence.evidence_count, 0)::bigint AS evidence_count,
+    evidence.last_evidence_generated_at
+FROM ai_control_mapping m
+LEFT JOIN LATERAL (
+    SELECT
+        count(*)::bigint AS evidence_count,
+        max(e.generated_at) AS last_evidence_generated_at
+    FROM ai_evidence e
+    WHERE e.workspace_id = m.workspace_id
+      AND (
+        jsonb_exists(e.framework_refs, m.framework)
+        OR jsonb_exists(e.framework_refs, m.framework || ':' || m.control_id)
+      )
+) evidence ON true
+WHERE m.workspace_id = $1
+ORDER BY m.framework, m.control_id;
+
 -- name: CreateAIEvidence :one
 INSERT INTO ai_evidence (
     workspace_id, evidence_type, framework_refs,

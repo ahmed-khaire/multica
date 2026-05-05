@@ -7,6 +7,7 @@ import type {
   GatewayLLMCallListResponse,
   GatewayBackend,
   GatewayAuditLogItem,
+  GatewayControlMappingItem,
   GatewayEvidenceItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -47,6 +48,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayProviderRisks: vi.fn(),
     listGatewayPolicyDecisions: vi.fn(),
     listGatewayEvidence: vi.fn(),
+    listGatewayControlMappings: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
@@ -357,6 +359,22 @@ const gatewayEvidence: GatewayEvidenceItem[] = [
   },
 ];
 
+const gatewayControlMappings: GatewayControlMappingItem[] = [
+  {
+    id: "control-1",
+    framework: "internal_gateway_governance",
+    control_id: "GW-1",
+    control_title: "Gateway policy blocks are evidenced",
+    mapped_policy_ids: [],
+    mapped_evidence_queries: [{ evidence_type: "gateway_policy_decision" }],
+    status: "covered",
+    owner_user_id: "user-1",
+    evidence_count: 1,
+    last_evidence_generated_at: "2026-05-04T12:46:00Z",
+    updated_at: "2026-05-04T12:47:00Z",
+  },
+];
+
 const adminMembers = [
   {
     id: "member-1",
@@ -404,6 +422,7 @@ describe("GatewayPage", () => {
     mockApi.listGatewayProviderRisks.mockResolvedValue(gatewayProviderRisks);
     mockApi.listGatewayPolicyDecisions.mockResolvedValue(gatewayPolicyDecisions);
     mockApi.listGatewayEvidence.mockResolvedValue(gatewayEvidence);
+    mockApi.listGatewayControlMappings.mockResolvedValue(gatewayControlMappings);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -554,6 +573,7 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayProviderRisks).not.toHaveBeenCalled();
     expect(mockApi.listGatewayPolicyDecisions).not.toHaveBeenCalled();
     expect(mockApi.listGatewayEvidence).not.toHaveBeenCalled();
+    expect(mockApi.listGatewayControlMappings).not.toHaveBeenCalled();
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
@@ -626,12 +646,26 @@ describe("GatewayPage", () => {
 
     await user.click(await screen.findByRole("tab", { name: /Setup/ }));
 
-    expect(await screen.findByText("Evidence")).toBeInTheDocument();
     const evidenceTable = await screen.findByRole("table", { name: /Gateway evidence/ });
     expect(within(evidenceTable).getByText("gateway_policy_decision")).toBeInTheDocument();
     expect(within(evidenceTable).getByText("Gateway blocked provider openrouter: provider_risk_rejected")).toBeInTheDocument();
     expect(within(evidenceTable).getByText("internal_gateway_governance")).toBeInTheDocument();
     expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
+  });
+
+  it("shows Gateway compliance controls for admins from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Compliance Controls")).toBeInTheDocument();
+    const controlsTable = await screen.findByRole("table", { name: /Gateway compliance controls/ });
+    expect(within(controlsTable).getByText("GW-1")).toBeInTheDocument();
+    expect(within(controlsTable).getByText("Gateway policy blocks are evidenced")).toBeInTheDocument();
+    expect(within(controlsTable).getByText("covered")).toBeInTheDocument();
+    expect(within(controlsTable).getByText("Evidence 1")).toBeInTheDocument();
+    expect(mockApi.listGatewayControlMappings).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

@@ -352,6 +352,88 @@ func TestGatewayEvidenceHandlerListsRecentEvidence(t *testing.T) {
 	}
 }
 
+func TestGatewayControlMappingHandlerListsEvidenceCoverage(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_control_mapping (
+			workspace_id, framework, control_id, control_title,
+			mapped_policy_ids, mapped_evidence_queries, status, owner_user_id
+		)
+		VALUES (
+			$1, 'internal_gateway_governance', 'GW-TEST', 'Gateway policy blocks are evidenced',
+			'[]'::jsonb, '[{"evidence_type":"gateway_policy_decision"}]'::jsonb, 'covered', $2
+		)
+		ON CONFLICT (workspace_id, framework, control_id)
+		DO UPDATE SET
+			control_title = EXCLUDED.control_title,
+			mapped_evidence_queries = EXCLUDED.mapped_evidence_queries,
+			status = EXCLUDED.status,
+			owner_user_id = EXCLUDED.owner_user_id,
+			updated_at = now()
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("upsert control mapping: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_evidence (
+			workspace_id, evidence_type, framework_refs, summary, payload, attachment_ref
+		)
+		VALUES (
+			$1, 'gateway_policy_decision', '["internal_gateway_governance"]'::jsonb,
+			'Gateway blocked provider openrouter: provider_risk_rejected',
+			'{"reason_code":"provider_risk_rejected"}'::jsonb, ''
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert evidence: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/governance/control-mappings", nil)
+	testHandler.ListGatewayControlMappings(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListGatewayControlMappings: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []struct {
+		Framework               string `json:"framework"`
+		ControlID               string `json:"control_id"`
+		ControlTitle            string `json:"control_title"`
+		Status                  string `json:"status"`
+		EvidenceCount           int64  `json:"evidence_count"`
+		LastEvidenceGeneratedAt string `json:"last_evidence_generated_at"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayControlMappings: decode response: %v", err)
+	}
+	var found *struct {
+		Framework               string `json:"framework"`
+		ControlID               string `json:"control_id"`
+		ControlTitle            string `json:"control_title"`
+		Status                  string `json:"status"`
+		EvidenceCount           int64  `json:"evidence_count"`
+		LastEvidenceGeneratedAt string `json:"last_evidence_generated_at"`
+	}
+	for i := range resp {
+		if resp[i].ControlID == "GW-TEST" {
+			found = &resp[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("ListGatewayControlMappings: expected GW-TEST in response, got %#v", resp)
+	}
+	if found.Framework != "internal_gateway_governance" || found.ControlTitle == "" {
+		t.Fatalf("ListGatewayControlMappings: unexpected control row %#v", *found)
+	}
+	if found.Status != "covered" {
+		t.Fatalf("ListGatewayControlMappings: status = %q, want covered", found.Status)
+	}
+	if found.EvidenceCount == 0 {
+		t.Fatal("ListGatewayControlMappings: expected evidence_count > 0")
+	}
+	if found.LastEvidenceGeneratedAt == "" {
+		t.Fatal("ListGatewayControlMappings: expected last_evidence_generated_at")
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

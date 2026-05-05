@@ -228,6 +228,20 @@ export interface GatewayEvidenceItem {
   retain_until: string | null;
 }
 
+export interface GatewayControlMappingItem {
+  id: string;
+  framework: string;
+  control_id: string;
+  control_title: string;
+  mapped_policy_ids: unknown;
+  mapped_evidence_queries: unknown;
+  status: string;
+  owner_user_id: string;
+  evidence_count: number;
+  last_evidence_generated_at: string;
+  updated_at: string;
+}
+
 export interface GatewayProviderRisk {
   id: string;
   backend_id: string;

@@ -302,6 +302,16 @@ func (h *Handler) ListGatewayEvidence(w http.ResponseWriter, r *http.Request) {
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) ListGatewayControlMappings(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListControlMappings(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) UpsertGatewayProviderRisk(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {

@@ -295,6 +295,75 @@ func (q *Queries) CreateAISystemInventory(ctx context.Context, arg CreateAISyste
 	return i, err
 }
 
+const listAIControlMappingsWithEvidence = `-- name: ListAIControlMappingsWithEvidence :many
+SELECT
+    m.id, m.workspace_id, m.framework, m.control_id, m.control_title, m.mapped_policy_ids, m.mapped_evidence_queries, m.status, m.owner_user_id, m.updated_at,
+    COALESCE(evidence.evidence_count, 0)::bigint AS evidence_count,
+    evidence.last_evidence_generated_at
+FROM ai_control_mapping m
+LEFT JOIN LATERAL (
+    SELECT
+        count(*)::bigint AS evidence_count,
+        max(e.generated_at) AS last_evidence_generated_at
+    FROM ai_evidence e
+    WHERE e.workspace_id = m.workspace_id
+      AND (
+        jsonb_exists(e.framework_refs, m.framework)
+        OR jsonb_exists(e.framework_refs, m.framework || ':' || m.control_id)
+      )
+) evidence ON true
+WHERE m.workspace_id = $1
+ORDER BY m.framework, m.control_id
+`
+
+type ListAIControlMappingsWithEvidenceRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	Framework               string             `json:"framework"`
+	ControlID               string             `json:"control_id"`
+	ControlTitle            string             `json:"control_title"`
+	MappedPolicyIds         []byte             `json:"mapped_policy_ids"`
+	MappedEvidenceQueries   []byte             `json:"mapped_evidence_queries"`
+	Status                  string             `json:"status"`
+	OwnerUserID             pgtype.UUID        `json:"owner_user_id"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	EvidenceCount           int64              `json:"evidence_count"`
+	LastEvidenceGeneratedAt interface{}        `json:"last_evidence_generated_at"`
+}
+
+func (q *Queries) ListAIControlMappingsWithEvidence(ctx context.Context, workspaceID pgtype.UUID) ([]ListAIControlMappingsWithEvidenceRow, error) {
+	rows, err := q.db.Query(ctx, listAIControlMappingsWithEvidence, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAIControlMappingsWithEvidenceRow{}
+	for rows.Next() {
+		var i ListAIControlMappingsWithEvidenceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Framework,
+			&i.ControlID,
+			&i.ControlTitle,
+			&i.MappedPolicyIds,
+			&i.MappedEvidenceQueries,
+			&i.Status,
+			&i.OwnerUserID,
+			&i.UpdatedAt,
+			&i.EvidenceCount,
+			&i.LastEvidenceGeneratedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAIEvidence = `-- name: ListAIEvidence :many
 SELECT id, workspace_id, evidence_type, framework_refs, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_backend_id, linked_provider_risk_id, summary, payload, attachment_ref, generated_at, retain_until FROM ai_evidence
 WHERE workspace_id = $1

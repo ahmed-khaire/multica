@@ -174,6 +174,20 @@ type EvidenceItem struct {
 	RetainUntil          *string `json:"retain_until"`
 }
 
+type ControlMappingItem struct {
+	ID                      string `json:"id"`
+	Framework               string `json:"framework"`
+	ControlID               string `json:"control_id"`
+	ControlTitle            string `json:"control_title"`
+	MappedPolicyIDs         any    `json:"mapped_policy_ids"`
+	MappedEvidenceQueries   any    `json:"mapped_evidence_queries"`
+	Status                  string `json:"status"`
+	OwnerUserID             string `json:"owner_user_id"`
+	EvidenceCount           int64  `json:"evidence_count"`
+	LastEvidenceGeneratedAt string `json:"last_evidence_generated_at"`
+	UpdatedAt               string `json:"updated_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string

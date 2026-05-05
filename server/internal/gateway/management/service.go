@@ -35,6 +35,42 @@ var governanceStatuses = map[string]struct{}{
 	"expired":     {},
 }
 
+type defaultControlMapping struct {
+	ControlID             string
+	ControlTitle          string
+	MappedEvidenceQueries []map[string]string
+	Status                string
+}
+
+const internalGatewayGovernanceFramework = "internal_gateway_governance"
+
+var defaultGatewayControlMappings = []defaultControlMapping{
+	{
+		ControlID:    "GW-1",
+		ControlTitle: "Gateway provider risk blocks are evidenced",
+		MappedEvidenceQueries: []map[string]string{{
+			"evidence_type": "gateway_policy_decision",
+		}},
+		Status: "in_progress",
+	},
+	{
+		ControlID:    "GW-2",
+		ControlTitle: "Gateway backend administration is auditable",
+		MappedEvidenceQueries: []map[string]string{{
+			"audit_action_prefix": "gateway.backend.",
+		}},
+		Status: "not_started",
+	},
+	{
+		ControlID:    "GW-3",
+		ControlTitle: "Gateway traffic capture policy is explicit",
+		MappedEvidenceQueries: []map[string]string{{
+			"setting": "capture_policy",
+		}},
+		Status: "not_started",
+	},
+}
+
 func ValidateCapturePolicy(policy string) error {
 	switch policy {
 	case CaptureMetadataOnly, CaptureRedactedContent, CaptureFullContent:
@@ -980,6 +1016,55 @@ func (s *Service) ListEvidence(ctx context.Context, workspaceID string, limit in
 	return items, nil
 }
 
+func (s *Service) ListControlMappings(ctx context.Context, workspaceID string) ([]ControlMappingItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.queries.ListAIControlMappingsWithEvidence(ctx, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		if err := s.ensureDefaultGatewayControlMappings(ctx, workspaceUUID); err != nil {
+			return nil, err
+		}
+		rows, err = s.queries.ListAIControlMappingsWithEvidence(ctx, workspaceUUID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	items := make([]ControlMappingItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, controlMappingItem(row))
+	}
+	return items, nil
+}
+
+func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, workspaceID pgtype.UUID) error {
+	for _, control := range defaultGatewayControlMappings {
+		mappedEvidenceQueries, err := json.Marshal(control.MappedEvidenceQueries)
+		if err != nil {
+			return err
+		}
+		if _, err := s.queries.UpsertAIControlMapping(ctx, db.UpsertAIControlMappingParams{
+			WorkspaceID:           workspaceID,
+			Framework:             internalGatewayGovernanceFramework,
+			ControlID:             control.ControlID,
+			ControlTitle:          control.ControlTitle,
+			MappedPolicyIds:       []byte("[]"),
+			MappedEvidenceQueries: mappedEvidenceQueries,
+			Status:                control.Status,
+			OwnerUserID:           pgtype.UUID{},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) ListProviderRisks(ctx context.Context, workspaceID string) ([]ProviderRiskResponse, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -1184,6 +1269,35 @@ func evidenceItem(row db.AiEvidence) EvidenceItem {
 		AttachmentRef:        row.AttachmentRef,
 		GeneratedAt:          textTimestamp(row.GeneratedAt),
 		RetainUntil:          optionalTimestamp(row.RetainUntil),
+	}
+}
+
+func controlMappingItem(row db.ListAIControlMappingsWithEvidenceRow) ControlMappingItem {
+	return ControlMappingItem{
+		ID:                      uuidString(row.ID),
+		Framework:               row.Framework,
+		ControlID:               row.ControlID,
+		ControlTitle:            row.ControlTitle,
+		MappedPolicyIDs:         auditJSON(row.MappedPolicyIds),
+		MappedEvidenceQueries:   auditJSON(row.MappedEvidenceQueries),
+		Status:                  row.Status,
+		OwnerUserID:             optionalUUIDString(row.OwnerUserID),
+		EvidenceCount:           row.EvidenceCount,
+		LastEvidenceGeneratedAt: controlEvidenceTimestamp(row.LastEvidenceGeneratedAt),
+		UpdatedAt:               textTimestamp(row.UpdatedAt),
+	}
+}
+
+func controlEvidenceTimestamp(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case time.Time:
+		return typed.UTC().Format(time.RFC3339Nano)
+	case pgtype.Timestamptz:
+		return textTimestamp(typed)
+	default:
+		return ""
 	}
 }
 

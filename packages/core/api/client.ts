@@ -49,6 +49,7 @@ import type {
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
+  GatewayControlMappingItem,
   GatewayEvidenceItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -694,6 +695,10 @@ export class ApiClient {
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     const query = search.toString();
     return this.fetch(`/api/gateway/governance/evidence${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayControlMappings(params?: { signal?: AbortSignal }): Promise<GatewayControlMappingItem[]> {
+    return this.fetch("/api/gateway/governance/control-mappings", params?.signal ? { signal: params.signal } : undefined);
   }
 
   async upsertGatewayProviderRisk(data: UpsertGatewayProviderRiskRequest): Promise<GatewayProviderRisk> {
