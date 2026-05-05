@@ -72,20 +72,21 @@ func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, proto
 	if !CompatibleBackendType(protocol, backend.BackendType) {
 		return BackendTarget{}, RoutingError(http.StatusBadRequest, "gateway backend is not compatible with requested protocol", "gateway_backend_incompatible", ErrIncompatibleBackend)
 	}
-	reason, blocked, err := r.providerRiskBlockReason(ctx, workspaceUUID, backend)
+	reason, blocked, providerRiskID, err := r.providerRiskBlockReason(ctx, workspaceUUID, backend)
 	if err != nil {
 		return BackendTarget{}, err
 	}
 	if blocked {
 		return BackendTarget{}, GatewayError{
-			StatusCode:    http.StatusForbidden,
-			PublicMessage: "gateway provider is blocked by workspace governance",
-			ErrorType:     "invalid_request_error",
-			Code:          reason,
-			Cause:         ErrProviderRiskBlocked,
-			ResourceType:  "provider",
-			ResourceID:    util.UUIDToString(backend.ID),
-			ResourceLabel: backend.Slug,
+			StatusCode:     http.StatusForbidden,
+			PublicMessage:  "gateway provider is blocked by workspace governance",
+			ErrorType:      "invalid_request_error",
+			Code:           reason,
+			Cause:          ErrProviderRiskBlocked,
+			ResourceType:   "provider",
+			ResourceID:     util.UUIDToString(backend.ID),
+			ResourceLabel:  backend.Slug,
+			ProviderRiskID: providerRiskID,
 		}
 	}
 	box, err := r.loadBox()
@@ -106,10 +107,10 @@ func (r *Resolver) ResolveDefaultBackend(ctx context.Context, workspaceID, proto
 	}, nil
 }
 
-func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, error) {
+func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, string, error) {
 	risks, err := r.queries.ListAIThirdPartyRisk(ctx, workspaceID)
 	if err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
 	backendID := util.UUIDToString(backend.ID)
 	for _, risk := range risks {
@@ -117,9 +118,9 @@ func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgty
 			continue
 		}
 		reason, blocked := ProviderRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
-		return reason, blocked, nil
+		return reason, blocked, util.UUIDToString(risk.ID), nil
 	}
-	return "", false, nil
+	return "", false, "", nil
 }
 
 func ProviderRiskBlockReason(contractStatus, securityReviewStatus string) (string, bool) {

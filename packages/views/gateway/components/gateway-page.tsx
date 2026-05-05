@@ -32,6 +32,7 @@ import type {
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
+  GatewayEvidenceItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayStatusResponse,
@@ -57,6 +58,7 @@ import {
   gatewayKeys,
   gatewayAuditOptions,
   gatewayBackendsOptions,
+  gatewayEvidenceOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
@@ -1533,6 +1535,93 @@ function GatewayPolicyDecisions({
   );
 }
 
+function evidenceFrameworks(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
+}
+
+function GatewayEvidence({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const evidenceQuery = useQuery(gatewayEvidenceOptions(wsId, 20, canManage));
+  const rows = evidenceQuery.data ?? [];
+
+  if (!canManage) return null;
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <DatabaseZap className="size-4 text-muted-foreground" />
+          Evidence
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {evidenceQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-12 rounded-md" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+            <DatabaseZap className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No Gateway evidence recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Observer Gateway evidence will appear when governance rules create records.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway evidence">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Type</TableHead>
+                <TableHead>Summary</TableHead>
+                <TableHead>Framework</TableHead>
+                <TableHead className="text-right">Time</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row: GatewayEvidenceItem) => {
+                const frameworks = evidenceFrameworks(row.framework_refs);
+                return (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <Badge variant="outline">{row.evidence_type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.summary}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex max-w-64 flex-wrap gap-1">
+                        {frameworks.length === 0 ? (
+                          <Badge variant="secondary">unmapped</Badge>
+                        ) : (
+                          frameworks.slice(0, 3).map((framework) => (
+                            <Badge key={framework} variant="secondary">
+                              {framework}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.generated_at)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+        {evidenceQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{evidenceQuery.error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IngestKeySetup({ wsId }: { wsId: string }) {
   const qc = useQueryClient();
   const [appId, setAppId] = useState("");
@@ -2094,6 +2183,7 @@ export function GatewayPage() {
                 />
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
                 <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
+                <GatewayEvidence canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />
                 {canManage ? <IngestKeySetup wsId={wsId} /> : null}
               </div>

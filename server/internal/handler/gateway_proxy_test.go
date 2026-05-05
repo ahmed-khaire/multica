@@ -249,6 +249,21 @@ func TestGatewayProxyBlocksRejectedProviderRisk(t *testing.T) {
 	if decisionCount == 0 {
 		t.Fatal("expected provider risk block to record a policy decision")
 	}
+
+	var evidenceCount int
+	if err := testPool.QueryRow(req.Context(), `
+		SELECT count(*)
+		FROM ai_evidence
+		WHERE workspace_id = $1
+		  AND evidence_type = 'gateway_policy_decision'
+		  AND linked_backend_id = $2
+		  AND summary LIKE '%provider_risk_rejected%'
+	`, testWorkspaceID, backendID).Scan(&evidenceCount); err != nil {
+		t.Fatalf("count evidence: %v", err)
+	}
+	if evidenceCount == 0 {
+		t.Fatal("expected provider risk block to create evidence")
+	}
 }
 
 func createGatewayProxyKey(t *testing.T) string {

@@ -211,6 +211,23 @@ export interface GatewayPolicyDecisionItem {
   created_at: string;
 }
 
+export interface GatewayEvidenceItem {
+  id: string;
+  evidence_type: string;
+  framework_refs: unknown;
+  linked_request_id: string;
+  linked_session_id: string;
+  linked_span_row_id: string;
+  linked_policy_id: string;
+  linked_backend_id: string;
+  linked_provider_risk_id: string;
+  summary: string;
+  payload: unknown;
+  attachment_ref: string;
+  generated_at: string;
+  retain_until: string | null;
+}
+
 export interface GatewayProviderRisk {
   id: string;
   backend_id: string;

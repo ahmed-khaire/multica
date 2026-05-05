@@ -287,6 +287,21 @@ func (h *Handler) ListGatewayPolicyDecisions(w http.ResponseWriter, r *http.Requ
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) ListGatewayEvidence(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	limit, ok := gatewayAuditLimit(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListEvidence(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) UpsertGatewayProviderRisk(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {

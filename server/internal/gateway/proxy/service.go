@@ -149,6 +149,42 @@ func (s *Service) recordPolicyBlock(ctx context.Context, authCtx AuthContext, gw
 	}); err != nil {
 		return
 	}
+
+	payload, err := json.Marshal(map[string]any{
+		"decision":        "block",
+		"reason_code":     gwErr.Code,
+		"resource_type":   resourceType,
+		"resource_id":     resourceID,
+		"resource_label":  resourceLabel,
+		"subject_user_id": authCtx.UserID,
+	})
+	if err != nil {
+		payload = []byte("{}")
+	}
+	if resourceLabel == "" {
+		resourceLabel = resourceID
+	}
+	_, _ = s.Queries.CreateAIEvidence(ctx, db.CreateAIEvidenceParams{
+		WorkspaceID:          workspaceID,
+		EvidenceType:         "gateway_policy_decision",
+		FrameworkRefs:        []byte(`["internal_gateway_governance"]`),
+		LinkedBackendID:      optionalParsedUUID(resourceID),
+		LinkedProviderRiskID: optionalParsedUUID(gwErr.ProviderRiskID),
+		Summary:              fmt.Sprintf("Gateway blocked provider %s: %s", resourceLabel, gwErr.Code),
+		Payload:              payload,
+		AttachmentRef:        "",
+	})
+}
+
+func optionalParsedUUID(value string) pgtype.UUID {
+	if strings.TrimSpace(value) == "" {
+		return pgtype.UUID{}
+	}
+	id, err := parseUUID(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return id
 }
 
 func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary, error) {

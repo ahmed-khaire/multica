@@ -953,6 +953,33 @@ func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, l
 	return items, nil
 }
 
+func (s *Service) ListEvidence(ctx context.Context, workspaceID string, limit int32) ([]EvidenceItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := s.queries.ListAIEvidence(ctx, db.ListAIEvidenceParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]EvidenceItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, evidenceItem(row))
+	}
+	return items, nil
+}
+
 func (s *Service) ListProviderRisks(ctx context.Context, workspaceID string) ([]ProviderRiskResponse, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -1138,6 +1165,25 @@ func policyDecisionItem(row db.GatewayPolicyDecision) PolicyDecisionItem {
 		ApprovalStatus:     optionalTextString(row.ApprovalStatus),
 		EvidenceReferences: auditJSON(row.EvidenceReferences),
 		CreatedAt:          textTimestamp(row.CreatedAt),
+	}
+}
+
+func evidenceItem(row db.AiEvidence) EvidenceItem {
+	return EvidenceItem{
+		ID:                   uuidString(row.ID),
+		EvidenceType:         row.EvidenceType,
+		FrameworkRefs:        auditJSON(row.FrameworkRefs),
+		LinkedRequestID:      optionalUUIDString(row.LinkedRequestID),
+		LinkedSessionID:      optionalUUIDString(row.LinkedSessionID),
+		LinkedSpanRowID:      optionalUUIDString(row.LinkedSpanRowID),
+		LinkedPolicyID:       optionalUUIDString(row.LinkedPolicyID),
+		LinkedBackendID:      optionalUUIDString(row.LinkedBackendID),
+		LinkedProviderRiskID: optionalUUIDString(row.LinkedProviderRiskID),
+		Summary:              row.Summary,
+		Payload:              auditJSON(row.Payload),
+		AttachmentRef:        row.AttachmentRef,
+		GeneratedAt:          textTimestamp(row.GeneratedAt),
+		RetainUntil:          optionalTimestamp(row.RetainUntil),
 	}
 }
 

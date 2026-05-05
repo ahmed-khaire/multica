@@ -157,6 +157,23 @@ type PolicyDecisionItem struct {
 	CreatedAt          string `json:"created_at"`
 }
 
+type EvidenceItem struct {
+	ID                   string  `json:"id"`
+	EvidenceType         string  `json:"evidence_type"`
+	FrameworkRefs        any     `json:"framework_refs"`
+	LinkedRequestID      string  `json:"linked_request_id"`
+	LinkedSessionID      string  `json:"linked_session_id"`
+	LinkedSpanRowID      string  `json:"linked_span_row_id"`
+	LinkedPolicyID       string  `json:"linked_policy_id"`
+	LinkedBackendID      string  `json:"linked_backend_id"`
+	LinkedProviderRiskID string  `json:"linked_provider_risk_id"`
+	Summary              string  `json:"summary"`
+	Payload              any     `json:"payload"`
+	AttachmentRef        string  `json:"attachment_ref"`
+	GeneratedAt          string  `json:"generated_at"`
+	RetainUntil          *string `json:"retain_until"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string

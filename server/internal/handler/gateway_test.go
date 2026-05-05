@@ -310,6 +310,48 @@ func TestGatewayPolicyDecisionHandlerListsRecentDecisions(t *testing.T) {
 	}
 }
 
+func TestGatewayEvidenceHandlerListsRecentEvidence(t *testing.T) {
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_evidence (
+			workspace_id, evidence_type, framework_refs, summary, payload, attachment_ref
+		)
+		VALUES ($1, 'gateway_policy_decision', '["internal_gateway_governance"]'::jsonb,
+			'Gateway blocked provider openrouter: provider_risk_rejected',
+			'{"reason_code":"provider_risk_rejected","resource_label":"openrouter"}'::jsonb, '')
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert evidence: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/governance/evidence?limit=10", nil)
+	testHandler.ListGatewayEvidence(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListGatewayEvidence: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []struct {
+		EvidenceType string         `json:"evidence_type"`
+		Summary      string         `json:"summary"`
+		Payload      map[string]any `json:"payload"`
+		GeneratedAt  string         `json:"generated_at"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayEvidence: decode response: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Fatal("ListGatewayEvidence: expected at least one evidence row")
+	}
+	if resp[0].EvidenceType != "gateway_policy_decision" {
+		t.Fatalf("ListGatewayEvidence: evidence_type = %q, want gateway_policy_decision", resp[0].EvidenceType)
+	}
+	if resp[0].Payload["reason_code"] != "provider_risk_rejected" {
+		t.Fatalf("ListGatewayEvidence: payload = %#v, want provider_risk_rejected", resp[0].Payload)
+	}
+	if resp[0].GeneratedAt == "" {
+		t.Fatal("ListGatewayEvidence: expected generated_at")
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

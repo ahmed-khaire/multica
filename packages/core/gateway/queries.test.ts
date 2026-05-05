@@ -13,6 +13,7 @@ const { mockApi } = vi.hoisted(() => ({
     listGatewayAudit: vi.fn(),
     listGatewayProviderRisks: vi.fn(),
     listGatewayPolicyDecisions: vi.fn(),
+    listGatewayEvidence: vi.fn(),
   },
 }));
 
@@ -31,6 +32,7 @@ import {
   gatewayAuditOptions,
   gatewayProviderRisksOptions,
   gatewayPolicyDecisionsOptions,
+  gatewayEvidenceOptions,
 } from "./queries";
 
 describe("gateway query options", () => {
@@ -83,6 +85,12 @@ describe("gateway query options", () => {
       "policy-decisions",
       20,
     ]);
+    expect(gatewayKeys.evidence("ws-1", 20)).toEqual([
+      "gateway",
+      "ws-1",
+      "evidence",
+      20,
+    ]);
   });
 
   it("routes query functions to the Gateway API client", async () => {
@@ -97,6 +105,7 @@ describe("gateway query options", () => {
     mockApi.listGatewayAudit.mockResolvedValueOnce([]);
     mockApi.listGatewayProviderRisks.mockResolvedValueOnce([]);
     mockApi.listGatewayPolicyDecisions.mockResolvedValueOnce([]);
+    mockApi.listGatewayEvidence.mockResolvedValueOnce([]);
 
     const overviewQuery = gatewayOverviewOptions("ws-1", { since: "24h" });
     const sessionsQuery = gatewaySessionsOptions("ws-1", { limit: 25 });
@@ -109,6 +118,7 @@ describe("gateway query options", () => {
     const auditQuery = gatewayAuditOptions("ws-1");
     const providerRisksQuery = gatewayProviderRisksOptions("ws-1");
     const policyDecisionsQuery = gatewayPolicyDecisionsOptions("ws-1");
+    const evidenceQuery = gatewayEvidenceOptions("ws-1");
 
     expect(overviewQuery.queryFn).toBeTypeOf("function");
     expect(sessionsQuery.queryFn).toBeTypeOf("function");
@@ -121,6 +131,7 @@ describe("gateway query options", () => {
     expect(auditQuery.queryFn).toBeTypeOf("function");
     expect(providerRisksQuery.queryFn).toBeTypeOf("function");
     expect(policyDecisionsQuery.queryFn).toBeTypeOf("function");
+    expect(evidenceQuery.queryFn).toBeTypeOf("function");
 
     await overviewQuery.queryFn!({} as never);
     await sessionsQuery.queryFn!({} as never);
@@ -133,6 +144,7 @@ describe("gateway query options", () => {
     await auditQuery.queryFn!({} as never);
     await providerRisksQuery.queryFn!({} as never);
     await policyDecisionsQuery.queryFn!({} as never);
+    await evidenceQuery.queryFn!({} as never);
 
     expect(mockApi.getGatewayOverview).toHaveBeenCalledWith({ since: "24h" });
     expect(mockApi.listGatewaySessions).toHaveBeenCalledWith({ limit: 25 });
@@ -145,6 +157,7 @@ describe("gateway query options", () => {
     expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 20, signal: undefined });
     expect(mockApi.listGatewayProviderRisks).toHaveBeenCalledWith();
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: undefined });
+    expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 20, signal: undefined });
   });
 
   it("passes abort signals through to the Gateway API client", async () => {
@@ -157,6 +170,7 @@ describe("gateway query options", () => {
     mockApi.listGatewayAudit.mockResolvedValueOnce([]);
     mockApi.listGatewayProviderRisks.mockResolvedValueOnce([]);
     mockApi.listGatewayPolicyDecisions.mockResolvedValueOnce([]);
+    mockApi.listGatewayEvidence.mockResolvedValueOnce([]);
 
     await gatewayOverviewOptions("ws-1", { since: "24h" }).queryFn!({ signal } as never);
     await gatewaySessionDetailOptions("ws-1", "session-1").queryFn!({ signal } as never);
@@ -166,6 +180,7 @@ describe("gateway query options", () => {
     await gatewayAuditOptions("ws-1", 10).queryFn!({ signal } as never);
     await gatewayProviderRisksOptions("ws-1").queryFn!({ signal } as never);
     await gatewayPolicyDecisionsOptions("ws-1", 10).queryFn!({ signal } as never);
+    await gatewayEvidenceOptions("ws-1", 10).queryFn!({ signal } as never);
 
     expect(mockApi.getGatewayOverview).toHaveBeenCalledWith({ since: "24h", signal });
     expect(mockApi.getGatewaySession).toHaveBeenCalledWith("session-1", { signal });
@@ -175,5 +190,6 @@ describe("gateway query options", () => {
     expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 10, signal });
     expect(mockApi.listGatewayProviderRisks).toHaveBeenCalledWith({ signal });
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 10, signal });
+    expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 10, signal });
   });
 });

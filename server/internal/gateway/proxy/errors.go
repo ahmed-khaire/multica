@@ -15,14 +15,15 @@ var (
 )
 
 type GatewayError struct {
-	StatusCode    int
-	PublicMessage string
-	ErrorType     string
-	Code          string
-	Cause         error
-	ResourceType  string
-	ResourceID    string
-	ResourceLabel string
+	StatusCode     int
+	PublicMessage  string
+	ErrorType      string
+	Code           string
+	Cause          error
+	ResourceType   string
+	ResourceID     string
+	ResourceLabel  string
+	ProviderRiskID string
 }
 
 func (e GatewayError) Error() string {

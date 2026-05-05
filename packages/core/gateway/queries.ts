@@ -46,6 +46,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "provider-risks"] as const,
   policyDecisions: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "policy-decisions", limit] as const,
+  evidence: (wsId: string, limit = 20) =>
+    [...gatewayKeys.all(wsId), "evidence", limit] as const,
 };
 
 export function gatewayOverviewOptions(wsId: string, params?: GatewayObservabilityParams) {
@@ -138,6 +140,14 @@ export function gatewayPolicyDecisionsOptions(wsId: string, limit = 20, enabled 
   return queryOptions({
     queryKey: gatewayKeys.policyDecisions(wsId, limit),
     queryFn: ({ signal }) => api.listGatewayPolicyDecisions({ limit, signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayEvidenceOptions(wsId: string, limit = 20, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.evidence(wsId, limit),
+    queryFn: ({ signal }) => api.listGatewayEvidence({ limit, signal }),
     enabled: !!wsId && enabled,
   });
 }
