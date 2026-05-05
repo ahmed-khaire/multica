@@ -48,6 +48,27 @@ type gatewayCreateIngestKeyRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
+type gatewayProviderRiskRequest struct {
+	ProviderName         string   `json:"provider_name"`
+	BackendID            string   `json:"backend_id"`
+	ApprovedUseCases     []string `json:"approved_use_cases"`
+	DataCategories       []string `json:"data_categories"`
+	Regions              []string `json:"regions"`
+	HostingNotes         string   `json:"hosting_notes"`
+	ContractStatus       string   `json:"contract_status"`
+	SecurityReviewStatus string   `json:"security_review_status"`
+	EvidenceLinks        []string `json:"evidence_links"`
+	Limitations          string   `json:"limitations"`
+	ProhibitedUses       string   `json:"prohibited_uses"`
+	ModelList            []string `json:"model_list"`
+	CapabilityClass      string   `json:"capability_class"`
+	RiskScore            int32    `json:"risk_score"`
+	ReviewCadenceDays    int32    `json:"review_cadence_days"`
+	LastAssessmentAt     string   `json:"last_assessment_at"`
+	NextReviewAt         string   `json:"next_review_at"`
+	ActiveExceptionCount int32    `json:"active_exception_count"`
+}
+
 func (h *Handler) GatewayStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -238,6 +259,53 @@ func (h *Handler) ListGatewayAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.ListAudit(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) ListGatewayProviderRisks(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListProviderRisks(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) UpsertGatewayProviderRisk(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayProviderRiskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpsertProviderRisk(r.Context(), management.UpsertProviderRiskInput{
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		ProviderName:         req.ProviderName,
+		BackendID:            req.BackendID,
+		ApprovedUseCases:     req.ApprovedUseCases,
+		DataCategories:       req.DataCategories,
+		Regions:              req.Regions,
+		HostingNotes:         req.HostingNotes,
+		ContractStatus:       req.ContractStatus,
+		SecurityReviewStatus: req.SecurityReviewStatus,
+		EvidenceLinks:        req.EvidenceLinks,
+		Limitations:          req.Limitations,
+		ProhibitedUses:       req.ProhibitedUses,
+		ModelList:            req.ModelList,
+		CapabilityClass:      req.CapabilityClass,
+		RiskScore:            req.RiskScore,
+		ReviewCadenceDays:    req.ReviewCadenceDays,
+		LastAssessmentAt:     req.LastAssessmentAt,
+		NextReviewAt:         req.NextReviewAt,
+		ActiveExceptionCount: req.ActiveExceptionCount,
+	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 

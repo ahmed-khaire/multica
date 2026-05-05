@@ -45,6 +45,8 @@ import type {
   GatewaySessionDetail,
   GatewaySessionListItem,
   GatewaySpanObservation,
+  GatewayProviderRisk,
+  UpsertGatewayProviderRiskRequest,
   UpdateGatewayBackendRequest,
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
@@ -57,6 +59,7 @@ import {
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
+  gatewayProviderRisksOptions,
   gatewaySessionDetailOptions,
   gatewaySessionSpansOptions,
   gatewaySessionsOptions,
@@ -102,6 +105,8 @@ const gatewayProviderPresets = [
 ];
 
 const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];
+
+const governanceStatuses = ["unknown", "not_started", "in_review", "approved", "rejected", "expired"];
 
 function formatCount(value: number | null | undefined): string {
   if (!value) return "0";
@@ -483,6 +488,17 @@ function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
     `ANTHROPIC_BASE_URL=${key.anthropic_base_url}`,
     `ANTHROPIC_API_KEY=${key.anthropic_api_key}`,
   ].join("\n");
+}
+
+function commaList(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinList(values: string[] | undefined): string {
+  return (values ?? []).join(", ");
 }
 
 function GatewayBackendsTable({
@@ -1124,6 +1140,246 @@ function GatewayConfigurationSetup({
   );
 }
 
+function GatewayGovernanceSetup({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const backendsQuery = useQuery(gatewayBackendsOptions(wsId));
+  const risksQuery = useQuery(gatewayProviderRisksOptions(wsId, canManage));
+  const backendRows = backendsQuery.data;
+  const riskRows = risksQuery.data;
+  const backends = useMemo(() => backendRows ?? [], [backendRows]);
+  const risks = useMemo(() => riskRows ?? [], [riskRows]);
+  const [providerName, setProviderName] = useState("");
+  const [riskScore, setRiskScore] = useState("0");
+  const [securityReviewStatus, setSecurityReviewStatus] = useState("unknown");
+  const [contractStatus, setContractStatus] = useState("unknown");
+  const [approvedUseCases, setApprovedUseCases] = useState("");
+  const [dataCategories, setDataCategories] = useState("");
+
+  useEffect(() => {
+    if (!providerName && backends.length > 0) {
+      setProviderName(backends[0]!.slug);
+    }
+  }, [backends, providerName]);
+
+  useEffect(() => {
+    if (!providerName) return;
+    const risk = risks.find((item) => item.provider_name === providerName);
+    setRiskScore(String(risk?.risk_score ?? 0));
+    setSecurityReviewStatus(risk?.security_review_status ?? "unknown");
+    setContractStatus(risk?.contract_status ?? "unknown");
+    setApprovedUseCases(joinList(risk?.approved_use_cases));
+    setDataCategories(joinList(risk?.data_categories));
+  }, [providerName, risks]);
+
+  const upsertRiskMutation = useMutation({
+    mutationFn: (input: UpsertGatewayProviderRiskRequest) => api.upsertGatewayProviderRisk(input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: gatewayKeys.providerRisks(wsId) });
+      void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+    },
+  });
+
+  if (!canManage) return null;
+
+  const selectedBackend = backends.find((backend) => backend.slug === providerName);
+  const normalizedRiskScore = Math.min(100, Math.max(0, Number.parseInt(riskScore, 10) || 0));
+
+  const submitRisk = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!providerName) return;
+    upsertRiskMutation.mutate({
+      provider_name: providerName,
+      backend_id: selectedBackend?.id,
+      approved_use_cases: commaList(approvedUseCases),
+      data_categories: commaList(dataCategories),
+      contract_status: contractStatus,
+      security_review_status: securityReviewStatus,
+      risk_score: normalizedRiskScore,
+    });
+  };
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          Provider Risk Register
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <form className="space-y-3" onSubmit={submitRisk}>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-governance-provider">Governance provider</Label>
+              <NativeSelect
+                id="gateway-governance-provider"
+                className="w-full"
+                value={providerName}
+                onChange={(event) => setProviderName(event.target.value)}
+                disabled={backends.length === 0}
+              >
+                {backends.map((backend) => (
+                  <NativeSelectOption key={backend.id} value={backend.slug}>
+                    {gatewayBackendLabel(backend)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-risk-score">Risk score</Label>
+                <Input
+                  id="gateway-risk-score"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={riskScore}
+                  onChange={(event) => setRiskScore(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-security-review">Security review</Label>
+                <NativeSelect
+                  id="gateway-security-review"
+                  className="w-full"
+                  value={securityReviewStatus}
+                  onChange={(event) => setSecurityReviewStatus(event.target.value)}
+                >
+                  {governanceStatuses.map((status) => (
+                    <NativeSelectOption key={status} value={status}>
+                      {status}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-contract-status">Contract status</Label>
+              <NativeSelect
+                id="gateway-contract-status"
+                className="w-full"
+                value={contractStatus}
+                onChange={(event) => setContractStatus(event.target.value)}
+              >
+                {governanceStatuses.map((status) => (
+                  <NativeSelectOption key={status} value={status}>
+                    {status}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-approved-use-cases">Approved use cases</Label>
+              <Input
+                id="gateway-approved-use-cases"
+                value={approvedUseCases}
+                onChange={(event) => setApprovedUseCases(event.target.value)}
+                placeholder="internal support, code review"
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-data-categories">Data categories</Label>
+              <Input
+                id="gateway-data-categories"
+                value={dataCategories}
+                onChange={(event) => setDataCategories(event.target.value)}
+                placeholder="source_code, customer_data"
+                autoComplete="off"
+              />
+            </div>
+            {upsertRiskMutation.error instanceof Error ? (
+              <p className="text-xs text-destructive">{upsertRiskMutation.error.message}</p>
+            ) : null}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={backends.length === 0 || !providerName || upsertRiskMutation.isPending}
+            >
+              <ShieldCheck className="size-3.5" />
+              Save provider risk
+            </Button>
+          </form>
+
+          <div className="min-w-0">
+            {risksQuery.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-14 rounded-md" />
+                ))}
+              </div>
+            ) : risks.length === 0 ? (
+              <div className="flex h-44 flex-col items-center justify-center rounded-md border text-center">
+                <ShieldCheck className="size-8 text-muted-foreground/40" />
+                <p className="mt-3 text-sm font-medium">No provider risks recorded</p>
+                <p className="mt-1 text-xs text-muted-foreground">Assess managed backends before broad enterprise rollout.</p>
+              </div>
+            ) : (
+              <Table aria-label="Gateway provider risk register">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Reviews</TableHead>
+                    <TableHead>Data</TableHead>
+                    <TableHead className="text-right">Risk</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {risks.map((risk: GatewayProviderRisk) => (
+                    <TableRow key={risk.id}>
+                      <TableCell>
+                        <div className="flex max-w-56 flex-col">
+                          <span className="truncate font-medium">{risk.provider_name}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {risk.capability_class || "general_purpose_llm"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge variant="outline">{risk.security_review_status}</Badge>
+                          <Badge variant="outline">{risk.contract_status}</Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex max-w-72 flex-wrap gap-1">
+                          {risk.data_categories.length === 0 ? (
+                            <Badge variant="outline">unclassified</Badge>
+                          ) : (
+                            risk.data_categories.slice(0, 4).map((category) => (
+                              <Badge key={category} variant="secondary">
+                                {category}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={risk.risk_score >= 80 ? "destructive" : "outline"}>
+                          Risk {risk.risk_score}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            {risksQuery.error instanceof Error ? (
+              <p className="mt-3 text-xs text-destructive">{risksQuery.error.message}</p>
+            ) : null}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ingestKeyName(key: GatewayIngestKeyListItem): string {
   return key.display_name || key.app_id || key.key_prefix;
 }
@@ -1762,6 +2018,7 @@ export function GatewayPage() {
                   permissionsLoading={permissionsLoading}
                   wsId={wsId}
                 />
+                <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
                 <GatewayAuditHistory canManage={canManage} wsId={wsId} />
                 {canManage ? <IngestKeySetup wsId={wsId} /> : null}
               </div>

@@ -112,6 +112,31 @@ type AuditLogItem struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type ProviderRiskResponse struct {
+	ID                   string   `json:"id"`
+	BackendID            string   `json:"backend_id"`
+	ProviderName         string   `json:"provider_name"`
+	OwnerUserID          string   `json:"owner_user_id"`
+	ApprovedUseCases     []string `json:"approved_use_cases"`
+	DataCategories       []string `json:"data_categories"`
+	Regions              []string `json:"regions"`
+	HostingNotes         string   `json:"hosting_notes"`
+	ContractStatus       string   `json:"contract_status"`
+	SecurityReviewStatus string   `json:"security_review_status"`
+	EvidenceLinks        []string `json:"evidence_links"`
+	Limitations          string   `json:"limitations"`
+	ProhibitedUses       string   `json:"prohibited_uses"`
+	ModelList            []string `json:"model_list"`
+	CapabilityClass      string   `json:"capability_class"`
+	RiskScore            int32    `json:"risk_score"`
+	ReviewCadenceDays    int32    `json:"review_cadence_days"`
+	LastAssessmentAt     *string  `json:"last_assessment_at"`
+	NextReviewAt         *string  `json:"next_review_at"`
+	ActiveExceptionCount int32    `json:"active_exception_count"`
+	CreatedAt            string   `json:"created_at"`
+	UpdatedAt            string   `json:"updated_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
@@ -154,6 +179,29 @@ type SetDefaultBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
 	Slug        string
+}
+
+type UpsertProviderRiskInput struct {
+	WorkspaceID          string
+	ActorUserID          string
+	ProviderName         string
+	BackendID            string
+	ApprovedUseCases     []string
+	DataCategories       []string
+	Regions              []string
+	HostingNotes         string
+	ContractStatus       string
+	SecurityReviewStatus string
+	EvidenceLinks        []string
+	Limitations          string
+	ProhibitedUses       string
+	ModelList            []string
+	CapabilityClass      string
+	RiskScore            int32
+	ReviewCadenceDays    int32
+	LastAssessmentAt     string
+	NextReviewAt         string
+	ActiveExceptionCount int32
 }
 
 var providerPresets = map[string]ProviderPreset{

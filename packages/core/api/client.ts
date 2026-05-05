@@ -53,6 +53,7 @@ import type {
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
+  GatewayProviderRisk,
   GatewaySettingsResponse,
   GatewaySessionListResponse,
   GatewaySessionDetail,
@@ -61,6 +62,7 @@ import type {
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
   UpdateGatewayBackendRequest,
+  UpsertGatewayProviderRiskRequest,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
 
@@ -672,6 +674,17 @@ export class ApiClient {
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     const query = search.toString();
     return this.fetch(`/api/gateway/audit${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayProviderRisks(params?: { signal?: AbortSignal }): Promise<GatewayProviderRisk[]> {
+    return this.fetch("/api/gateway/governance/provider-risks", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async upsertGatewayProviderRisk(data: UpsertGatewayProviderRiskRequest): Promise<GatewayProviderRisk> {
+    return this.fetch("/api/gateway/governance/provider-risks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async setGatewayDefaultBackend(backendSlug: string): Promise<GatewaySettingsResponse> {

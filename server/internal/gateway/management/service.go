@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,6 +25,15 @@ var (
 	ErrGatewayBackendNotFound     = errors.New("gateway backend not found")
 	ErrGatewayKeyNotFound         = errors.New("gateway key not found")
 )
+
+var governanceStatuses = map[string]struct{}{
+	"unknown":     {},
+	"not_started": {},
+	"in_review":   {},
+	"approved":    {},
+	"rejected":    {},
+	"expired":     {},
+}
 
 func ValidateCapturePolicy(policy string) error {
 	switch policy {
@@ -106,8 +116,23 @@ func uuidValue(id, field string) (pgtype.UUID, error) {
 	return value, nil
 }
 
+func optionalUUID(id, field string) (pgtype.UUID, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return pgtype.UUID{}, nil
+	}
+	return uuidValue(id, field)
+}
+
 func uuidString(id pgtype.UUID) string {
 	return util.UUIDToString(id)
+}
+
+func optionalUUIDString(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return uuidString(id)
 }
 
 func textTimestamp(ts pgtype.Timestamptz) string {
@@ -116,6 +141,18 @@ func textTimestamp(ts pgtype.Timestamptz) string {
 
 func optionalTimestamp(ts pgtype.Timestamptz) *string {
 	return util.TimestampToPtr(ts)
+}
+
+func optionalRFC3339(raw, field string) (pgtype.Timestamptz, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return pgtype.Timestamptz{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return pgtype.Timestamptz{}, fmt.Errorf("%w: invalid %s", ErrInvalidGatewayBackend, field)
+	}
+	return pgtype.Timestamptz{Time: parsed, Valid: true}, nil
 }
 
 func validateBackendURL(raw, backendType string) error {
@@ -874,6 +911,172 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID string, limit int32
 	return items, nil
 }
 
+func (s *Service) ListProviderRisks(ctx context.Context, workspaceID string) ([]ProviderRiskResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListAIThirdPartyRisk(ctx, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]ProviderRiskResponse, 0, len(rows))
+	for _, row := range rows {
+		resp = append(resp, providerRiskResponse(row))
+	}
+	return resp, nil
+}
+
+func (s *Service) UpsertProviderRisk(ctx context.Context, input UpsertProviderRiskInput) (ProviderRiskResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	normalized, err := normalizeProviderRiskInput(input)
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	backendUUID, err := optionalUUID(normalized.BackendID, "backend_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	lastAssessmentAt, err := optionalRFC3339(normalized.LastAssessmentAt, "last_assessment_at")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	nextReviewAt, err := optionalRFC3339(normalized.NextReviewAt, "next_review_at")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+
+	var row db.AiThirdPartyRisk
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		approvedUseCases, err := stringArrayJSON(normalized.ApprovedUseCases)
+		if err != nil {
+			return err
+		}
+		dataCategories, err := stringArrayJSON(normalized.DataCategories)
+		if err != nil {
+			return err
+		}
+		regions, err := stringArrayJSON(normalized.Regions)
+		if err != nil {
+			return err
+		}
+		evidenceLinks, err := stringArrayJSON(normalized.EvidenceLinks)
+		if err != nil {
+			return err
+		}
+		modelList, err := stringArrayJSON(normalized.ModelList)
+		if err != nil {
+			return err
+		}
+
+		row, err = q.UpsertAIThirdPartyRisk(ctx, db.UpsertAIThirdPartyRiskParams{
+			WorkspaceID:          workspaceUUID,
+			BackendID:            backendUUID,
+			ProviderName:         normalized.ProviderName,
+			OwnerUserID:          actorUUID,
+			ApprovedUseCases:     approvedUseCases,
+			DataCategories:       dataCategories,
+			Regions:              regions,
+			HostingNotes:         normalized.HostingNotes,
+			ContractStatus:       normalized.ContractStatus,
+			SecurityReviewStatus: normalized.SecurityReviewStatus,
+			EvidenceLinks:        evidenceLinks,
+			Limitations:          normalized.Limitations,
+			ProhibitedUses:       normalized.ProhibitedUses,
+			ModelList:            modelList,
+			CapabilityClass:      normalized.CapabilityClass,
+			RiskScore:            normalized.RiskScore,
+			ReviewCadenceDays:    normalized.ReviewCadenceDays,
+			LastAssessmentAt:     lastAssessmentAt,
+			NextReviewAt:         nextReviewAt,
+			ActiveExceptionCount: normalized.ActiveExceptionCount,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.provider_risk.upsert", "ai_third_party_risk", uuidString(row.ID), nil, providerRiskResponse(row))
+	}); err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	return providerRiskResponse(row), nil
+}
+
+func normalizeProviderRiskInput(input UpsertProviderRiskInput) (UpsertProviderRiskInput, error) {
+	normalized := input
+	normalized.ProviderName = strings.ToLower(strings.TrimSpace(normalized.ProviderName))
+	normalized.BackendID = strings.TrimSpace(normalized.BackendID)
+	normalized.HostingNotes = strings.TrimSpace(normalized.HostingNotes)
+	normalized.ContractStatus = strings.TrimSpace(normalized.ContractStatus)
+	normalized.SecurityReviewStatus = strings.TrimSpace(normalized.SecurityReviewStatus)
+	normalized.Limitations = strings.TrimSpace(normalized.Limitations)
+	normalized.ProhibitedUses = strings.TrimSpace(normalized.ProhibitedUses)
+	normalized.CapabilityClass = strings.TrimSpace(normalized.CapabilityClass)
+	normalized.LastAssessmentAt = strings.TrimSpace(normalized.LastAssessmentAt)
+	normalized.NextReviewAt = strings.TrimSpace(normalized.NextReviewAt)
+	normalized.ApprovedUseCases = cleanStringSlice(normalized.ApprovedUseCases)
+	normalized.DataCategories = cleanStringSlice(normalized.DataCategories)
+	normalized.Regions = cleanStringSlice(normalized.Regions)
+	normalized.EvidenceLinks = cleanStringSlice(normalized.EvidenceLinks)
+	normalized.ModelList = cleanStringSlice(normalized.ModelList)
+
+	if normalized.ProviderName == "" {
+		return normalized, fmt.Errorf("%w: provider_name is required", ErrInvalidGatewayBackend)
+	}
+	if normalized.RiskScore < 0 || normalized.RiskScore > 100 {
+		return normalized, fmt.Errorf("%w: risk_score must be between 0 and 100", ErrInvalidGatewayBackend)
+	}
+	if normalized.ReviewCadenceDays <= 0 {
+		normalized.ReviewCadenceDays = 365
+	}
+	if normalized.ContractStatus == "" {
+		normalized.ContractStatus = "unknown"
+	}
+	if _, ok := governanceStatuses[normalized.ContractStatus]; !ok {
+		return normalized, fmt.Errorf("%w: invalid contract_status", ErrInvalidGatewayBackend)
+	}
+	if normalized.SecurityReviewStatus == "" {
+		normalized.SecurityReviewStatus = "unknown"
+	}
+	if _, ok := governanceStatuses[normalized.SecurityReviewStatus]; !ok {
+		return normalized, fmt.Errorf("%w: invalid security_review_status", ErrInvalidGatewayBackend)
+	}
+	return normalized, nil
+}
+
+func providerRiskResponse(row db.AiThirdPartyRisk) ProviderRiskResponse {
+	return ProviderRiskResponse{
+		ID:                   uuidString(row.ID),
+		BackendID:            optionalUUIDString(row.BackendID),
+		ProviderName:         row.ProviderName,
+		OwnerUserID:          optionalUUIDString(row.OwnerUserID),
+		ApprovedUseCases:     jsonStringSlice(row.ApprovedUseCases),
+		DataCategories:       jsonStringSlice(row.DataCategories),
+		Regions:              jsonStringSlice(row.Regions),
+		HostingNotes:         row.HostingNotes,
+		ContractStatus:       row.ContractStatus,
+		SecurityReviewStatus: row.SecurityReviewStatus,
+		EvidenceLinks:        jsonStringSlice(row.EvidenceLinks),
+		Limitations:          row.Limitations,
+		ProhibitedUses:       row.ProhibitedUses,
+		ModelList:            jsonStringSlice(row.ModelList),
+		CapabilityClass:      row.CapabilityClass,
+		RiskScore:            row.RiskScore,
+		ReviewCadenceDays:    row.ReviewCadenceDays,
+		LastAssessmentAt:     optionalTimestamp(row.LastAssessmentAt),
+		NextReviewAt:         optionalTimestamp(row.NextReviewAt),
+		ActiveExceptionCount: row.ActiveExceptionCount,
+		CreatedAt:            textTimestamp(row.CreatedAt),
+		UpdatedAt:            textTimestamp(row.UpdatedAt),
+	}
+}
+
 func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, string, error) {
 	normalized := input
 	normalized.Provider = strings.ToLower(strings.TrimSpace(normalized.Provider))
@@ -990,6 +1193,42 @@ func metadataJSON(metadata map[string]any) ([]byte, error) {
 		return nil, fmt.Errorf("%w: invalid metadata: %v", ErrInvalidGatewayBackend, err)
 	}
 	return raw, nil
+}
+
+func stringArrayJSON(values []string) ([]byte, error) {
+	raw, err := json.Marshal(cleanStringSlice(values))
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid string array: %v", ErrInvalidGatewayBackend, err)
+	}
+	return raw, nil
+}
+
+func cleanStringSlice(values []string) []string {
+	clean := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		clean = append(clean, value)
+	}
+	return clean
+}
+
+func jsonStringSlice(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return []string{}
+	}
+	return values
 }
 
 func auditJSON(raw []byte) any {

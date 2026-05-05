@@ -191,6 +191,52 @@ export interface GatewayAuditLogItem {
   created_at: string;
 }
 
+export interface GatewayProviderRisk {
+  id: string;
+  backend_id: string;
+  provider_name: string;
+  owner_user_id: string;
+  approved_use_cases: string[];
+  data_categories: string[];
+  regions: string[];
+  hosting_notes: string;
+  contract_status: string;
+  security_review_status: string;
+  evidence_links: string[];
+  limitations: string;
+  prohibited_uses: string;
+  model_list: string[];
+  capability_class: string;
+  risk_score: number;
+  review_cadence_days: number;
+  last_assessment_at: string | null;
+  next_review_at: string | null;
+  active_exception_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertGatewayProviderRiskRequest {
+  provider_name: string;
+  backend_id?: string;
+  approved_use_cases?: string[];
+  data_categories?: string[];
+  regions?: string[];
+  hosting_notes?: string;
+  contract_status?: string;
+  security_review_status?: string;
+  evidence_links?: string[];
+  limitations?: string;
+  prohibited_uses?: string;
+  model_list?: string[];
+  capability_class?: string;
+  risk_score?: number;
+  review_cadence_days?: number;
+  last_assessment_at?: string;
+  next_review_at?: string;
+  active_exception_count?: number;
+}
+
 export interface GatewayIngestKeyListItem {
   id: string;
   key_prefix: string;

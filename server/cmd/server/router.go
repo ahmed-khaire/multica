@@ -195,6 +195,8 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/ingest-keys", h.ListGatewayIngestKeys)
 					r.Post("/ingest-keys/{id}/revoke", h.RevokeGatewayIngestKey)
 					r.Get("/audit", h.ListGatewayAudit)
+					r.Get("/governance/provider-risks", h.ListGatewayProviderRisks)
+					r.Post("/governance/provider-risks", h.UpsertGatewayProviderRisk)
 					r.Post("/default", h.SetGatewayDefaultBackend)
 					r.Post("/policy", h.UpdateGatewayPolicy)
 				})

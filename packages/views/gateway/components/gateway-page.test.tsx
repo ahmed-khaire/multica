@@ -10,6 +10,7 @@ import type {
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
+  GatewayProviderRisk,
   GatewaySessionDetail,
   GatewaySessionListResponse,
   GatewaySessionSpansResponse,
@@ -41,10 +42,12 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     getGatewayStatus: vi.fn(),
     listGatewayBackends: vi.fn(),
     listGatewayAudit: vi.fn(),
+    listGatewayProviderRisks: vi.fn(),
     createGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
     deleteGatewayBackend: vi.fn(),
+    upsertGatewayProviderRisk: vi.fn(),
     setGatewayDefaultBackend: vi.fn(),
     updateGatewayCapturePolicy: vi.fn(),
   },
@@ -282,6 +285,33 @@ const gatewayAudit: GatewayAuditLogItem[] = [
   },
 ];
 
+const gatewayProviderRisks: GatewayProviderRisk[] = [
+  {
+    id: "risk-openrouter",
+    backend_id: "backend-openrouter",
+    provider_name: "openrouter",
+    owner_user_id: "user-1",
+    approved_use_cases: ["internal support"],
+    data_categories: ["source_code"],
+    regions: ["us"],
+    hosting_notes: "Enterprise account",
+    contract_status: "approved",
+    security_review_status: "approved",
+    evidence_links: ["https://security.example/openrouter"],
+    limitations: "No regulated workloads",
+    prohibited_uses: "No PHI",
+    model_list: ["gpt-4o"],
+    capability_class: "general_purpose_llm",
+    risk_score: 72,
+    review_cadence_days: 180,
+    last_assessment_at: "2026-04-01T00:00:00Z",
+    next_review_at: "2026-10-01T00:00:00Z",
+    active_exception_count: 0,
+    created_at: "2026-05-04T12:00:00Z",
+    updated_at: "2026-05-04T12:00:00Z",
+  },
+];
+
 const adminMembers = [
   {
     id: "member-1",
@@ -326,6 +356,7 @@ describe("GatewayPage", () => {
     mockApi.getGatewayStatus.mockResolvedValue(gatewayStatus);
     mockApi.listGatewayBackends.mockResolvedValue(gatewayBackends);
     mockApi.listGatewayAudit.mockResolvedValue(gatewayAudit);
+    mockApi.listGatewayProviderRisks.mockResolvedValue(gatewayProviderRisks);
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
@@ -336,6 +367,14 @@ describe("GatewayPage", () => {
       enabled: false,
     });
     mockApi.deleteGatewayBackend.mockResolvedValue({ deleted: true });
+    mockApi.upsertGatewayProviderRisk.mockResolvedValue({
+      ...gatewayProviderRisks[0],
+      approved_use_cases: ["internal support", "code review"],
+      data_categories: ["source_code", "customer_data"],
+      security_review_status: "approved",
+      contract_status: "approved",
+      risk_score: 64,
+    });
     mockApi.setGatewayDefaultBackend.mockResolvedValue({ capture_policy: "full_content", default_backend: gatewayBackends[1] });
     mockApi.updateGatewayCapturePolicy.mockResolvedValue({ capture_policy: "metadata_only", default_backend: gatewayBackends[0] });
   });
@@ -465,6 +504,7 @@ describe("GatewayPage", () => {
     expect(screen.queryByRole("button", { name: /Edit Local OpenAI-compatible/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create ingest key/ })).not.toBeInTheDocument();
     expect(mockApi.listGatewayAudit).not.toHaveBeenCalled();
+    expect(mockApi.listGatewayProviderRisks).not.toHaveBeenCalled();
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
@@ -478,6 +518,43 @@ describe("GatewayPage", () => {
     expect(screen.getByText("Admin User")).toBeInTheDocument();
     expect(screen.getByText("backend-local")).toBeInTheDocument();
     expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
+  });
+
+  it("shows and updates Gateway provider risk governance for admins", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Provider Risk Register")).toBeInTheDocument();
+    const riskTable = await screen.findByRole("table", { name: /Gateway provider risk register/ });
+    expect(within(riskTable).getByText("openrouter")).toBeInTheDocument();
+    expect(within(riskTable).getAllByText("approved").length).toBeGreaterThanOrEqual(1);
+    expect(within(riskTable).getByText("source_code")).toBeInTheDocument();
+    expect(within(riskTable).getByText("Risk 72")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Governance provider"), "openrouter");
+    await user.clear(screen.getByLabelText("Risk score"));
+    await user.type(screen.getByLabelText("Risk score"), "64");
+    await user.selectOptions(screen.getByLabelText("Security review"), "approved");
+    await user.selectOptions(screen.getByLabelText("Contract status"), "approved");
+    await user.clear(screen.getByLabelText("Approved use cases"));
+    await user.type(screen.getByLabelText("Approved use cases"), "internal support, code review");
+    await user.clear(screen.getByLabelText("Data categories"));
+    await user.type(screen.getByLabelText("Data categories"), "source_code, customer_data");
+    await user.click(screen.getByRole("button", { name: /Save provider risk/ }));
+
+    await waitFor(() => {
+      expect(mockApi.upsertGatewayProviderRisk).toHaveBeenCalledWith({
+        provider_name: "openrouter",
+        backend_id: "backend-openrouter",
+        approved_use_cases: ["internal support", "code review"],
+        data_categories: ["source_code", "customer_data"],
+        contract_status: "approved",
+        security_review_status: "approved",
+        risk_score: 64,
+      });
+    });
   });
 
   it("edits, rotates, disables, and deletes Gateway backends from the Setup tab", async () => {

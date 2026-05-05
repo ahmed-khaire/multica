@@ -184,6 +184,88 @@ func TestGatewayAuditHandlerListsBackendChanges(t *testing.T) {
 	}
 }
 
+func TestGatewayProviderRiskHandlersUpsertAndList(t *testing.T) {
+	setGatewaySecret(t)
+
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider": "openrouter",
+		"key":      "sk-or-1234567890abcdef",
+	})
+
+	testHandler.CreateGatewayBackend(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var backend struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&backend); err != nil {
+		t.Fatalf("CreateGatewayBackend: failed to decode response: %v", err)
+	}
+
+	upsertW := httptest.NewRecorder()
+	upsertReq := newRequest("POST", "/api/gateway/governance/provider-risks", map[string]any{
+		"provider_name":          "openrouter",
+		"backend_id":             backend.ID,
+		"approved_use_cases":     []string{"internal support", "code review"},
+		"data_categories":        []string{"source_code", "customer_data"},
+		"contract_status":        "approved",
+		"security_review_status": "approved",
+		"risk_score":             64,
+		"review_cadence_days":    180,
+		"next_review_at":         "2026-10-01T00:00:00Z",
+	})
+
+	testHandler.UpsertGatewayProviderRisk(upsertW, upsertReq)
+	if upsertW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayProviderRisk: expected 200, got %d: %s", upsertW.Code, upsertW.Body.String())
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/governance/provider-risks", nil)
+	testHandler.ListGatewayProviderRisks(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayProviderRisks: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+
+	var resp []struct {
+		BackendID            string   `json:"backend_id"`
+		ProviderName         string   `json:"provider_name"`
+		ApprovedUseCases     []string `json:"approved_use_cases"`
+		DataCategories       []string `json:"data_categories"`
+		ContractStatus       string   `json:"contract_status"`
+		SecurityReviewStatus string   `json:"security_review_status"`
+		RiskScore            int      `json:"risk_score"`
+		NextReviewAt         *string  `json:"next_review_at"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&resp); err != nil {
+		t.Fatalf("ListGatewayProviderRisks: failed to decode response: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Fatal("ListGatewayProviderRisks: expected at least one risk row")
+	}
+	if resp[0].ProviderName != "openrouter" {
+		t.Fatalf("ListGatewayProviderRisks: provider_name = %q, want openrouter", resp[0].ProviderName)
+	}
+	if resp[0].BackendID != backend.ID {
+		t.Fatalf("ListGatewayProviderRisks: backend_id = %q, want %q", resp[0].BackendID, backend.ID)
+	}
+	if resp[0].RiskScore != 64 {
+		t.Fatalf("ListGatewayProviderRisks: risk_score = %d, want 64", resp[0].RiskScore)
+	}
+	if resp[0].SecurityReviewStatus != "approved" || resp[0].ContractStatus != "approved" {
+		t.Fatalf("ListGatewayProviderRisks: statuses = %s/%s, want approved/approved", resp[0].SecurityReviewStatus, resp[0].ContractStatus)
+	}
+	if len(resp[0].ApprovedUseCases) != 2 || resp[0].ApprovedUseCases[1] != "code review" {
+		t.Fatalf("ListGatewayProviderRisks: approved_use_cases = %#v, want code review", resp[0].ApprovedUseCases)
+	}
+	if resp[0].NextReviewAt == nil || *resp[0].NextReviewAt == "" {
+		t.Fatal("ListGatewayProviderRisks: expected next_review_at")
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

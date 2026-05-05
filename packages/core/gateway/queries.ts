@@ -42,6 +42,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "backends"] as const,
   audit: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "audit", limit] as const,
+  providerRisks: (wsId: string) =>
+    [...gatewayKeys.all(wsId), "provider-risks"] as const,
 };
 
 export function gatewayOverviewOptions(wsId: string, params?: GatewayObservabilityParams) {
@@ -117,6 +119,15 @@ export function gatewayAuditOptions(wsId: string, limit = 20, enabled = true) {
   return queryOptions({
     queryKey: gatewayKeys.audit(wsId, limit),
     queryFn: ({ signal }) => api.listGatewayAudit({ limit, signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayProviderRisksOptions(wsId: string, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.providerRisks(wsId),
+    queryFn: ({ signal }) =>
+      signal ? api.listGatewayProviderRisks({ signal }) : api.listGatewayProviderRisks(),
     enabled: !!wsId && enabled,
   });
 }
