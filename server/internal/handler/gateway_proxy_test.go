@@ -694,6 +694,58 @@ func TestGatewayProxyBlocksConfiguredModelPolicy(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyBlocksCanonicalToolAliasPolicy(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "chatcmpl-tool-policy"})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "policy-block-shell-tool-proxy-test", upstream.URL+"/v1", "sk-policy-tool")
+	insertGatewayProxyPolicy(t, "policy-block-shell-tool-test", "tool", "enforce", map[string]any{
+		"rules": []map[string]any{{
+			"id":          "block-shell-tool",
+			"action":      "block",
+			"reason_code": "shell_tool_blocked",
+			"message":     "shell tools are blocked by workspace policy",
+			"match": map[string]any{
+				"tools": []string{"shell"},
+			},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-test",
+		"messages":[{"role":"user","content":"run a command"}],
+		"tools":[{"type":"function","function":{"name":"execute_command","description":"Run a shell command","parameters":{"type":"object"}}}]
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	errBody, ok := resp["error"].(map[string]any)
+	if !ok || errBody["code"] != "shell_tool_blocked" {
+		t.Fatalf("blocked error body = %#v, want shell_tool_blocked", resp)
+	}
+}
+
 func TestGatewayProxyRoutesConfiguredDataPolicy(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)

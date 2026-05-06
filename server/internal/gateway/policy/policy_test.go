@@ -130,6 +130,26 @@ func TestEvaluateRedactsMatchingTool(t *testing.T) {
 	}
 }
 
+func TestEvaluateMatchesCanonicalToolAliases(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate([]Rule{{
+		ID:         "block-shell",
+		Action:     ActionBlock,
+		ReasonCode: "shell_tool_blocked",
+		Match: Match{
+			Tools: []string{"shell"},
+		},
+	}}, Request{Tools: []string{"Bash", "execute_command"}})
+
+	if got.Action != ActionBlock {
+		t.Fatalf("expected canonical shell alias to block, got %s", got.Action)
+	}
+	if got.ReasonCode != "shell_tool_blocked" {
+		t.Fatalf("reason mismatch: %q", got.ReasonCode)
+	}
+}
+
 func TestEvaluateIgnoresInvalidAction(t *testing.T) {
 	t.Parallel()
 

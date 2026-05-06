@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	gatewaypolicy "github.com/multica-ai/multica/server/internal/gateway/policy"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -494,18 +495,25 @@ func mapAgents(rows []db.GatewayAgentObservation) []AgentObservation {
 func mapTools(rows []db.GatewayToolObservation) []ToolObservation {
 	items := make([]ToolObservation, 0, len(rows))
 	for _, row := range rows {
+		toolName := row.ToolName
+		if strings.TrimSpace(toolName) == "" {
+			toolName = row.ToolID
+		}
+		profile := gatewaypolicy.DescribeTool(toolName)
 		items = append(items, ToolObservation{
-			ID:          util.UUIDToString(row.ID),
-			SessionID:   util.UUIDToString(row.SessionID),
-			SpanRowID:   util.UUIDToString(row.SpanRowID),
-			ToolID:      row.ToolID,
-			ToolName:    row.ToolName,
-			Description: row.Description,
-			Parameters:  jsonAny(row.Parameters),
-			Result:      jsonAny(row.Result),
-			Status:      row.Status,
-			DurationMS:  int8(row.DurationMs),
-			CreatedAt:   util.TimestampToString(row.CreatedAt),
+			ID:                util.UUIDToString(row.ID),
+			SessionID:         util.UUIDToString(row.SessionID),
+			SpanRowID:         util.UUIDToString(row.SpanRowID),
+			ToolID:            row.ToolID,
+			ToolName:          row.ToolName,
+			CanonicalToolType: profile.CanonicalName,
+			ToolRiskLevel:     profile.RiskLevel,
+			Description:       row.Description,
+			Parameters:        jsonAny(row.Parameters),
+			Result:            jsonAny(row.Result),
+			Status:            row.Status,
+			DurationMS:        int8(row.DurationMs),
+			CreatedAt:         util.TimestampToString(row.CreatedAt),
 		})
 	}
 	return items

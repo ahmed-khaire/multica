@@ -602,6 +602,8 @@ export interface GatewayToolObservation {
   span_row_id: string;
   tool_id: string;
   tool_name: string;
+  canonical_tool_type: string;
+  tool_risk_level: string;
   description: string;
   parameters: unknown;
   result: unknown;

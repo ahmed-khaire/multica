@@ -2767,7 +2767,11 @@ function SessionDrilldown({
               <div key={tool.id} className="rounded-md border p-2 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-medium">{tool.tool_name || tool.tool_id}</p>
-                  <Badge variant={statusVariant(tool.status)}>{tool.status}</Badge>
+                  <div className="flex items-center gap-2">
+                    {tool.canonical_tool_type ? <Badge variant="outline">{tool.canonical_tool_type}</Badge> : null}
+                    {tool.tool_risk_level ? <Badge variant="outline">{tool.tool_risk_level} risk</Badge> : null}
+                    <Badge variant={statusVariant(tool.status)}>{tool.status}</Badge>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{tool.description}</p>
               </div>

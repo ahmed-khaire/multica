@@ -185,7 +185,7 @@ const sessionDetail: GatewaySessionDetail = {
   events: [{ id: "event-1", session_id: "session-1", request_id: "request-1", span_id: "span-row-1", event_type: "llm_call", payload: {}, occurred_at: "2026-05-04T10:00:10Z" }],
   logs: [{ id: "log-1", session_id: "session-1", request_id: "request-1", span_id: "span-row-1", severity: "info", body: "gateway request completed", attributes: {}, occurred_at: "2026-05-04T10:00:11Z" }],
   agents: [{ id: "agent-obs-1", session_id: "session-1", span_row_id: "span-row-1", agent_id: "agent-1", agent_name: "Observer Agent", role: "assistant", models: ["gpt-observe"], tools: ["search"], handoff_source: "", handoff_destination: "", reasoning_summary: "handled request", created_at: "2026-05-04T10:00:12Z" }],
-  tools: [{ id: "tool-obs-1", session_id: "session-1", span_row_id: "span-row-1", tool_id: "tool-1", tool_name: "search", description: "Search tool", parameters: { q: "hello" }, result: { ok: true }, status: "success", duration_ms: 42, created_at: "2026-05-04T10:00:13Z" }],
+  tools: [{ id: "tool-obs-1", session_id: "session-1", span_row_id: "span-row-1", tool_id: "tool-1", tool_name: "search", canonical_tool_type: "web_search", tool_risk_level: "medium", description: "Search tool", parameters: { q: "hello" }, result: { ok: true }, status: "success", duration_ms: 42, created_at: "2026-05-04T10:00:13Z" }],
 };
 
 const spans: GatewaySessionSpansResponse = {
@@ -623,6 +623,8 @@ describe("GatewayPage", () => {
     expect(screen.getByText("gateway request completed")).toBeInTheDocument();
     expect(screen.getByText("Observer Agent")).toBeInTheDocument();
     expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText("medium risk")).toBeInTheDocument();
   });
 
   it("renders LLM call table on tab switch", async () => {

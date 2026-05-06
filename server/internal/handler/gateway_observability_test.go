@@ -130,7 +130,11 @@ func TestGatewayObservabilitySessionDetailAndSpans(t *testing.T) {
 		Events []any `json:"events"`
 		Logs   []any `json:"logs"`
 		Agents []any `json:"agents"`
-		Tools  []any `json:"tools"`
+		Tools  []struct {
+			ToolName          string `json:"tool_name"`
+			CanonicalToolType string `json:"canonical_tool_type"`
+			ToolRiskLevel     string `json:"tool_risk_level"`
+		} `json:"tools"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
 		t.Fatalf("decode detail: %v", err)
@@ -146,6 +150,9 @@ func TestGatewayObservabilitySessionDetailAndSpans(t *testing.T) {
 	}
 	if detail.ModelCalls[0].PromptMessages == nil || detail.ModelCalls[0].CompletionMessages == nil {
 		t.Fatalf("expected captured prompt and completion payloads, got %#v", detail.ModelCalls[0])
+	}
+	if detail.Tools[0].ToolName != "search" || detail.Tools[0].CanonicalToolType != "web_search" || detail.Tools[0].ToolRiskLevel != "medium" {
+		t.Fatalf("tool normalization = %#v, want search normalized to web_search/medium", detail.Tools[0])
 	}
 
 	w = httptest.NewRecorder()

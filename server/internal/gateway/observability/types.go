@@ -202,17 +202,19 @@ type AgentObservation struct {
 }
 
 type ToolObservation struct {
-	ID          string `json:"id"`
-	SessionID   string `json:"session_id"`
-	SpanRowID   string `json:"span_row_id"`
-	ToolID      string `json:"tool_id"`
-	ToolName    string `json:"tool_name"`
-	Description string `json:"description"`
-	Parameters  any    `json:"parameters"`
-	Result      any    `json:"result"`
-	Status      string `json:"status"`
-	DurationMS  *int64 `json:"duration_ms"`
-	CreatedAt   string `json:"created_at"`
+	ID                string `json:"id"`
+	SessionID         string `json:"session_id"`
+	SpanRowID         string `json:"span_row_id"`
+	ToolID            string `json:"tool_id"`
+	ToolName          string `json:"tool_name"`
+	CanonicalToolType string `json:"canonical_tool_type"`
+	ToolRiskLevel     string `json:"tool_risk_level"`
+	Description       string `json:"description"`
+	Parameters        any    `json:"parameters"`
+	Result            any    `json:"result"`
+	Status            string `json:"status"`
+	DurationMS        *int64 `json:"duration_ms"`
+	CreatedAt         string `json:"created_at"`
 }
 
 type SessionSpansResponse struct {
