@@ -80,13 +80,13 @@ func (r *Recorder) Start(ctx context.Context, auth AuthContext, target BackendTa
 		BackendID:       backendID,
 		Route:           summary.RoutePath,
 		Method:          summary.Method,
-		ModelRequested:  summary.Model,
-		ModelForwarded:  summary.Model,
+		ModelRequested:  requestedModel(summary),
+		ModelForwarded:  forwardedModel(summary),
 		ProviderSlug:    target.Slug,
 		Streaming:       summary.Stream,
 		Status:          "pending",
 		CapturePolicy:   target.CapturePolicy,
-		RequestMetadata: jsonObject(map[string]any{"protocol": summary.Protocol, "surface": summary.Surface, "key_prefix": auth.KeyPrefix}),
+		RequestMetadata: jsonObject(map[string]any{"protocol": summary.Protocol, "surface": summary.Surface, "key_prefix": auth.KeyPrefix, "routing_source": summary.RoutingSource}),
 	})
 	if err != nil {
 		return nil
@@ -141,7 +141,7 @@ func (r *Recorder) Complete(ctx context.Context, obs *Observation, result ProxyR
 		WorkspaceID:         obs.WorkspaceID,
 		BackendID:           obs.BackendID,
 		ProviderSlug:        obs.Target.Slug,
-		RequestModel:        obs.Summary.Model,
+		RequestModel:        forwardedModel(obs.Summary),
 		ResponseModel:       responseModel(result.ResponseJSON, obs.Summary.Model),
 		RequestType:         requestType(obs.Summary.Surface),
 		Streaming:           result.Streaming,
@@ -175,6 +175,20 @@ func (r *Recorder) Complete(ctx context.Context, obs *Observation, result ProxyR
 		SpanCount:   0,
 		ErrorCount:  errorCount,
 	})
+}
+
+func requestedModel(summary RequestSummary) string {
+	if summary.RequestedModel != "" {
+		return summary.RequestedModel
+	}
+	return summary.Model
+}
+
+func forwardedModel(summary RequestSummary) string {
+	if summary.ForwardedModel != "" {
+		return summary.ForwardedModel
+	}
+	return summary.Model
 }
 
 func CaptureJSON(policy string, value any) []byte {

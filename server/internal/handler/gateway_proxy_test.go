@@ -262,6 +262,257 @@ func TestGatewayProxyRoutesToExplicitBackendHeader(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyRoutesProviderPrefixedModel(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	defaultCalls := 0
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer defaultUpstream.Close()
+
+	explicitCalls := 0
+	explicitUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		explicitCalls++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		if got := body["model"]; got != "gpt-upstream" {
+			t.Errorf("upstream model = %#v, want gpt-upstream", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-prefixed",
+			"object":  "chat.completion",
+			"model":   "gpt-upstream",
+			"choices": []any{},
+		})
+	}))
+	defer explicitUpstream.Close()
+
+	createGatewayProxyBackend(t, "local", "local-prefix-default-proxy-test", defaultUpstream.URL+"/v1", "sk-prefix-default")
+	explicitID := createGatewayProxyBackendWithDefault(t, "local", "local-prefix-target-proxy-test", explicitUpstream.URL+"/v1", "sk-prefix-target", false)
+	setGatewayProxyDefaultBackend(t, "local-prefix-default-proxy-test")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"local-prefix-target-proxy-test:gpt-upstream","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if defaultCalls != 0 {
+		t.Fatalf("default upstream calls = %d, want 0", defaultCalls)
+	}
+	if explicitCalls != 1 {
+		t.Fatalf("explicit upstream calls = %d, want 1", explicitCalls)
+	}
+
+	var got struct {
+		ModelRequested string
+		ModelForwarded string
+		ProviderSlug   string
+	}
+	if err := testPool.QueryRow(req.Context(), `
+		SELECT model_requested, model_forwarded, provider_slug
+		FROM gateway_request
+		WHERE workspace_id = $1
+		  AND backend_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, testWorkspaceID, explicitID).Scan(&got.ModelRequested, &got.ModelForwarded, &got.ProviderSlug); err != nil {
+		t.Fatalf("read prefixed gateway request telemetry: %v", err)
+	}
+	if got.ModelRequested != "local-prefix-target-proxy-test:gpt-upstream" || got.ModelForwarded != "gpt-upstream" || got.ProviderSlug != "local-prefix-target-proxy-test" {
+		t.Fatalf("telemetry = %#v, want requested prefix, forwarded model, and provider slug", got)
+	}
+}
+
+func TestGatewayProxyRejectsConflictingBackendHeaderAndModelPrefix(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "conflict-openrouter-proxy-test", upstream.URL+"/v1", "sk-conflict-openrouter")
+	createGatewayProxyBackendWithDefault(t, "local", "conflict-groq-proxy-test", upstream.URL+"/v1", "sk-conflict-groq", false)
+	setGatewayProxyDefaultBackend(t, "conflict-openrouter-proxy-test")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"conflict-groq-proxy-test:llama","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	req.Header.Set("X-Multica-Backend", "conflict-openrouter-proxy-test")
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if sawUpstream {
+		t.Fatal("upstream should not be called for conflicting backend routes")
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	errBody, ok := resp["error"].(map[string]any)
+	if !ok || errBody["code"] != "gateway_backend_conflict" {
+		t.Fatalf("conflict error body = %#v, want gateway_backend_conflict", resp)
+	}
+}
+
+func TestGatewayModelsAggregatesEnabledBackends(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("default upstream path = %s, want /v1/models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-models-default" {
+			t.Errorf("default Authorization = %q, want upstream key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []any{
+				map[string]any{"id": "gpt-default", "object": "model"},
+			},
+		})
+	}))
+	defer defaultUpstream.Close()
+
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("second upstream path = %s, want /v1/models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []any{
+				map[string]any{"id": "anthropic/claude-sonnet-4", "object": "model"},
+			},
+		})
+	}))
+	defer secondUpstream.Close()
+
+	createGatewayProxyBackend(t, "local", "models-default-proxy-test", defaultUpstream.URL+"/v1", "sk-models-default")
+	createGatewayProxyBackendWithDefault(t, "local", "models-openrouter-proxy-test", secondUpstream.URL+"/v1", "sk-models-openrouter", false)
+	setGatewayProxyDefaultBackend(t, "models-default-proxy-test")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode models response: %v", err)
+	}
+	if resp.Object != "list" {
+		t.Fatalf("object = %q, want list", resp.Object)
+	}
+	got := map[string]string{}
+	for _, model := range resp.Data {
+		got[model.ID] = model.OwnedBy
+	}
+	want := map[string]string{
+		"gpt-default":                                            "models-default-proxy-test",
+		"models-default-proxy-test:gpt-default":                  "models-default-proxy-test",
+		"models-openrouter-proxy-test:anthropic/claude-sonnet-4": "models-openrouter-proxy-test",
+	}
+	for id, owner := range want {
+		if got[id] != owner {
+			t.Fatalf("models[%q] owned_by = %q, want %q; all models = %#v", id, got[id], owner, got)
+		}
+	}
+}
+
+func TestGatewayModelsHidesRejectedBackends(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []any{
+				map[string]any{"id": "gpt-default", "object": "model"},
+			},
+		})
+	}))
+	defer defaultUpstream.Close()
+
+	rejectedCalls := 0
+	rejectedUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rejectedCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []any{
+				map[string]any{"id": "blocked-model", "object": "model"},
+			},
+		})
+	}))
+	defer rejectedUpstream.Close()
+
+	createGatewayProxyBackend(t, "local", "models-risk-default-proxy-test", defaultUpstream.URL+"/v1", "sk-models-risk-default")
+	rejectedID := createGatewayProxyBackendWithDefault(t, "local", "models-rejected-proxy-test", rejectedUpstream.URL+"/v1", "sk-models-rejected", false)
+	setGatewayProxyDefaultBackend(t, "models-risk-default-proxy-test")
+
+	upsertW := httptest.NewRecorder()
+	upsertReq := newRequest(http.MethodPost, "/api/gateway/governance/provider-risks", map[string]any{
+		"provider_name":          "models-rejected-proxy-test",
+		"backend_id":             rejectedID,
+		"security_review_status": "rejected",
+		"contract_status":        "approved",
+		"risk_score":             95,
+		"review_cadence_days":    90,
+	})
+	testHandler.UpsertGatewayProviderRisk(upsertW, upsertReq)
+	if upsertW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayProviderRisk status = %d: %s", upsertW.Code, upsertW.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if rejectedCalls != 0 {
+		t.Fatalf("rejected upstream calls = %d, want 0", rejectedCalls)
+	}
+	if strings.Contains(w.Body.String(), "models-rejected-proxy-test:blocked-model") || strings.Contains(w.Body.String(), "blocked-model") {
+		t.Fatalf("rejected backend model leaked into catalog: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "models-risk-default-proxy-test:gpt-default") {
+		t.Fatalf("default backend model missing from catalog: %s", w.Body.String())
+	}
+}
+
 func TestGatewayProxyBlocksRejectedExplicitBackend(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)

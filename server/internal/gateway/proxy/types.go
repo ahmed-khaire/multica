@@ -33,8 +33,17 @@ type BackendTarget struct {
 	PolicyExceptionID string
 }
 
+type ModelRouting struct {
+	RequestedModel string
+	ForwardedModel string
+	BackendSlug    string
+	Source         string
+}
+
 type RequestSummary struct {
 	Model               string
+	RequestedModel      string
+	ForwardedModel      string
 	Stream              bool
 	Body                []byte
 	BodyJSON            map[string]any
@@ -43,6 +52,8 @@ type RequestSummary struct {
 	RoutePath           string
 	Method              string
 	ExplicitBackendSlug string
+	BackendSlug         string
+	RoutingSource       string
 }
 
 type ProxyResult struct {

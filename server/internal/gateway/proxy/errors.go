@@ -12,6 +12,7 @@ var (
 	ErrIncompatibleBackend         = errors.New("gateway backend is not compatible with requested protocol")
 	ErrGatewaySecretNotConfigured  = errors.New("gateway secret key is not configured")
 	ErrProviderRiskBlocked         = errors.New("gateway provider risk blocks this request")
+	ErrBackendRoutingConflict      = errors.New("gateway backend route conflict")
 )
 
 type GatewayError struct {

@@ -44,7 +44,30 @@ func (s *Service) ServeAnthropicMessages(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Service) ServeModels(w http.ResponseWriter, r *http.Request) {
-	s.serve(w, r, SurfaceModels)
+	protocol := ProtocolForRequest(r, SurfaceModels)
+	rawKey, ok := ExtractGatewayKey(r)
+	if !ok {
+		writeProviderError(w, protocol, AuthenticationError("gateway key is required", ErrGatewayKeyRequired))
+		return
+	}
+
+	authCtx, err := AuthenticateGatewayKey(r.Context(), s.Queries, rawKey)
+	if err != nil {
+		if errors.Is(err, ErrGatewayKeyInvalid) {
+			writeProviderError(w, protocol, AuthenticationError("gateway key is invalid", err))
+			return
+		}
+		writeProviderError(w, protocol, GatewayError{
+			StatusCode:    http.StatusInternalServerError,
+			PublicMessage: "gateway authentication failed",
+			ErrorType:     "server_error",
+			Code:          "gateway_authentication_failed",
+			Cause:         err,
+		})
+		return
+	}
+
+	s.serveModels(w, r, authCtx, protocol)
 }
 
 func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) {
@@ -73,11 +96,15 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 
 	summary, err := summarizeRequest(r, surface, protocol)
 	if err != nil {
+		if errors.Is(err, ErrBackendRoutingConflict) {
+			writeProviderError(w, protocol, RoutingError(http.StatusBadRequest, "gateway backend header conflicts with model prefix", "gateway_backend_conflict", err))
+			return
+		}
 		writeProviderError(w, protocol, RoutingError(http.StatusBadRequest, "invalid request body", "invalid_request_body", err))
 		return
 	}
 
-	target, err := s.Resolver.ResolveBackend(r.Context(), authCtx.WorkspaceID, protocol, summary.ExplicitBackendSlug)
+	target, err := s.Resolver.ResolveBackend(r.Context(), authCtx.WorkspaceID, protocol, summary.BackendSlug)
 	if err != nil {
 		gwErr := normalizeGatewayError(err)
 		if errors.Is(gwErr, ErrProviderRiskBlocked) {
@@ -252,6 +279,8 @@ func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary
 		Surface:             surface,
 		Method:              r.Method,
 		ExplicitBackendSlug: strings.TrimSpace(r.Header.Get("X-Multica-Backend")),
+		BackendSlug:         strings.TrimSpace(r.Header.Get("X-Multica-Backend")),
+		RoutingSource:       RoutingSourceDefault,
 	}
 	if r.Body == nil || r.Method == http.MethodGet {
 		return summary, nil
@@ -275,7 +304,21 @@ func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary
 	}
 	summary.BodyJSON = bodyJSON
 	if model, ok := bodyJSON["model"].(string); ok {
-		summary.Model = model
+		routing, err := ParseModelRouting(model, summary.ExplicitBackendSlug)
+		if err != nil {
+			return RequestSummary{}, err
+		}
+		summary.Model = routing.ForwardedModel
+		summary.RequestedModel = routing.RequestedModel
+		summary.ForwardedModel = routing.ForwardedModel
+		summary.BackendSlug = routing.BackendSlug
+		summary.RoutingSource = routing.Source
+		bodyJSON["model"] = routing.ForwardedModel
+		rewritten, err := json.Marshal(bodyJSON)
+		if err != nil {
+			return RequestSummary{}, err
+		}
+		summary.Body = rewritten
 	}
 	if stream, ok := bodyJSON["stream"].(bool); ok {
 		summary.Stream = stream
