@@ -77,9 +77,36 @@ INSERT INTO gateway_backend_credential (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 RETURNING *;
 
+-- name: ListGatewayBackendCredentialsForBackend :many
+SELECT * FROM gateway_backend_credential
+WHERE workspace_id = $1
+  AND backend_id = $2
+ORDER BY enabled DESC, priority ASC, created_at ASC;
+
 -- name: ListActiveGatewayBackendCredentialsForBackend :many
 SELECT * FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND enabled = TRUE
 ORDER BY priority ASC, created_at ASC;
+
+-- name: GetGatewayBackendCredentialByID :one
+SELECT * FROM gateway_backend_credential
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND id = $3;
+
+-- name: UpdateGatewayBackendCredential :one
+UPDATE gateway_backend_credential
+SET
+    label = $4,
+    encrypted_credential = $5,
+    credential_hint = $6,
+    enabled = $7,
+    priority = $8,
+    updated_by = $9,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND id = $3
+RETURNING *;

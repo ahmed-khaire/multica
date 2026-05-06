@@ -42,6 +42,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "doctor"] as const,
   backends: (wsId: string) =>
     [...gatewayKeys.all(wsId), "backends"] as const,
+  backendCredentials: (wsId: string, backendId: string) =>
+    [...gatewayKeys.backends(wsId), backendId, "credentials"] as const,
   audit: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "audit", limit] as const,
   providerRisks: (wsId: string) =>
@@ -134,6 +136,17 @@ export function gatewayBackendsOptions(wsId: string) {
     queryFn: ({ signal }) =>
       signal ? api.listGatewayBackends({ signal }) : api.listGatewayBackends(),
     enabled: !!wsId,
+  });
+}
+
+export function gatewayBackendCredentialsOptions(wsId: string, backendId: string) {
+  return queryOptions({
+    queryKey: gatewayKeys.backendCredentials(wsId, backendId),
+    queryFn: ({ signal }) =>
+      signal
+        ? api.listGatewayBackendCredentials(backendId, { signal })
+        : api.listGatewayBackendCredentials(backendId),
+    enabled: !!wsId && !!backendId,
   });
 }
 

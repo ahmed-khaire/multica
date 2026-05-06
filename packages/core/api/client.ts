@@ -44,12 +44,14 @@ import type {
   UpdateProjectRequest,
   ListProjectsResponse,
   CreateGatewayBackendRequest,
+  CreateGatewayBackendCredentialRequest,
   CreateGatewayGovernancePolicyRequest,
   CreateGatewayPolicyExceptionRequest,
   DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
   GatewayAuditLogItem,
   GatewayBackend,
+  GatewayBackendCredential,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
   GatewayDoctorResponse,
@@ -73,6 +75,7 @@ import type {
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
   UpdateGatewayBackendRequest,
+  UpdateGatewayBackendCredentialRequest,
   UpdateGatewayGovernancePolicyRequest,
   UpdateGatewayIncidentRequest,
   UpdateGatewayPolicyExceptionRequest,
@@ -660,6 +663,10 @@ export class ApiClient {
     return this.fetch("/api/gateway/backends", params?.signal ? { signal: params.signal } : undefined);
   }
 
+  async listGatewayBackendCredentials(backendId: string, params?: { signal?: AbortSignal }): Promise<GatewayBackendCredential[]> {
+    return this.fetch(`/api/gateway/backends/${encodeURIComponent(backendId)}/credentials`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
   async createGatewayUserKey(): Promise<GatewayUserKeyResponse> {
     return this.fetch("/api/gateway/key", {
       method: "POST",
@@ -676,6 +683,20 @@ export class ApiClient {
 
   async updateGatewayBackend(id: string, data: UpdateGatewayBackendRequest): Promise<GatewayBackend> {
     return this.fetch(`/api/gateway/backends/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createGatewayBackendCredential(backendId: string, data: CreateGatewayBackendCredentialRequest): Promise<GatewayBackendCredential> {
+    return this.fetch(`/api/gateway/backends/${encodeURIComponent(backendId)}/credentials`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateGatewayBackendCredential(backendId: string, credentialId: string, data: UpdateGatewayBackendCredentialRequest): Promise<GatewayBackendCredential> {
+    return this.fetch(`/api/gateway/backends/${encodeURIComponent(backendId)}/credentials/${encodeURIComponent(credentialId)}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });

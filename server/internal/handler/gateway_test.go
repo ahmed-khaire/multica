@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type doctorCheckAssertion struct {
@@ -154,6 +156,112 @@ func TestGatewayCreateBackendRedactsCredential(t *testing.T) {
 	if got := resp["credential_hint"]; got != "sk-or-12...cdef" {
 		t.Fatalf("CreateGatewayBackend: credential_hint = %v, want %q", got, "sk-or-12...cdef")
 	}
+}
+
+func TestGatewayBackendCredentialHandlersCreateListAndUpdate(t *testing.T) {
+	setGatewaySecret(t)
+
+	createBackendW := httptest.NewRecorder()
+	createBackendReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider": "openrouter",
+		"slug":     "pool-openrouter",
+		"key":      "sk-or-primary-1234567890abcdef",
+	})
+	testHandler.CreateGatewayBackend(createBackendW, createBackendReq)
+	if createBackendW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", createBackendW.Code, createBackendW.Body.String())
+	}
+
+	var backend struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createBackendW.Body).Decode(&backend); err != nil {
+		t.Fatalf("CreateGatewayBackend: decode response: %v", err)
+	}
+
+	createCredentialW := httptest.NewRecorder()
+	createCredentialReq := newRequest("POST", "/api/gateway/backends/"+backend.ID+"/credentials", map[string]any{
+		"label":    "production pool key",
+		"key":      "sk-or-pooled-1234567890abcdef",
+		"priority": 5,
+		"enabled":  true,
+	})
+	createCredentialReq = withURLParam(createCredentialReq, "id", backend.ID)
+	testHandler.CreateGatewayBackendCredential(createCredentialW, createCredentialReq)
+	if createCredentialW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackendCredential: expected 201, got %d: %s", createCredentialW.Code, createCredentialW.Body.String())
+	}
+
+	var created struct {
+		ID             string `json:"id"`
+		BackendID      string `json:"backend_id"`
+		Label          string `json:"label"`
+		CredentialHint string `json:"credential_hint"`
+		Enabled        bool   `json:"enabled"`
+		Priority       int32  `json:"priority"`
+	}
+	if err := json.NewDecoder(createCredentialW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayBackendCredential: decode response: %v", err)
+	}
+	if created.ID == "" || created.BackendID != backend.ID {
+		t.Fatalf("CreateGatewayBackendCredential: response = %#v, want backend %s", created, backend.ID)
+	}
+	if created.CredentialHint != "sk-or-po...cdef" {
+		t.Fatalf("CreateGatewayBackendCredential: credential_hint = %q, want redacted hint", created.CredentialHint)
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/backends/"+backend.ID+"/credentials", nil)
+	listReq = withURLParam(listReq, "id", backend.ID)
+	testHandler.ListGatewayBackendCredentials(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayBackendCredentials: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+
+	var listed []map[string]any
+	if err := json.NewDecoder(listW.Body).Decode(&listed); err != nil {
+		t.Fatalf("ListGatewayBackendCredentials: decode response: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ListGatewayBackendCredentials: len = %d, want 1", len(listed))
+	}
+	if _, ok := listed[0]["encrypted_credential"]; ok {
+		t.Fatal("ListGatewayBackendCredentials: response must not expose encrypted_credential")
+	}
+	if _, ok := listed[0]["key"]; ok {
+		t.Fatal("ListGatewayBackendCredentials: response must not expose key")
+	}
+
+	disabled := false
+	updateW := httptest.NewRecorder()
+	updateReq := newRequest("PATCH", "/api/gateway/backends/"+backend.ID+"/credentials/"+created.ID, map[string]any{
+		"enabled":  disabled,
+		"priority": 20,
+	})
+	updateReq = withGatewayCredentialURLParams(updateReq, backend.ID, created.ID)
+	testHandler.UpdateGatewayBackendCredential(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayBackendCredential: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+
+	var updated struct {
+		ID       string `json:"id"`
+		Enabled  bool   `json:"enabled"`
+		Priority int32  `json:"priority"`
+	}
+	if err := json.NewDecoder(updateW.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateGatewayBackendCredential: decode response: %v", err)
+	}
+	if updated.ID != created.ID || updated.Enabled || updated.Priority != 20 {
+		t.Fatalf("UpdateGatewayBackendCredential: response = %#v, want disabled priority 20", updated)
+	}
+}
+
+func withGatewayCredentialURLParams(req *http.Request, backendID, credentialID string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", backendID)
+	rctx.URLParams.Add("credentialID", credentialID)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
 func TestGatewayDeleteBackendReturnsDeletedResponse(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -24,6 +24,101 @@ func TestGatewayCommandTree(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
 			}
 		})
+	}
+}
+
+func TestGatewayCredentialAddCommandCallsAPI(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/backends/backend-1/credentials" {
+			t.Errorf("path = %s, want /api/gateway/backends/backend-1/credentials", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":              "credential-1",
+			"backend_id":      "backend-1",
+			"label":           "prod pool",
+			"credential_hint": "sk-or-po...cdef",
+			"enabled":         true,
+			"priority":        5,
+			"created_at":      "2026-05-06T12:00:00Z",
+			"updated_at":      "2026-05-06T12:00:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(
+		root,
+		"gateway", "credential", "add", "backend-1",
+		"--workspace-id", "workspace-1",
+		"--key", "sk-or-pooled-1234567890abcdef",
+		"--label", "prod pool",
+		"--priority", "5",
+	)
+	if err != nil {
+		t.Fatalf("execute gateway credential add: %v", err)
+	}
+	if gotBody["key"] != "sk-or-pooled-1234567890abcdef" {
+		t.Fatalf("key = %v, want pooled key", gotBody["key"])
+	}
+	if gotBody["label"] != "prod pool" || gotBody["priority"] != float64(5) {
+		t.Fatalf("body = %#v, want label and priority", gotBody)
+	}
+	if !strings.Contains(out, "Added credential credential-1") {
+		t.Fatalf("output = %q, want added credential message", out)
+	}
+	if strings.Contains(out, "sk-or-pooled-1234567890abcdef") {
+		t.Fatalf("output leaked raw key: %q", out)
+	}
+}
+
+func TestGatewayCredentialsCommandListsBackendCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/backends/backend-1/credentials" {
+			t.Errorf("path = %s, want /api/gateway/backends/backend-1/credentials", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":              "credential-1",
+			"backend_id":      "backend-1",
+			"label":           "prod pool",
+			"credential_hint": "sk-or-po...cdef",
+			"enabled":         true,
+			"priority":        5,
+			"created_at":      "2026-05-06T12:00:00Z",
+			"updated_at":      "2026-05-06T12:00:00Z",
+		}})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "credentials", "backend-1", "--workspace-id", "workspace-1", "--output", "json")
+	if err != nil {
+		t.Fatalf("execute gateway credentials: %v", err)
+	}
+
+	var credentials []map[string]any
+	if err := json.Unmarshal([]byte(out), &credentials); err != nil {
+		t.Fatalf("decode output: %v\noutput: %s", err, out)
+	}
+	if len(credentials) != 1 || credentials[0]["credential_hint"] != "sk-or-po...cdef" {
+		t.Fatalf("unexpected credentials output: %#v", credentials)
+	}
+	if _, ok := credentials[0]["key"]; ok {
+		t.Fatalf("credentials output leaked key field: %#v", credentials[0])
 	}
 }
 

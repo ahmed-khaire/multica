@@ -120,6 +120,20 @@ export interface GatewayBackend {
   updated_at: string;
 }
 
+export interface GatewayBackendCredential {
+  id: string;
+  backend_id: string;
+  label: string;
+  credential_hint: string;
+  enabled: boolean;
+  priority: number;
+  last_used_at: string | null;
+  last_error_at: string | null;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface GatewaySettingsResponse {
   capture_policy: GatewayCapturePolicy | string;
   default_backend: GatewayBackend | null;
@@ -190,6 +204,20 @@ export interface UpdateGatewayBackendRequest {
   key?: string;
   enabled?: boolean;
   metadata?: Record<string, unknown>;
+}
+
+export interface CreateGatewayBackendCredentialRequest {
+  label?: string;
+  key: string;
+  enabled?: boolean;
+  priority?: number;
+}
+
+export interface UpdateGatewayBackendCredentialRequest {
+  label?: string;
+  key?: string;
+  enabled?: boolean;
+  priority?: number;
 }
 
 export interface DeleteGatewayBackendResponse {

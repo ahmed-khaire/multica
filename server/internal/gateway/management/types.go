@@ -41,6 +41,20 @@ type BackendResponse struct {
 	UpdatedAt      string         `json:"updated_at"`
 }
 
+type BackendCredentialResponse struct {
+	ID             string  `json:"id"`
+	BackendID      string  `json:"backend_id"`
+	Label          string  `json:"label"`
+	CredentialHint string  `json:"credential_hint"`
+	Enabled        bool    `json:"enabled"`
+	Priority       int32   `json:"priority"`
+	LastUsedAt     *string `json:"last_used_at"`
+	LastErrorAt    *string `json:"last_error_at"`
+	LastError      string  `json:"last_error"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
 type SettingsResponse struct {
 	CapturePolicy  string           `json:"capture_policy"`
 	DefaultBackend *BackendResponse `json:"default_backend"`
@@ -284,6 +298,27 @@ type UpdateBackendInput struct {
 	Key         *string
 	Enabled     *bool
 	Metadata    map[string]any
+}
+
+type CreateBackendCredentialInput struct {
+	WorkspaceID string
+	ActorUserID string
+	BackendID   string
+	Label       string
+	Key         string
+	Enabled     bool
+	Priority    int32
+}
+
+type UpdateBackendCredentialInput struct {
+	WorkspaceID  string
+	ActorUserID  string
+	BackendID    string
+	CredentialID string
+	Label        *string
+	Key          *string
+	Enabled      *bool
+	Priority     *int32
 }
 
 type CapturePolicyInput struct {

@@ -35,6 +35,20 @@ type gatewayUpdateBackendRequest struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
+type gatewayCreateBackendCredentialRequest struct {
+	Label    string `json:"label"`
+	Key      string `json:"key"`
+	Enabled  *bool  `json:"enabled"`
+	Priority int32  `json:"priority"`
+}
+
+type gatewayUpdateBackendCredentialRequest struct {
+	Label    *string `json:"label"`
+	Key      *string `json:"key"`
+	Enabled  *bool   `json:"enabled"`
+	Priority *int32  `json:"priority"`
+}
+
 type gatewaySetDefaultRequest struct {
 	BackendSlug string `json:"backend_slug"`
 }
@@ -138,6 +152,16 @@ func (h *Handler) ListGatewayBackends(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.ListBackends(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) ListGatewayBackendCredentials(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListBackendCredentials(r.Context(), workspaceID, chi.URLParam(r, "id"))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
@@ -275,6 +299,59 @@ func (h *Handler) UpdateGatewayBackend(w http.ResponseWriter, r *http.Request) {
 		Key:         req.Key,
 		Enabled:     req.Enabled,
 		Metadata:    req.Metadata,
+	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) CreateGatewayBackendCredential(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayCreateBackendCredentialRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	resp, err := h.Gateway.CreateBackendCredential(r.Context(), management.CreateBackendCredentialInput{
+		WorkspaceID: workspaceID,
+		ActorUserID: userID,
+		BackendID:   chi.URLParam(r, "id"),
+		Label:       req.Label,
+		Key:         req.Key,
+		Enabled:     enabled,
+		Priority:    req.Priority,
+	})
+	h.writeGatewayResult(w, http.StatusCreated, resp, err)
+}
+
+func (h *Handler) UpdateGatewayBackendCredential(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayUpdateBackendCredentialRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpdateBackendCredential(r.Context(), management.UpdateBackendCredentialInput{
+		WorkspaceID:  workspaceID,
+		ActorUserID:  userID,
+		BackendID:    chi.URLParam(r, "id"),
+		CredentialID: chi.URLParam(r, "credentialID"),
+		Label:        req.Label,
+		Key:          req.Key,
+		Enabled:      req.Enabled,
+		Priority:     req.Priority,
 	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }

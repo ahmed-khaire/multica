@@ -1125,6 +1125,194 @@ func (s *Service) ListBackends(ctx context.Context, workspaceID string) ([]Backe
 	return responses, nil
 }
 
+func (s *Service) ListBackendCredentials(ctx context.Context, workspaceID, backendID string) ([]BackendCredentialResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	backendUUID, err := uuidValue(backendID, "backend_id")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.queries.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
+		WorkspaceID: workspaceUUID,
+		ID:          backendUUID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrGatewayBackendNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.queries.ListGatewayBackendCredentialsForBackend(ctx, db.ListGatewayBackendCredentialsForBackendParams{
+		WorkspaceID: workspaceUUID,
+		BackendID:   backendUUID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]BackendCredentialResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, backendCredentialResponse(row))
+	}
+	return items, nil
+}
+
+func (s *Service) CreateBackendCredential(ctx context.Context, input CreateBackendCredentialInput) (BackendCredentialResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	backendUUID, err := uuidValue(input.BackendID, "backend_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	credential := strings.TrimSpace(input.Key)
+	if credential == "" {
+		return BackendCredentialResponse{}, fmt.Errorf("%w: credential is required", ErrInvalidGatewayBackend)
+	}
+	priority := input.Priority
+	if priority <= 0 {
+		priority = 100
+	}
+	label := strings.TrimSpace(input.Label)
+	if label == "" {
+		label = "Gateway credential"
+	}
+
+	box, err := s.loadBox()
+	if err != nil {
+		return BackendCredentialResponse{}, normalizeSecretError(err)
+	}
+	encryptedCredential, err := box.EncryptString(credential)
+	if err != nil {
+		return BackendCredentialResponse{}, normalizeSecretError(err)
+	}
+
+	var created db.GatewayBackendCredential
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		if _, err := q.GetGatewayBackendByID(ctx, db.GetGatewayBackendByIDParams{
+			WorkspaceID: workspaceUUID,
+			ID:          backendUUID,
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return ErrGatewayBackendNotFound
+		} else if err != nil {
+			return err
+		}
+		row, err := q.CreateGatewayBackendCredential(ctx, db.CreateGatewayBackendCredentialParams{
+			WorkspaceID:         workspaceUUID,
+			BackendID:           backendUUID,
+			Label:               label,
+			EncryptedCredential: encryptedCredential,
+			CredentialHint:      CredentialHint(credential),
+			Enabled:             input.Enabled,
+			Priority:            priority,
+			CreatedBy:           actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		created = row
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.backend_credential.create", "gateway_backend_credential", uuidString(row.ID), nil, backendCredentialResponse(row))
+	}); err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	return backendCredentialResponse(created), nil
+}
+
+func (s *Service) UpdateBackendCredential(ctx context.Context, input UpdateBackendCredentialInput) (BackendCredentialResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	backendUUID, err := uuidValue(input.BackendID, "backend_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	credentialUUID, err := uuidValue(input.CredentialID, "credential_id")
+	if err != nil {
+		return BackendCredentialResponse{}, err
+	}
+
+	var updated db.GatewayBackendCredential
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		current, err := q.GetGatewayBackendCredentialByID(ctx, db.GetGatewayBackendCredentialByIDParams{
+			WorkspaceID: workspaceUUID,
+			BackendID:   backendUUID,
+			ID:          credentialUUID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGatewayBackendNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		label := current.Label
+		if input.Label != nil {
+			label = strings.TrimSpace(*input.Label)
+			if label == "" {
+				label = "Gateway credential"
+			}
+		}
+		encryptedCredential := current.EncryptedCredential
+		credentialHint := current.CredentialHint
+		if input.Key != nil {
+			credential := strings.TrimSpace(*input.Key)
+			if credential == "" {
+				return fmt.Errorf("%w: credential is required", ErrInvalidGatewayBackend)
+			}
+			box, err := s.loadBox()
+			if err != nil {
+				return normalizeSecretError(err)
+			}
+			encryptedCredential, err = box.EncryptString(credential)
+			if err != nil {
+				return normalizeSecretError(err)
+			}
+			credentialHint = CredentialHint(credential)
+		}
+		enabled := current.Enabled
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		priority := current.Priority
+		if input.Priority != nil {
+			priority = *input.Priority
+			if priority <= 0 {
+				priority = 100
+			}
+		}
+
+		row, err := q.UpdateGatewayBackendCredential(ctx, db.UpdateGatewayBackendCredentialParams{
+			WorkspaceID:         workspaceUUID,
+			BackendID:           backendUUID,
+			ID:                  credentialUUID,
+			Label:               label,
+			EncryptedCredential: encryptedCredential,
+			CredentialHint:      credentialHint,
+			Enabled:             enabled,
+			Priority:            priority,
+			UpdatedBy:           actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		updated = row
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.backend_credential.update", "gateway_backend_credential", uuidString(row.ID), backendCredentialResponse(current), backendCredentialResponse(row))
+	}); err != nil {
+		return BackendCredentialResponse{}, err
+	}
+	return backendCredentialResponse(updated), nil
+}
+
 func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (BackendResponse, error) {
 	normalized, credential, err := normalizeCreateBackendInput(input)
 	if err != nil {
@@ -2472,6 +2660,22 @@ func backendResponse(row db.GatewayBackend, defaultID pgtype.UUID) BackendRespon
 		Enabled:        row.Enabled,
 		IsDefault:      defaultID.Valid && row.ID == defaultID,
 		Metadata:       metadata,
+		CreatedAt:      textTimestamp(row.CreatedAt),
+		UpdatedAt:      textTimestamp(row.UpdatedAt),
+	}
+}
+
+func backendCredentialResponse(row db.GatewayBackendCredential) BackendCredentialResponse {
+	return BackendCredentialResponse{
+		ID:             uuidString(row.ID),
+		BackendID:      uuidString(row.BackendID),
+		Label:          row.Label,
+		CredentialHint: row.CredentialHint,
+		Enabled:        row.Enabled,
+		Priority:       row.Priority,
+		LastUsedAt:     optionalTimestamp(row.LastUsedAt),
+		LastErrorAt:    optionalTimestamp(row.LastErrorAt),
+		LastError:      row.LastError,
 		CreatedAt:      textTimestamp(row.CreatedAt),
 		UpdatedAt:      textTimestamp(row.UpdatedAt),
 	}

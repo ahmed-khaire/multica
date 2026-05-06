@@ -84,6 +84,32 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewayBackends,
 	}
 
+	credentialsCmd := &cobra.Command{
+		Use:   "credentials <backend-id>",
+		Short: "List Observer Gateway backend credentials",
+		Args:  exactArgs(1),
+		RunE:  runGatewayCredentials,
+	}
+
+	credentialCmd := &cobra.Command{
+		Use:   "credential",
+		Short: "Manage Observer Gateway backend credentials",
+	}
+
+	credentialAddCmd := &cobra.Command{
+		Use:   "add <backend-id>",
+		Short: "Add an Observer Gateway backend credential",
+		Args:  exactArgs(1),
+		RunE:  runGatewayCredentialAdd,
+	}
+
+	credentialDisableCmd := &cobra.Command{
+		Use:   "disable <backend-id> <credential-id>",
+		Short: "Disable an Observer Gateway backend credential",
+		Args:  exactArgs(2),
+		RunE:  runGatewayCredentialDisable,
+	}
+
 	defaultCmd := &cobra.Command{
 		Use:   "default <backend-slug>",
 		Short: "Set the default Observer Gateway backend",
@@ -108,8 +134,12 @@ func newGatewayCommand() *cobra.Command {
 	cmd.AddCommand(revokeIngestKeyCmd)
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(backendsCmd)
+	cmd.AddCommand(credentialsCmd)
+	cmd.AddCommand(credentialCmd)
 	cmd.AddCommand(defaultCmd)
 	cmd.AddCommand(policyCmd)
+	credentialCmd.AddCommand(credentialAddCmd)
+	credentialCmd.AddCommand(credentialDisableCmd)
 
 	statusCmd.Flags().String("output", "table", "Output format: table or json")
 	doctorCmd.Flags().String("output", "table", "Output format: table or json")
@@ -129,6 +159,12 @@ func newGatewayCommand() *cobra.Command {
 	addCmd.Flags().String("output", "table", "Output format: table or json")
 
 	backendsCmd.Flags().String("output", "table", "Output format: table or json")
+	credentialsCmd.Flags().String("output", "table", "Output format: table or json")
+	credentialAddCmd.Flags().String("key", "", "Upstream provider API key")
+	credentialAddCmd.Flags().String("label", "", "Credential label")
+	credentialAddCmd.Flags().Int32("priority", 100, "Routing priority, lower values are tried first")
+	credentialAddCmd.Flags().String("output", "table", "Output format: table or json")
+	credentialDisableCmd.Flags().String("output", "table", "Output format: table or json")
 	defaultCmd.Flags().String("output", "table", "Output format: table or json")
 	policyCmd.Flags().String("output", "table", "Output format: table or json")
 
@@ -147,6 +183,20 @@ type gatewayBackendDTO struct {
 	Metadata       map[string]any `json:"metadata"`
 	CreatedAt      string         `json:"created_at"`
 	UpdatedAt      string         `json:"updated_at"`
+}
+
+type gatewayBackendCredentialDTO struct {
+	ID             string  `json:"id"`
+	BackendID      string  `json:"backend_id"`
+	Label          string  `json:"label"`
+	CredentialHint string  `json:"credential_hint"`
+	Enabled        bool    `json:"enabled"`
+	Priority       int32   `json:"priority"`
+	LastUsedAt     *string `json:"last_used_at"`
+	LastErrorAt    *string `json:"last_error_at"`
+	LastError      string  `json:"last_error"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 type gatewayStatusDTO struct {
@@ -564,6 +614,106 @@ func runGatewayBackends(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	cli.PrintTable(cmd.OutOrStdout(), []string{"SLUG", "TYPE", "BASE URL", "ENABLED", "DEFAULT", "KEY"}, rows)
+	return nil
+}
+
+func runGatewayCredentials(cmd *cobra.Command, args []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	backendID := strings.TrimSpace(args[0])
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var credentials []gatewayBackendCredentialDTO
+	path := "/api/gateway/backends/" + url.PathEscape(backendID) + "/credentials"
+	if err := client.GetJSON(ctx, path, &credentials); err != nil {
+		return fmt.Errorf("list gateway backend credentials: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), credentials)
+	}
+
+	rows := make([][]string, 0, len(credentials))
+	for _, credential := range credentials {
+		rows = append(rows, []string{
+			credential.ID,
+			credential.Label,
+			credential.CredentialHint,
+			yesNo(credential.Enabled),
+			strconv.Itoa(int(credential.Priority)),
+			nullableString(credential.LastUsedAt),
+			nullableString(credential.LastErrorAt),
+		})
+	}
+	cli.PrintTable(cmd.OutOrStdout(), []string{"ID", "LABEL", "KEY", "ENABLED", "PRIORITY", "LAST USED", "LAST ERROR"}, rows)
+	return nil
+}
+
+func runGatewayCredentialAdd(cmd *cobra.Command, args []string) error {
+	key, _ := cmd.Flags().GetString("key")
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("--key is required")
+	}
+
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	body := map[string]any{
+		"key":     key,
+		"enabled": true,
+	}
+	if label, _ := cmd.Flags().GetString("label"); strings.TrimSpace(label) != "" {
+		body["label"] = strings.TrimSpace(label)
+	}
+	if priority, _ := cmd.Flags().GetInt32("priority"); priority > 0 {
+		body["priority"] = priority
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	backendID := strings.TrimSpace(args[0])
+	var resp gatewayBackendCredentialDTO
+	path := "/api/gateway/backends/" + url.PathEscape(backendID) + "/credentials"
+	if err := client.PostJSON(ctx, path, body, &resp); err != nil {
+		return fmt.Errorf("add gateway backend credential: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Added credential %s (%s)\n", resp.ID, resp.CredentialHint)
+	return nil
+}
+
+func runGatewayCredentialDisable(cmd *cobra.Command, args []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	backendID := strings.TrimSpace(args[0])
+	credentialID := strings.TrimSpace(args[1])
+	var resp gatewayBackendCredentialDTO
+	path := "/api/gateway/backends/" + url.PathEscape(backendID) + "/credentials/" + url.PathEscape(credentialID)
+	if err := client.PatchJSON(ctx, path, map[string]any{"enabled": false}, &resp); err != nil {
+		return fmt.Errorf("disable gateway backend credential: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Disabled credential %s\n", credentialID)
 	return nil
 }
 
