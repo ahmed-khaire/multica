@@ -94,6 +94,8 @@ The daemon auto-detects available agent CLIs (`claude`, `codex`, `openclaw`, `op
 
 See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference, daemon configuration, and advanced usage.
 
+For enterprise model routing and observability, see the [Gateway Acceptance Checklist](docs/gateway-acceptance.md) for validating managed backends, Gateway keys, OpenAI/Anthropic-compatible traffic, streaming, telemetry, exports, and audit.
+
 ## Quickstart
 
 Once you have the CLI installed (or signed up for [Multica Cloud](https://multica.ai)), follow these steps to assign your first task to an agent:
