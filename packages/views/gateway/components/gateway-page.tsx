@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   Activity,
@@ -31,13 +31,16 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateGatewayBackendRequest,
+  CreateGatewayBackendCredentialRequest,
   CreateGatewayGovernancePolicyRequest,
   GatewayAuditLogItem,
   GatewayBackend,
+  GatewayBackendCredential,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
   GatewayDoctorResponse,
   GatewayEvidenceItem,
+  GatewayExportResponse,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -58,6 +61,7 @@ import type {
   GatewayProviderRisk,
   UpsertGatewayProviderRiskRequest,
   UpdateGatewayBackendRequest,
+  UpdateGatewayBackendCredentialRequest,
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -65,6 +69,7 @@ import { api } from "@multica/core/api";
 import {
   gatewayKeys,
   gatewayAuditOptions,
+  gatewayBackendCredentialsOptions,
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
   gatewayDoctorOptions,
@@ -556,6 +561,231 @@ function policyExceptionScopeLabel(scope: unknown): string {
   return `${resourceType}: ${resource}`;
 }
 
+function gatewayExportSummary(exportData: GatewayExportResponse): string {
+  const generatedDate = new Date(exportData.generated_at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `Export generated ${generatedDate}: ${formatCount(exportData.overview.summary.session_count)} sessions, ${formatCount(exportData.overview.summary.llm_call_count)} LLM calls`;
+}
+
+function credentialRateStatus(credential: GatewayBackendCredential): {
+  label: string;
+  variant: "secondary" | "destructive" | "outline";
+} {
+  if (credential.rate_limited_until) return { label: "rate limited", variant: "destructive" };
+  if (!credential.enabled) return { label: "disabled", variant: "outline" };
+  return { label: "ready", variant: "secondary" };
+}
+
+function GatewayCredentialPool({
+  backend,
+  canManage,
+  colSpan,
+  wsId,
+}: {
+  backend: GatewayBackend;
+  canManage: boolean;
+  colSpan: number;
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const label = gatewayBackendLabel(backend);
+  const credentialsQuery = useQuery(gatewayBackendCredentialsOptions(wsId, backend.id));
+  const credentials = credentialsQuery.data ?? [];
+  const [credentialLabel, setCredentialLabel] = useState("");
+  const [credentialPriority, setCredentialPriority] = useState("100");
+  const [credentialKey, setCredentialKey] = useState("");
+
+  const invalidateCredentials = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.backendCredentials(wsId, backend.id) });
+  };
+
+  const addCredentialMutation = useMutation({
+    mutationFn: (input: CreateGatewayBackendCredentialRequest) =>
+      api.createGatewayBackendCredential(backend.id, input),
+    onSuccess: () => {
+      setCredentialLabel("");
+      setCredentialPriority("100");
+      setCredentialKey("");
+      invalidateCredentials();
+    },
+  });
+
+  const updateCredentialMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateGatewayBackendCredentialRequest }) =>
+      api.updateGatewayBackendCredential(backend.id, id, input),
+    onSuccess: invalidateCredentials,
+  });
+
+  const submitCredential = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const priority = Number.parseInt(credentialPriority, 10);
+    addCredentialMutation.mutate({
+      label: credentialLabel.trim(),
+      key: credentialKey.trim(),
+      priority: Number.isFinite(priority) ? priority : 100,
+      enabled: true,
+    });
+  };
+
+  const toggleCredential = (credential: GatewayBackendCredential) => {
+    updateCredentialMutation.mutate({
+      id: credential.id,
+      input: { enabled: !credential.enabled },
+    });
+  };
+
+  if (!canManage) return null;
+
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan} className="bg-muted/20 p-0">
+        <div className="space-y-3 border-t p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Credential pool</p>
+              <p className="text-xs text-muted-foreground">
+                Route traffic across enterprise-managed keys without showing raw provider secrets.
+              </p>
+            </div>
+            <form className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_minmax(0,1.2fr)_auto]" onSubmit={submitCredential}>
+              <div className="space-y-1">
+                <Label htmlFor={`gateway-credential-label-${backend.id}`} className="sr-only">
+                  Credential label for {label}
+                </Label>
+                <Input
+                  id={`gateway-credential-label-${backend.id}`}
+                  aria-label={`Credential label for ${label}`}
+                  value={credentialLabel}
+                  onChange={(event) => setCredentialLabel(event.target.value)}
+                  placeholder="Label"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`gateway-credential-priority-${backend.id}`} className="sr-only">
+                  Credential priority for {label}
+                </Label>
+                <Input
+                  id={`gateway-credential-priority-${backend.id}`}
+                  aria-label={`Credential priority for ${label}`}
+                  value={credentialPriority}
+                  onChange={(event) => setCredentialPriority(event.target.value)}
+                  inputMode="numeric"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`gateway-credential-key-${backend.id}`} className="sr-only">
+                  Credential API key for {label}
+                </Label>
+                <Input
+                  id={`gateway-credential-key-${backend.id}`}
+                  aria-label={`Credential API key for ${label}`}
+                  value={credentialKey}
+                  onChange={(event) => setCredentialKey(event.target.value)}
+                  placeholder="Provider API key"
+                  autoComplete="off"
+                  type="password"
+                />
+              </div>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={addCredentialMutation.isPending || !credentialKey.trim()}
+                aria-label={`Add credential for ${label}`}
+              >
+                <KeyRound className="size-3.5" />
+                Add
+              </Button>
+            </form>
+          </div>
+          {credentialsQuery.isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 2 }).map((_, index) => (
+                <Skeleton key={index} className="h-10 rounded-md" />
+              ))}
+            </div>
+          ) : credentials.length === 0 ? (
+            <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+              No additional credentials. This backend uses its primary configured key.
+            </div>
+          ) : (
+            <Table aria-label={`${label} credential pool`}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Credential</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Rate limit</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead>Last error</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {credentials.map((credential) => {
+                  const status = credentialRateStatus(credential);
+                  return (
+                    <TableRow key={credential.id}>
+                      <TableCell>
+                        <div className="flex max-w-64 flex-col">
+                          <span className="truncate font-medium">{credential.label || "Unlabeled key"}</span>
+                          <span className="truncate text-xs text-muted-foreground">{credential.credential_hint}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="tabular-nums">{credential.priority}</TableCell>
+                      <TableCell>
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm tabular-nums">
+                          {credential.rate_limit_remaining == null ? "unknown" : credential.rate_limit_remaining}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          reset {formatNullableTime(credential.rate_limit_reset_at)}
+                        </span>
+                      </TableCell>
+                      <TableCell>{formatNullableTime(credential.last_used_at)}</TableCell>
+                      <TableCell>
+                        <span className="line-clamp-2 max-w-64 text-sm text-muted-foreground">
+                          {credential.last_error || "None"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={updateCredentialMutation.isPending && updateCredentialMutation.variables?.id === credential.id}
+                          onClick={() => toggleCredential(credential)}
+                          aria-label={`${credential.enabled ? "Disable" : "Enable"} ${credential.label || "credential"}`}
+                        >
+                          {credential.enabled ? "Disable" : "Enable"}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+          {credentialsQuery.error instanceof Error ? (
+            <p className="text-xs text-destructive">{credentialsQuery.error.message}</p>
+          ) : null}
+          {addCredentialMutation.error instanceof Error ? (
+            <p className="text-xs text-destructive">{addCredentialMutation.error.message}</p>
+          ) : null}
+          {updateCredentialMutation.error instanceof Error ? (
+            <p className="text-xs text-destructive">{updateCredentialMutation.error.message}</p>
+          ) : null}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function GatewayBackendsTable({
   backends,
   canManage,
@@ -576,6 +806,7 @@ function GatewayBackendsTable({
   setEditEnabled,
   setEditKey,
   setEditName,
+  wsId,
 }: {
   backends: GatewayBackend[];
   canManage: boolean;
@@ -596,7 +827,10 @@ function GatewayBackendsTable({
   setEditEnabled: (value: boolean) => void;
   setEditKey: (value: string) => void;
   setEditName: (value: string) => void;
+  wsId: string;
 }) {
+  const [credentialBackendId, setCredentialBackendId] = useState("");
+
   if (backends.length === 0) {
     return (
       <div className="flex h-40 flex-col items-center justify-center border-t text-center">
@@ -627,68 +861,143 @@ function GatewayBackendsTable({
           const editNameId = `gateway-edit-name-${backend.id}`;
           const editBaseUrlId = `gateway-edit-base-url-${backend.id}`;
           const editKeyId = `gateway-edit-key-${backend.id}`;
+          const credentialsExpanded = credentialBackendId === backend.id;
+          const toggleCredentials = () => {
+            setCredentialBackendId(credentialsExpanded ? "" : backend.id);
+          };
 
           if (isEditing) {
             return (
-              <TableRow key={backend.id}>
+              <Fragment key={backend.id}>
+                <TableRow>
+                  <TableCell>
+                    <div className="w-56 space-y-1">
+                      <Label htmlFor={editNameId} className="sr-only">
+                        Edit backend name
+                      </Label>
+                      <Input
+                        id={editNameId}
+                        aria-label="Edit backend name"
+                        value={editName}
+                        onChange={(event) => setEditName(event.target.value)}
+                        autoComplete="off"
+                      />
+                      <p className="truncate text-xs text-muted-foreground">{backend.slug}</p>
+                    </div>
+                  </TableCell>
+                  <TableCell>{backend.backend_type}</TableCell>
+                  <TableCell>
+                    <div className="w-72">
+                      <Label htmlFor={editBaseUrlId} className="sr-only">
+                        Edit backend base URL
+                      </Label>
+                      <Input
+                        id={editBaseUrlId}
+                        aria-label="Edit backend base URL"
+                        value={editBaseUrl}
+                        onChange={(event) => setEditBaseUrl(event.target.value)}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="w-44">
+                      <Label htmlFor={editKeyId} className="sr-only">
+                        Rotate backend API key
+                      </Label>
+                      <Input
+                        id={editKeyId}
+                        aria-label="Rotate backend API key"
+                        value={editKey}
+                        onChange={(event) => setEditKey(event.target.value)}
+                        placeholder="Leave unchanged"
+                        autoComplete="off"
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={editEnabled ? "outline" : "secondary"}
+                      onClick={() => setEditEnabled(!editEnabled)}
+                    >
+                      {editEnabled ? "Disable backend" : "Enable backend"}
+                    </Button>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {backend.is_default ? (
+                      <Badge variant="secondary">Default</Badge>
+                    ) : (
+                      <Badge variant="outline">Optional</Badge>
+                    )}
+                  </TableCell>
+                  {canManage ? (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          disabled={pendingEditId === backend.id || !editBaseUrl.trim()}
+                          onClick={() => onSaveEdit(backend)}
+                          aria-label="Save backend changes"
+                          title="Save backend changes"
+                        >
+                          <Save className="size-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={pendingEditId === backend.id}
+                          onClick={onCancelEdit}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+                {canManage && credentialsExpanded ? (
+                  <GatewayCredentialPool backend={backend} canManage colSpan={7} wsId={wsId} />
+                ) : null}
+              </Fragment>
+            );
+          }
+
+          return (
+            <Fragment key={backend.id}>
+              <TableRow>
                 <TableCell>
-                  <div className="w-56 space-y-1">
-                    <Label htmlFor={editNameId} className="sr-only">
-                      Edit backend name
-                    </Label>
-                    <Input
-                      id={editNameId}
-                      aria-label="Edit backend name"
-                      value={editName}
-                      onChange={(event) => setEditName(event.target.value)}
-                      autoComplete="off"
-                    />
-                    <p className="truncate text-xs text-muted-foreground">{backend.slug}</p>
+                  <div className="flex max-w-56 flex-col">
+                    <span className="truncate font-medium">{label}</span>
+                    <span className="truncate text-xs text-muted-foreground">{backend.slug}</span>
                   </div>
                 </TableCell>
                 <TableCell>{backend.backend_type}</TableCell>
                 <TableCell>
-                  <div className="w-72">
-                    <Label htmlFor={editBaseUrlId} className="sr-only">
-                      Edit backend base URL
-                    </Label>
-                    <Input
-                      id={editBaseUrlId}
-                      aria-label="Edit backend base URL"
-                      value={editBaseUrl}
-                      onChange={(event) => setEditBaseUrl(event.target.value)}
-                      autoComplete="off"
-                    />
-                  </div>
+                  <span className="block max-w-72 truncate">{backend.base_url}</span>
                 </TableCell>
+                <TableCell>{backend.credential_hint}</TableCell>
                 <TableCell>
-                  <div className="w-44">
-                    <Label htmlFor={editKeyId} className="sr-only">
-                      Rotate backend API key
-                    </Label>
-                    <Input
-                      id={editKeyId}
-                      aria-label="Rotate backend API key"
-                      value={editKey}
-                      onChange={(event) => setEditKey(event.target.value)}
-                      placeholder="Leave unchanged"
-                      autoComplete="off"
-                    />
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant={editEnabled ? "outline" : "secondary"}
-                    onClick={() => setEditEnabled(!editEnabled)}
-                  >
-                    {editEnabled ? "Disable backend" : "Enable backend"}
-                  </Button>
+                  <Badge variant={backend.enabled ? "secondary" : "outline"}>
+                    {backend.enabled ? "enabled" : "disabled"}
+                  </Badge>
                 </TableCell>
                 <TableCell className="text-right">
                   {backend.is_default ? (
                     <Badge variant="secondary">Default</Badge>
+                  ) : canManage ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={pendingDefaultSlug === backend.slug}
+                      onClick={() => onSetDefault(backend.slug)}
+                      aria-label={`Make ${label} default`}
+                    >
+                      Make default
+                    </Button>
                   ) : (
                     <Badge variant="outline">Optional</Badge>
                   )}
@@ -699,94 +1008,44 @@ function GatewayBackendsTable({
                       <Button
                         type="button"
                         size="icon-xs"
-                        disabled={pendingEditId === backend.id || !editBaseUrl.trim()}
-                        onClick={() => onSaveEdit(backend)}
-                        aria-label="Save backend changes"
-                        title="Save backend changes"
+                        variant={credentialsExpanded ? "secondary" : "ghost"}
+                        disabled={Boolean(editingBackendId)}
+                        onClick={toggleCredentials}
+                        aria-label={`Manage credentials for ${label}`}
+                        title={`Manage credentials for ${label}`}
                       >
-                        <Save className="size-3" />
+                        <KeyRound className="size-3" />
                       </Button>
                       <Button
                         type="button"
-                        size="xs"
+                        size="icon-xs"
                         variant="ghost"
-                        disabled={pendingEditId === backend.id}
-                        onClick={onCancelEdit}
+                        disabled={Boolean(editingBackendId)}
+                        onClick={() => onStartEdit(backend)}
+                        aria-label={`Edit ${label}`}
+                        title={`Edit ${label}`}
                       >
-                        Cancel
+                        <Pencil className="size-3" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="destructive"
+                        disabled={backend.is_default || pendingDeleteId === backend.id || Boolean(editingBackendId)}
+                        onClick={() => onDeleteBackend(backend)}
+                        aria-label={`Delete ${label}`}
+                        title={backend.is_default ? "Default backends cannot be deleted" : `Delete ${label}`}
+                      >
+                        <Trash2 className="size-3" />
                       </Button>
                     </div>
                   </TableCell>
                 ) : null}
               </TableRow>
-            );
-          }
-
-          return (
-            <TableRow key={backend.id}>
-              <TableCell>
-                <div className="flex max-w-56 flex-col">
-                  <span className="truncate font-medium">{label}</span>
-                  <span className="truncate text-xs text-muted-foreground">{backend.slug}</span>
-                </div>
-              </TableCell>
-              <TableCell>{backend.backend_type}</TableCell>
-              <TableCell>
-                <span className="block max-w-72 truncate">{backend.base_url}</span>
-              </TableCell>
-              <TableCell>{backend.credential_hint}</TableCell>
-              <TableCell>
-                <Badge variant={backend.enabled ? "secondary" : "outline"}>
-                  {backend.enabled ? "enabled" : "disabled"}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-right">
-                {backend.is_default ? (
-                  <Badge variant="secondary">Default</Badge>
-                ) : canManage ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={pendingDefaultSlug === backend.slug}
-                    onClick={() => onSetDefault(backend.slug)}
-                    aria-label={`Make ${label} default`}
-                  >
-                    Make default
-                  </Button>
-                ) : (
-                  <Badge variant="outline">Optional</Badge>
-                )}
-              </TableCell>
-              {canManage ? (
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={Boolean(editingBackendId)}
-                      onClick={() => onStartEdit(backend)}
-                      aria-label={`Edit ${label}`}
-                      title={`Edit ${label}`}
-                    >
-                      <Pencil className="size-3" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="destructive"
-                      disabled={backend.is_default || pendingDeleteId === backend.id || Boolean(editingBackendId)}
-                      onClick={() => onDeleteBackend(backend)}
-                      aria-label={`Delete ${label}`}
-                      title={backend.is_default ? "Default backends cannot be deleted" : `Delete ${label}`}
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
-                  </div>
-                </TableCell>
+              {canManage && credentialsExpanded ? (
+                <GatewayCredentialPool backend={backend} canManage colSpan={7} wsId={wsId} />
               ) : null}
-            </TableRow>
+            </Fragment>
           );
         })}
       </TableBody>
@@ -819,6 +1078,8 @@ function GatewayConfigurationSetup({
   const [editBaseUrl, setEditBaseUrl] = useState("");
   const [editKey, setEditKey] = useState("");
   const [editEnabled, setEditEnabled] = useState(true);
+  const [exportWindow, setExportWindow] = useState("24h");
+  const [lastExport, setLastExport] = useState<GatewayExportResponse | null>(null);
 
   const invalidateConfig = () => {
     void qc.invalidateQueries({ queryKey: gatewayKeys.status(wsId) });
@@ -873,6 +1134,11 @@ function GatewayConfigurationSetup({
   const policyMutation = useMutation({
     mutationFn: (policy: GatewayCapturePolicy) => api.updateGatewayCapturePolicy(policy),
     onSuccess: invalidateConfig,
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: (since: string) => api.exportGatewayData({ since, limit: 50 }),
+    onSuccess: (exportData) => setLastExport(exportData),
   });
 
   const status = statusQuery.data as GatewayStatusResponse | undefined;
@@ -942,7 +1208,7 @@ function GatewayConfigurationSetup({
         </Card>
       ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid gap-3 xl:grid-cols-4">
         <Card size="sm" className="rounded-lg">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
@@ -1055,6 +1321,58 @@ function GatewayConfigurationSetup({
             ) : null}
           </CardContent>
         </Card>
+
+        {canManage ? (
+          <Card size="sm" className="rounded-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <DatabaseZap className="size-4 text-muted-foreground" />
+                Export Controls
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <div className="space-y-1.5">
+                  <Label htmlFor="gateway-export-window">Gateway export window</Label>
+                  <NativeSelect
+                    id="gateway-export-window"
+                    className="w-full"
+                    value={exportWindow}
+                    onChange={(event) => setExportWindow(event.target.value)}
+                  >
+                    {windowOptions.map((option) => (
+                      <NativeSelectOption key={option.value} value={option.value}>
+                        {option.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={exportMutation.isPending}
+                    onClick={() => exportMutation.mutate(exportWindow)}
+                  >
+                    <DatabaseZap className="size-3.5" />
+                    Export Gateway data
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Produces the same observability bundle used by audit review and compliance workflows.
+              </p>
+              {lastExport ? (
+                <p className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                  {gatewayExportSummary(lastExport)}
+                </p>
+              ) : null}
+              {exportMutation.error instanceof Error ? (
+                <p className="text-xs text-destructive">{exportMutation.error.message}</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       <div className={cn("grid gap-3", canManage ? "xl:grid-cols-[360px_minmax(0,1fr)]" : "xl:grid-cols-1")}>
@@ -1177,6 +1495,7 @@ function GatewayConfigurationSetup({
                 setEditEnabled={setEditEnabled}
                 setEditKey={setEditKey}
                 setEditName={setEditName}
+                wsId={wsId}
               />
             )}
             {backendsQuery.error instanceof Error ? (

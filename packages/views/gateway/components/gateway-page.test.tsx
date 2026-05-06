@@ -6,6 +6,8 @@ import { WorkspaceIdProvider } from "@multica/core/hooks";
 import type {
   GatewayLLMCallListResponse,
   GatewayBackend,
+  GatewayBackendCredential,
+  GatewayExportResponse,
   GatewayAuditLogItem,
   GatewayControlMappingItem,
   GatewayDoctorResponse,
@@ -24,6 +26,8 @@ import type {
   GatewayStatusResponse,
   GatewayUserKeyResponse,
 } from "@multica/core/types";
+
+vi.setConfig({ testTimeout: 20000 });
 
 const { mockApi, mockAuthState } = vi.hoisted(() => ({
   mockAuthState: {
@@ -68,6 +72,10 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
     deleteGatewayBackend: vi.fn(),
+    listGatewayBackendCredentials: vi.fn(),
+    createGatewayBackendCredential: vi.fn(),
+    updateGatewayBackendCredential: vi.fn(),
+    exportGatewayData: vi.fn(),
     upsertGatewayProviderRisk: vi.fn(),
     setGatewayDefaultBackend: vi.fn(),
     updateGatewayCapturePolicy: vi.fn(),
@@ -265,6 +273,41 @@ const gatewayBackends: GatewayBackend[] = [
     metadata: {},
     created_at: "2026-05-04T09:30:00Z",
     updated_at: "2026-05-04T09:30:00Z",
+  },
+];
+
+const gatewayBackendCredentials: GatewayBackendCredential[] = [
+  {
+    id: "credential-openrouter-primary",
+    backend_id: "backend-openrouter",
+    label: "Primary workspace key",
+    credential_hint: "sk-or-12...cdef",
+    enabled: true,
+    priority: 10,
+    last_used_at: "2026-05-04T12:10:00Z",
+    last_error_at: null,
+    last_error: "",
+    rate_limited_until: null,
+    rate_limit_remaining: 120,
+    rate_limit_reset_at: "2026-05-04T13:00:00Z",
+    created_at: "2026-05-04T09:00:00Z",
+    updated_at: "2026-05-04T09:00:00Z",
+  },
+  {
+    id: "credential-openrouter-overflow",
+    backend_id: "backend-openrouter",
+    label: "Overflow account",
+    credential_hint: "sk-or-34...ffff",
+    enabled: false,
+    priority: 20,
+    last_used_at: null,
+    last_error_at: "2026-05-04T12:30:00Z",
+    last_error: "429 rate limit exceeded",
+    rate_limited_until: "2026-05-04T13:30:00Z",
+    rate_limit_remaining: 0,
+    rate_limit_reset_at: "2026-05-04T13:30:00Z",
+    created_at: "2026-05-04T09:05:00Z",
+    updated_at: "2026-05-04T12:30:00Z",
   },
 ];
 
@@ -504,6 +547,16 @@ const gatewayPolicyExceptions: GatewayPolicyExceptionItem[] = [
   },
 ];
 
+const gatewayExport: GatewayExportResponse = {
+  generated_at: "2026-05-04T14:00:00Z",
+  workspace_id: "ws-1",
+  overview,
+  sessions,
+  llm_calls: llmCalls,
+  policy_decisions: gatewayPolicyDecisions,
+  evidence: gatewayEvidence,
+};
+
 const adminMembers = [
   {
     id: "member-1",
@@ -589,6 +642,21 @@ describe("GatewayPage", () => {
       enabled: false,
     });
     mockApi.deleteGatewayBackend.mockResolvedValue({ deleted: true });
+    mockApi.listGatewayBackendCredentials.mockImplementation((backendId: string) =>
+      Promise.resolve(gatewayBackendCredentials.filter((credential) => credential.backend_id === backendId)),
+    );
+    mockApi.createGatewayBackendCredential.mockResolvedValue({
+      ...gatewayBackendCredentials[0],
+      id: "credential-openrouter-new",
+      label: "New account",
+      credential_hint: "sk-live...cret",
+      priority: 30,
+    });
+    mockApi.updateGatewayBackendCredential.mockResolvedValue({
+      ...gatewayBackendCredentials[0],
+      enabled: false,
+    });
+    mockApi.exportGatewayData.mockResolvedValue(gatewayExport);
     mockApi.upsertGatewayProviderRisk.mockResolvedValue({
       ...gatewayProviderRisks[0],
       approved_use_cases: ["internal support", "code review"],
@@ -712,6 +780,59 @@ describe("GatewayPage", () => {
     await waitFor(() => {
       expect(mockApi.updateGatewayCapturePolicy).toHaveBeenCalledWith("metadata_only");
     });
+  });
+
+  it("shows backend credential pools and manages credential rotation without exposing raw keys", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await user.click(await screen.findByRole("button", { name: /Manage credentials for OpenRouter/ }));
+
+    const credentialPool = await screen.findByRole("table", { name: /OpenRouter credential pool/ });
+    expect(within(credentialPool).getByText("Primary workspace key")).toBeInTheDocument();
+    expect(within(credentialPool).getByText("sk-or-12...cdef")).toBeInTheDocument();
+    expect(within(credentialPool).getByText("Overflow account")).toBeInTheDocument();
+    expect(within(credentialPool).getByText("rate limited")).toBeInTheDocument();
+    expect(within(credentialPool).getByText("429 rate limit exceeded")).toBeInTheDocument();
+    expect(screen.queryByText("sk-live-secret")).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Credential label for OpenRouter"), "New account");
+    await user.clear(screen.getByLabelText("Credential priority for OpenRouter"));
+    await user.type(screen.getByLabelText("Credential priority for OpenRouter"), "30");
+    await user.type(screen.getByLabelText("Credential API key for OpenRouter"), "sk-live-secret");
+    await user.click(screen.getByRole("button", { name: /Add credential for OpenRouter/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayBackendCredential).toHaveBeenCalledWith("backend-openrouter", {
+        label: "New account",
+        key: "sk-live-secret",
+        priority: 30,
+        enabled: true,
+      });
+    });
+    expect(screen.queryByDisplayValue("sk-live-secret")).not.toBeInTheDocument();
+
+    await user.click(within(credentialPool).getByRole("button", { name: /Disable Primary workspace key/ }));
+    await waitFor(() => {
+      expect(mockApi.updateGatewayBackendCredential).toHaveBeenCalledWith("backend-openrouter", "credential-openrouter-primary", {
+        enabled: false,
+      });
+    });
+  });
+
+  it("exports Gateway observability data from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await user.selectOptions(await screen.findByLabelText("Gateway export window"), "7d");
+    await user.click(screen.getByRole("button", { name: /Export Gateway data/ }));
+
+    await waitFor(() => {
+      expect(mockApi.exportGatewayData).toHaveBeenCalledWith({ since: "7d", limit: 50 });
+    });
+    expect(await screen.findByText("Export generated May 4: 2 sessions, 3 LLM calls")).toBeInTheDocument();
   });
 
   it("renders Gateway administration as read-only for non-admin members", async () => {
