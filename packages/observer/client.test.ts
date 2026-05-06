@@ -195,4 +195,72 @@ describe("ObserverClient", () => {
 
     await expect(client.flush(client.startTrace({ name: "Bad key run" }))).rejects.toThrow("gateway key is invalid");
   });
+
+  it("wraps async work as timed span, tool, and agent observations", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      trace_id: "trace-1",
+      session_id: "server-session-1",
+      span_count: 4,
+      event_count: 0,
+      log_count: 0,
+      agent_count: 1,
+      tool_count: 1,
+    }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const times = [
+      new Date("2026-05-04T12:00:00.000Z"),
+      new Date("2026-05-04T12:00:01.000Z"),
+      new Date("2026-05-04T12:00:01.250Z"),
+      new Date("2026-05-04T12:00:02.000Z"),
+      new Date("2026-05-04T12:00:02.040Z"),
+      new Date("2026-05-04T12:00:03.000Z"),
+      new Date("2026-05-04T12:00:03.075Z"),
+    ];
+    const client = new ObserverClient({
+      gatewayBaseUrl: "https://gateway.example.com",
+      gatewayKey: "mig_test",
+      serviceName: "checkout-api",
+      fetch: fetchMock,
+      now: () => {
+        const value = times.shift();
+        if (!value) throw new Error("clock exhausted");
+        return value;
+      },
+      idGenerator: ids(["trace-1", "session-1", "root-1", "span-1", "tool-1", "agent-1"]),
+    });
+    const trace = client.startTrace({ name: "Wrapped run" });
+
+    const spanResult = await trace.runSpan({ name: "Load cart", kind: "operation" }, async () => "cart-ready");
+    const toolResult = await trace.runTool({ name: "Inventory lookup", toolName: "inventory.lookup" }, async () => ({ available: true }));
+    const agentResult = await trace.runAgent({ name: "Support agent", agentName: "Support Agent", agentId: "support-agent" }, async () => "answered");
+
+    expect(spanResult).toBe("cart-ready");
+    expect(toolResult).toEqual({ available: true });
+    expect(agentResult).toBe("answered");
+
+    await client.flush(trace);
+    const firstCall = fetchMock.mock.calls[0] as [string, RequestInit] | undefined;
+    if (!firstCall) throw new Error("expected fetch to be called");
+    const body = JSON.parse(String(firstCall[1].body));
+    expect(body.spans).toEqual([
+      expect.objectContaining({ span_id: "root-1", name: "Wrapped run" }),
+      expect.objectContaining({ span_id: "span-1", name: "Load cart", kind: "operation", status_code: "ok", duration_ms: 250 }),
+      expect.objectContaining({ span_id: "tool-1", name: "Inventory lookup", kind: "tool", status_code: "ok", duration_ms: 40 }),
+      expect.objectContaining({ span_id: "agent-1", name: "Support agent", kind: "agent", status_code: "ok", duration_ms: 75 }),
+    ]);
+    expect(body.tools[0]).toMatchObject({
+      span_id: "tool-1",
+      tool_name: "inventory.lookup",
+      status: "success",
+      result: { available: true },
+      duration_ms: 40,
+    });
+    expect(body.agents[0]).toMatchObject({
+      span_id: "agent-1",
+      agent_id: "support-agent",
+      agent_name: "Support Agent",
+    });
+  });
 });

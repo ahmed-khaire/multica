@@ -70,6 +70,10 @@ export interface SpanOptions {
   resourceAttributes?: Record<string, unknown>;
 }
 
+export interface RunSpanOptions extends Omit<SpanOptions, "startedAt" | "endedAt" | "durationMs" | "statusCode" | "statusMessage"> {
+  statusCode?: SpanStatusCode;
+}
+
 export interface EventOptions {
   spanId?: string;
   eventType: string;
@@ -106,6 +110,21 @@ export interface ToolOptions {
   result?: unknown;
   status?: ToolStatus;
   durationMs?: number;
+}
+
+export interface RunToolOptions extends Omit<RunSpanOptions, "kind"> {
+  toolId?: string;
+  toolName: string;
+  description?: string;
+  parameters?: unknown;
+}
+
+export interface RunAgentOptions extends Omit<RunSpanOptions, "kind"> {
+  agentId?: string;
+  agentName?: string;
+  role?: string;
+  models?: string[];
+  tools?: string[];
 }
 
 export interface TraceSpanPayload {

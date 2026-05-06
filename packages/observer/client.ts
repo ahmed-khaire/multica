@@ -9,6 +9,9 @@ import type {
   LogOptions,
   ObserverClientOptions,
   RecordedSpan,
+  RunAgentOptions,
+  RunSpanOptions,
+  RunToolOptions,
   SpanOptions,
   StartTraceOptions,
   ToolOptions,
@@ -136,6 +139,133 @@ export class ObserverTrace {
     });
     this.tools.push(tool);
     return tool;
+  }
+
+  async runSpan<T>(options: RunSpanOptions, fn: () => Promise<T> | T): Promise<T> {
+    const startedAt = this.defaults.now();
+    try {
+      const result = await fn();
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: options.statusCode ?? "ok",
+      });
+      return result;
+    } catch (error) {
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: "error",
+        statusMessage: errorMessage(error),
+      });
+      throw error;
+    }
+  }
+
+  async runTool<T>(options: RunToolOptions, fn: () => Promise<T> | T): Promise<T> {
+    const startedAt = this.defaults.now();
+    const spanId = options.spanId ?? this.defaults.idGenerator();
+    try {
+      const result = await fn();
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        spanId,
+        kind: "tool",
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: options.statusCode ?? "ok",
+      });
+      this.tool({
+        spanId,
+        toolId: options.toolId,
+        toolName: options.toolName,
+        description: options.description,
+        parameters: options.parameters,
+        result,
+        status: "success",
+        durationMs: durationMS(startedAt, endedAt),
+      });
+      return result;
+    } catch (error) {
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        spanId,
+        kind: "tool",
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: "error",
+        statusMessage: errorMessage(error),
+      });
+      this.tool({
+        spanId,
+        toolId: options.toolId,
+        toolName: options.toolName,
+        description: options.description,
+        parameters: options.parameters,
+        result: { error: errorMessage(error) },
+        status: "error",
+        durationMs: durationMS(startedAt, endedAt),
+      });
+      throw error;
+    }
+  }
+
+  async runAgent<T>(options: RunAgentOptions, fn: () => Promise<T> | T): Promise<T> {
+    const startedAt = this.defaults.now();
+    const spanId = options.spanId ?? this.defaults.idGenerator();
+    try {
+      const result = await fn();
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        spanId,
+        kind: "agent",
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: options.statusCode ?? "ok",
+      });
+      this.agent({
+        spanId,
+        agentId: options.agentId,
+        agentName: options.agentName,
+        role: options.role,
+        models: options.models,
+        tools: options.tools,
+      });
+      return result;
+    } catch (error) {
+      const endedAt = this.defaults.now();
+      this.span({
+        ...options,
+        spanId,
+        kind: "agent",
+        startedAt,
+        endedAt,
+        durationMs: durationMS(startedAt, endedAt),
+        statusCode: "error",
+        statusMessage: errorMessage(error),
+      });
+      this.agent({
+        spanId,
+        agentId: options.agentId,
+        agentName: options.agentName,
+        role: options.role,
+        models: options.models,
+        tools: options.tools,
+      });
+      throw error;
+    }
   }
 
   toPayload(): TraceIngestPayload {
@@ -266,6 +396,15 @@ function statusToSpanCode(status: TraceStatus | undefined): "ok" | "error" | "un
   if (status === "success") return "ok";
   if (status === "error" || status === "cancelled") return "error";
   return "unset";
+}
+
+function durationMS(startedAt: Date, endedAt: Date): number {
+  return Math.max(0, endedAt.getTime() - startedAt.getTime());
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function compact<T extends Record<string, unknown>>(value: T): T {
