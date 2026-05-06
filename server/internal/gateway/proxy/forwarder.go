@@ -59,6 +59,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 		result, err := copyStreamingResponse(w, resp, summary.TranslationMode)
 		result.StatusCode = resp.StatusCode
 		result.Status = statusForHTTP(resp.StatusCode)
+		result.ResponseHeaders = resp.Header.Clone()
 		result.Streaming = true
 		result.DurationMS = time.Since(start).Milliseconds()
 		return result, err
@@ -87,6 +88,7 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 	result := ProxyResult{
 		StatusCode:      resp.StatusCode,
 		Status:          statusForHTTP(resp.StatusCode),
+		ResponseHeaders: resp.Header.Clone(),
 		ResponseBody:    body,
 		ResponseJSON:    responseJSON,
 		DurationMS:      time.Since(start).Milliseconds(),

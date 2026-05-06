@@ -42,17 +42,20 @@ type BackendResponse struct {
 }
 
 type BackendCredentialResponse struct {
-	ID             string  `json:"id"`
-	BackendID      string  `json:"backend_id"`
-	Label          string  `json:"label"`
-	CredentialHint string  `json:"credential_hint"`
-	Enabled        bool    `json:"enabled"`
-	Priority       int32   `json:"priority"`
-	LastUsedAt     *string `json:"last_used_at"`
-	LastErrorAt    *string `json:"last_error_at"`
-	LastError      string  `json:"last_error"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	ID                 string  `json:"id"`
+	BackendID          string  `json:"backend_id"`
+	Label              string  `json:"label"`
+	CredentialHint     string  `json:"credential_hint"`
+	Enabled            bool    `json:"enabled"`
+	Priority           int32   `json:"priority"`
+	LastUsedAt         *string `json:"last_used_at"`
+	LastErrorAt        *string `json:"last_error_at"`
+	LastError          string  `json:"last_error"`
+	RateLimitedUntil   *string `json:"rate_limited_until"`
+	RateLimitRemaining *int32  `json:"rate_limit_remaining"`
+	RateLimitResetAt   *string `json:"rate_limit_reset_at"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
 type SettingsResponse struct {

@@ -88,7 +88,12 @@ SELECT * FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND enabled = TRUE
-ORDER BY priority ASC, created_at ASC;
+  AND (rate_limited_until IS NULL OR rate_limited_until <= now())
+ORDER BY
+  CASE WHEN rate_limit_remaining IS NULL THEN 1 ELSE 0 END,
+  rate_limit_remaining DESC NULLS LAST,
+  priority ASC,
+  created_at ASC;
 
 -- name: GetGatewayBackendCredentialByID :one
 SELECT * FROM gateway_backend_credential
@@ -109,4 +114,19 @@ SET
 WHERE workspace_id = $1
   AND backend_id = $2
   AND id = $3
+RETURNING *;
+
+-- name: RecordGatewayBackendCredentialResult :one
+UPDATE gateway_backend_credential
+SET
+    last_used_at = CASE WHEN sqlc.arg(success)::boolean THEN now() ELSE last_used_at END,
+    last_error_at = CASE WHEN sqlc.arg(success)::boolean THEN NULL ELSE now() END,
+    last_error = CASE WHEN sqlc.arg(success)::boolean THEN '' ELSE sqlc.arg(last_error) END,
+    rate_limited_until = sqlc.arg(rate_limited_until),
+    rate_limit_remaining = sqlc.arg(rate_limit_remaining),
+    rate_limit_reset_at = sqlc.arg(rate_limit_reset_at),
+    updated_at = now()
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND backend_id = sqlc.arg(backend_id)
+  AND id = sqlc.arg(id)
 RETURNING *;

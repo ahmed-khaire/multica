@@ -794,6 +794,117 @@ func TestGatewayProxyUsesFirstActivePooledCredential(t *testing.T) {
 	}
 }
 
+func TestGatewayProxySkipsRateLimitedPooledCredential(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var authHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "chatcmpl-rate-limit-skip"})
+	}))
+	defer upstream.Close()
+
+	backendID := createGatewayProxyBackend(t, "local", "credential-rate-limit-skip-test", upstream.URL+"/v1", "sk-primary")
+	box, err := secrets.FromEnv()
+	if err != nil {
+		t.Fatalf("load secrets box: %v", err)
+	}
+	limitedCredential, err := box.EncryptString("sk-limited")
+	if err != nil {
+		t.Fatalf("encrypt limited credential: %v", err)
+	}
+	activeCredential, err := box.EncryptString("sk-active")
+	if err != nil {
+		t.Fatalf("encrypt active credential: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_backend_credential (
+			workspace_id, backend_id, label, encrypted_credential,
+			credential_hint, enabled, priority, rate_limited_until, created_by, updated_by
+		)
+		VALUES
+			($1, $2, 'limited pool credential', $3, $4, true, 1, now() + interval '10 minutes', $6, $6),
+			($1, $2, 'active pool credential', $5, $7, true, 2, NULL, $6, $6)
+	`, testWorkspaceID, backendID, limitedCredential, management.CredentialHint("sk-limited"), activeCredential, testUserID, management.CredentialHint("sk-active")); err != nil {
+		t.Fatalf("insert pooled credentials: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if authHeader != "Bearer sk-active" {
+		t.Fatalf("upstream Authorization = %q, want non-rate-limited credential", authHeader)
+	}
+}
+
+func TestGatewayProxyRecordsCredentialRateLimitState(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "rate limited"})
+	}))
+	defer upstream.Close()
+
+	backendID := createGatewayProxyBackend(t, "local", "credential-rate-limit-record-test", upstream.URL+"/v1", "sk-primary")
+	box, err := secrets.FromEnv()
+	if err != nil {
+		t.Fatalf("load secrets box: %v", err)
+	}
+	pooledCredential, err := box.EncryptString("sk-rate-limited")
+	if err != nil {
+		t.Fatalf("encrypt pooled credential: %v", err)
+	}
+	var credentialID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO gateway_backend_credential (
+			workspace_id, backend_id, label, encrypted_credential,
+			credential_hint, enabled, priority, created_by, updated_by
+		)
+		VALUES ($1, $2, 'rate limited pool credential', $3, $4, true, 1, $5, $5)
+		RETURNING id::text
+	`, testWorkspaceID, backendID, pooledCredential, management.CredentialHint("sk-rate-limited"), testUserID).Scan(&credentialID); err != nil {
+		t.Fatalf("insert pooled credential: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429: %s", w.Code, w.Body.String())
+	}
+
+	var rateLimited bool
+	var lastError string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT rate_limited_until > now(), last_error
+		FROM gateway_backend_credential
+		WHERE workspace_id = $1 AND backend_id = $2 AND id = $3
+	`, testWorkspaceID, backendID, credentialID).Scan(&rateLimited, &lastError); err != nil {
+		t.Fatalf("read credential state: %v", err)
+	}
+	if !rateLimited {
+		t.Fatal("expected credential to be marked rate-limited")
+	}
+	if !strings.Contains(lastError, "rate limited") {
+		t.Fatalf("last_error = %q, want upstream body", lastError)
+	}
+}
+
 func TestGatewayProxyRoutesConfiguredDataPolicy(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)

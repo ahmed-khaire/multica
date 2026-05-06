@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,10 +145,134 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		result.ErrorType = gwErr.ErrorType
 		result.ErrorMessage = gwErr.PublicMessage
 		s.Recorder.Complete(context.Background(), obs, result)
+		s.recordCredentialResult(context.Background(), authCtx, target, result)
 		writeProviderError(w, protocol, gwErr)
 		return
 	}
 	s.Recorder.Complete(context.Background(), obs, result)
+	s.recordCredentialResult(context.Background(), authCtx, target, result)
+}
+
+func (s *Service) recordCredentialResult(ctx context.Context, authCtx AuthContext, target BackendTarget, result ProxyResult) {
+	if s.Queries == nil || target.CredentialID == "" {
+		return
+	}
+	workspaceID, err := parseUUID(authCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	backendID, err := parseUUID(target.ID)
+	if err != nil {
+		return
+	}
+	credentialID, err := parseUUID(target.CredentialID)
+	if err != nil {
+		return
+	}
+
+	success := result.StatusCode >= 200 && result.StatusCode < 400
+	errorMessage := strings.TrimSpace(result.ErrorMessage)
+	if errorMessage == "" && !success {
+		errorMessage = http.StatusText(result.StatusCode)
+	}
+	if len(errorMessage) > 512 {
+		errorMessage = errorMessage[:512]
+	}
+
+	rateLimitedUntil, remaining, resetAt := credentialRateLimitState(result)
+	_, _ = s.Queries.RecordGatewayBackendCredentialResult(ctx, db.RecordGatewayBackendCredentialResultParams{
+		WorkspaceID:        workspaceID,
+		BackendID:          backendID,
+		ID:                 credentialID,
+		Success:            success,
+		LastError:          errorMessage,
+		RateLimitedUntil:   rateLimitedUntil,
+		RateLimitRemaining: remaining,
+		RateLimitResetAt:   resetAt,
+	})
+}
+
+func credentialRateLimitState(result ProxyResult) (pgtype.Timestamptz, pgtype.Int4, pgtype.Timestamptz) {
+	headers := result.ResponseHeaders
+	remaining := firstInt4Header(headers,
+		"x-ratelimit-remaining-requests",
+		"x-ratelimit-remaining-tokens",
+		"x-ratelimit-remaining",
+	)
+	resetAt := firstResetHeader(headers,
+		"x-ratelimit-reset-requests",
+		"x-ratelimit-reset-tokens",
+		"x-ratelimit-reset",
+	)
+	if result.StatusCode == http.StatusTooManyRequests {
+		limitedUntil := retryAfter(headers.Get("Retry-After"))
+		if !limitedUntil.Valid {
+			if resetAt.Valid && resetAt.Time.After(time.Now()) {
+				limitedUntil = resetAt
+			} else {
+				limitedUntil = pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}
+			}
+		}
+		return limitedUntil, remaining, resetAt
+	}
+	return pgtype.Timestamptz{}, remaining, resetAt
+}
+
+func firstInt4Header(headers http.Header, names ...string) pgtype.Int4 {
+	for _, name := range names {
+		value := strings.TrimSpace(headers.Get(name))
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.ParseInt(value, 10, 32)
+		if err == nil {
+			return pgtype.Int4{Int32: int32(parsed), Valid: true}
+		}
+	}
+	return pgtype.Int4{}
+}
+
+func firstResetHeader(headers http.Header, names ...string) pgtype.Timestamptz {
+	for _, name := range names {
+		if parsed := parseRateLimitTime(headers.Get(name)); parsed.Valid {
+			return parsed
+		}
+	}
+	return pgtype.Timestamptz{}
+}
+
+func retryAfter(raw string) pgtype.Timestamptz {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return pgtype.Timestamptz{}
+	}
+	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return pgtype.Timestamptz{Time: time.Now().Add(time.Duration(seconds) * time.Second), Valid: true}
+	}
+	if parsed, err := http.ParseTime(raw); err == nil {
+		return pgtype.Timestamptz{Time: parsed, Valid: true}
+	}
+	return pgtype.Timestamptz{}
+}
+
+func parseRateLimitTime(raw string) pgtype.Timestamptz {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return pgtype.Timestamptz{}
+	}
+	if duration, err := time.ParseDuration(raw); err == nil {
+		return pgtype.Timestamptz{Time: time.Now().Add(duration), Valid: true}
+	}
+	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if seconds > time.Now().Unix() {
+			return pgtype.Timestamptz{Time: time.Unix(seconds, 0), Valid: true}
+		}
+		return pgtype.Timestamptz{Time: time.Now().Add(time.Duration(seconds) * time.Second), Valid: true}
+	}
+	if parsed, err := http.ParseTime(raw); err == nil {
+		return pgtype.Timestamptz{Time: parsed, Valid: true}
+	}
+	return pgtype.Timestamptz{}
 }
 
 func (s *Service) applyGatewayPolicy(w http.ResponseWriter, r *http.Request, protocol string, authCtx AuthContext, target BackendTarget, summary RequestSummary) (BackendTarget, RequestSummary, bool) {

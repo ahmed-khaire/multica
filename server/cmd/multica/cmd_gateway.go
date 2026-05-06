@@ -186,17 +186,20 @@ type gatewayBackendDTO struct {
 }
 
 type gatewayBackendCredentialDTO struct {
-	ID             string  `json:"id"`
-	BackendID      string  `json:"backend_id"`
-	Label          string  `json:"label"`
-	CredentialHint string  `json:"credential_hint"`
-	Enabled        bool    `json:"enabled"`
-	Priority       int32   `json:"priority"`
-	LastUsedAt     *string `json:"last_used_at"`
-	LastErrorAt    *string `json:"last_error_at"`
-	LastError      string  `json:"last_error"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	ID                 string  `json:"id"`
+	BackendID          string  `json:"backend_id"`
+	Label              string  `json:"label"`
+	CredentialHint     string  `json:"credential_hint"`
+	Enabled            bool    `json:"enabled"`
+	Priority           int32   `json:"priority"`
+	LastUsedAt         *string `json:"last_used_at"`
+	LastErrorAt        *string `json:"last_error_at"`
+	LastError          string  `json:"last_error"`
+	RateLimitedUntil   *string `json:"rate_limited_until"`
+	RateLimitRemaining *int32  `json:"rate_limit_remaining"`
+	RateLimitResetAt   *string `json:"rate_limit_reset_at"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
 type gatewayStatusDTO struct {
@@ -645,11 +648,12 @@ func runGatewayCredentials(cmd *cobra.Command, args []string) error {
 			credential.CredentialHint,
 			yesNo(credential.Enabled),
 			strconv.Itoa(int(credential.Priority)),
+			nullableString(credential.RateLimitedUntil),
 			nullableString(credential.LastUsedAt),
 			nullableString(credential.LastErrorAt),
 		})
 	}
-	cli.PrintTable(cmd.OutOrStdout(), []string{"ID", "LABEL", "KEY", "ENABLED", "PRIORITY", "LAST USED", "LAST ERROR"}, rows)
+	cli.PrintTable(cmd.OutOrStdout(), []string{"ID", "LABEL", "KEY", "ENABLED", "PRIORITY", "RATE LIMITED", "LAST USED", "LAST ERROR"}, rows)
 	return nil
 }
 

@@ -72,6 +72,7 @@ type ProxyResult struct {
 	Status             string
 	ErrorType          string
 	ErrorMessage       string
+	ResponseHeaders    http.Header
 	DurationMS         int64
 	ResponseBody       []byte
 	ResponseJSON       map[string]any

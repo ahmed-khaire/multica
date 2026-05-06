@@ -2667,17 +2667,20 @@ func backendResponse(row db.GatewayBackend, defaultID pgtype.UUID) BackendRespon
 
 func backendCredentialResponse(row db.GatewayBackendCredential) BackendCredentialResponse {
 	return BackendCredentialResponse{
-		ID:             uuidString(row.ID),
-		BackendID:      uuidString(row.BackendID),
-		Label:          row.Label,
-		CredentialHint: row.CredentialHint,
-		Enabled:        row.Enabled,
-		Priority:       row.Priority,
-		LastUsedAt:     optionalTimestamp(row.LastUsedAt),
-		LastErrorAt:    optionalTimestamp(row.LastErrorAt),
-		LastError:      row.LastError,
-		CreatedAt:      textTimestamp(row.CreatedAt),
-		UpdatedAt:      textTimestamp(row.UpdatedAt),
+		ID:                 uuidString(row.ID),
+		BackendID:          uuidString(row.BackendID),
+		Label:              row.Label,
+		CredentialHint:     row.CredentialHint,
+		Enabled:            row.Enabled,
+		Priority:           row.Priority,
+		LastUsedAt:         optionalTimestamp(row.LastUsedAt),
+		LastErrorAt:        optionalTimestamp(row.LastErrorAt),
+		LastError:          row.LastError,
+		RateLimitedUntil:   optionalTimestamp(row.RateLimitedUntil),
+		RateLimitRemaining: optionalInt4(row.RateLimitRemaining),
+		RateLimitResetAt:   optionalTimestamp(row.RateLimitResetAt),
+		CreatedAt:          textTimestamp(row.CreatedAt),
+		UpdatedAt:          textTimestamp(row.UpdatedAt),
 	}
 }
 

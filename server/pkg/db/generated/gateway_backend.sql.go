@@ -72,7 +72,7 @@ INSERT INTO gateway_backend_credential (
     credential_hint, enabled, priority, created_by, updated_by
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
 `
 
 type CreateGatewayBackendCredentialParams struct {
@@ -114,6 +114,9 @@ func (q *Queries) CreateGatewayBackendCredential(ctx context.Context, arg Create
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RateLimitedUntil,
+		&i.RateLimitRemaining,
+		&i.RateLimitResetAt,
 	)
 	return i, err
 }
@@ -198,7 +201,7 @@ func (q *Queries) GetGatewayBackendBySlug(ctx context.Context, arg GetGatewayBac
 }
 
 const getGatewayBackendCredentialByID = `-- name: GetGatewayBackendCredentialByID :one
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND id = $3
@@ -229,6 +232,9 @@ func (q *Queries) GetGatewayBackendCredentialByID(ctx context.Context, arg GetGa
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RateLimitedUntil,
+		&i.RateLimitRemaining,
+		&i.RateLimitResetAt,
 	)
 	return i, err
 }
@@ -252,11 +258,16 @@ func (q *Queries) GetGatewayWorkspaceSettings(ctx context.Context, workspaceID p
 }
 
 const listActiveGatewayBackendCredentialsForBackend = `-- name: ListActiveGatewayBackendCredentialsForBackend :many
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND enabled = TRUE
-ORDER BY priority ASC, created_at ASC
+  AND (rate_limited_until IS NULL OR rate_limited_until <= now())
+ORDER BY
+  CASE WHEN rate_limit_remaining IS NULL THEN 1 ELSE 0 END,
+  rate_limit_remaining DESC NULLS LAST,
+  priority ASC,
+  created_at ASC
 `
 
 type ListActiveGatewayBackendCredentialsForBackendParams struct {
@@ -289,6 +300,9 @@ func (q *Queries) ListActiveGatewayBackendCredentialsForBackend(ctx context.Cont
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RateLimitedUntil,
+			&i.RateLimitRemaining,
+			&i.RateLimitResetAt,
 		); err != nil {
 			return nil, err
 		}
@@ -342,7 +356,7 @@ func (q *Queries) ListEnabledGatewayBackends(ctx context.Context, workspaceID pg
 }
 
 const listGatewayBackendCredentialsForBackend = `-- name: ListGatewayBackendCredentialsForBackend :many
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
 ORDER BY enabled DESC, priority ASC, created_at ASC
@@ -378,6 +392,9 @@ func (q *Queries) ListGatewayBackendCredentialsForBackend(ctx context.Context, a
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RateLimitedUntil,
+			&i.RateLimitRemaining,
+			&i.RateLimitResetAt,
 		); err != nil {
 			return nil, err
 		}
@@ -428,6 +445,68 @@ func (q *Queries) ListGatewayBackends(ctx context.Context, workspaceID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordGatewayBackendCredentialResult = `-- name: RecordGatewayBackendCredentialResult :one
+UPDATE gateway_backend_credential
+SET
+    last_used_at = CASE WHEN $1::boolean THEN now() ELSE last_used_at END,
+    last_error_at = CASE WHEN $1::boolean THEN NULL ELSE now() END,
+    last_error = CASE WHEN $1::boolean THEN '' ELSE $2 END,
+    rate_limited_until = $3,
+    rate_limit_remaining = $4,
+    rate_limit_reset_at = $5,
+    updated_at = now()
+WHERE workspace_id = $6
+  AND backend_id = $7
+  AND id = $8
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
+`
+
+type RecordGatewayBackendCredentialResultParams struct {
+	Success            bool               `json:"success"`
+	LastError          string             `json:"last_error"`
+	RateLimitedUntil   pgtype.Timestamptz `json:"rate_limited_until"`
+	RateLimitRemaining pgtype.Int4        `json:"rate_limit_remaining"`
+	RateLimitResetAt   pgtype.Timestamptz `json:"rate_limit_reset_at"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	BackendID          pgtype.UUID        `json:"backend_id"`
+	ID                 pgtype.UUID        `json:"id"`
+}
+
+func (q *Queries) RecordGatewayBackendCredentialResult(ctx context.Context, arg RecordGatewayBackendCredentialResultParams) (GatewayBackendCredential, error) {
+	row := q.db.QueryRow(ctx, recordGatewayBackendCredentialResult,
+		arg.Success,
+		arg.LastError,
+		arg.RateLimitedUntil,
+		arg.RateLimitRemaining,
+		arg.RateLimitResetAt,
+		arg.WorkspaceID,
+		arg.BackendID,
+		arg.ID,
+	)
+	var i GatewayBackendCredential
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.BackendID,
+		&i.Label,
+		&i.EncryptedCredential,
+		&i.CredentialHint,
+		&i.Enabled,
+		&i.Priority,
+		&i.LastUsedAt,
+		&i.LastErrorAt,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RateLimitedUntil,
+		&i.RateLimitRemaining,
+		&i.RateLimitResetAt,
+	)
+	return i, err
 }
 
 const setGatewayBackendEnabled = `-- name: SetGatewayBackendEnabled :one
@@ -571,7 +650,7 @@ SET
 WHERE workspace_id = $1
   AND backend_id = $2
   AND id = $3
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
 `
 
 type UpdateGatewayBackendCredentialParams struct {
@@ -615,6 +694,9 @@ func (q *Queries) UpdateGatewayBackendCredential(ctx context.Context, arg Update
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RateLimitedUntil,
+		&i.RateLimitRemaining,
+		&i.RateLimitResetAt,
 	)
 	return i, err
 }

@@ -330,6 +330,9 @@ type GatewayBackendCredential struct {
 	UpdatedBy           pgtype.UUID        `json:"updated_by"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	RateLimitedUntil    pgtype.Timestamptz `json:"rate_limited_until"`
+	RateLimitRemaining  pgtype.Int4        `json:"rate_limit_remaining"`
+	RateLimitResetAt    pgtype.Timestamptz `json:"rate_limit_reset_at"`
 }
 
 type GatewayEvent struct {
