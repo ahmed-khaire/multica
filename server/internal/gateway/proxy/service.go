@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	gatewaypolicy "github.com/multica-ai/multica/server/internal/gateway/policy"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -21,6 +22,7 @@ type Service struct {
 	Resolver  *Resolver
 	Forwarder *Forwarder
 	Recorder  *Recorder
+	Policy    *gatewaypolicy.Service
 }
 
 func NewService(queries *db.Queries, client *http.Client) *Service {
@@ -32,6 +34,7 @@ func NewService(queries *db.Queries, client *http.Client) *Service {
 		Resolver:  NewResolver(queries),
 		Forwarder: NewForwarder(client),
 		Recorder:  NewRecorder(queries),
+		Policy:    gatewaypolicy.NewService(queries),
 	}
 }
 
@@ -119,6 +122,12 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		s.recordExceptionAllow(context.Background(), authCtx, target)
 	}
 
+	var policyOK bool
+	target, summary, policyOK = s.applyGatewayPolicy(w, r, protocol, authCtx, target, summary)
+	if !policyOK {
+		return
+	}
+
 	obs := s.Recorder.Start(r.Context(), authCtx, target, summary)
 	result, err := s.Forwarder.Forward(r.Context(), w, r, target, summary)
 	if err != nil && result.StatusCode == 0 {
@@ -138,6 +147,73 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 	s.Recorder.Complete(context.Background(), obs, result)
+}
+
+func (s *Service) applyGatewayPolicy(w http.ResponseWriter, r *http.Request, protocol string, authCtx AuthContext, target BackendTarget, summary RequestSummary) (BackendTarget, RequestSummary, bool) {
+	if s.Policy == nil {
+		return target, summary, true
+	}
+	req := gatewayPolicyRequest(authCtx, target, summary)
+	evaluation, err := s.Policy.Evaluate(r.Context(), req)
+	if err != nil {
+		writeProviderError(w, protocol, GatewayError{
+			StatusCode:    http.StatusInternalServerError,
+			PublicMessage: "gateway policy evaluation failed",
+			ErrorType:     "server_error",
+			Code:          "gateway_policy_failed",
+			Cause:         err,
+		})
+		return target, summary, false
+	}
+	_ = s.Policy.RecordDecisions(context.Background(), req, evaluation)
+
+	switch evaluation.Decision.Action {
+	case gatewaypolicy.ActionBlock, gatewaypolicy.ActionRequireApproval:
+		writeProviderError(w, protocol, policyDecisionError(evaluation.Decision))
+		return target, summary, false
+	case gatewaypolicy.ActionRedact:
+		target.CapturePolicy = "redacted_content"
+	case gatewaypolicy.ActionRouteToBackend:
+		if evaluation.Decision.RouteBackendSlug != "" && evaluation.Decision.RouteBackendSlug != target.Slug {
+			routed, err := s.Resolver.ResolveBackend(r.Context(), authCtx.WorkspaceID, protocol, evaluation.Decision.RouteBackendSlug)
+			if err != nil {
+				writeProviderError(w, protocol, normalizeGatewayError(err))
+				return target, summary, false
+			}
+			target = routed
+			summary.BackendSlug = target.Slug
+			summary.RoutingSource = "policy"
+			summary.RoutePath = routePathFor(summary.Surface, target)
+			summary.TranslationMode = TranslationModeFor(protocol, target.UpstreamProtocol)
+			if target.PolicyExceptionID != "" {
+				s.recordExceptionAllow(context.Background(), authCtx, target)
+			}
+		}
+	}
+	return target, summary, true
+}
+
+func policyDecisionError(decision gatewaypolicy.Decision) GatewayError {
+	message := decision.Message
+	if strings.TrimSpace(message) == "" {
+		message = "gateway request is blocked by workspace policy"
+	}
+	code := decision.ReasonCode
+	if strings.TrimSpace(code) == "" {
+		code = "gateway_policy_blocked"
+	}
+	status := http.StatusForbidden
+	if decision.Action == gatewaypolicy.ActionRequireApproval {
+		status = http.StatusForbidden
+	}
+	return GatewayError{
+		StatusCode:    status,
+		PublicMessage: message,
+		ErrorType:     "invalid_request_error",
+		Code:          code,
+		Cause:         ErrPolicyBlocked,
+		ResourceType:  "policy",
+	}
 }
 
 func (s *Service) recordExceptionAllow(ctx context.Context, authCtx AuthContext, target BackendTarget) {

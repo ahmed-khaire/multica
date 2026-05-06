@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -600,6 +601,194 @@ func TestGatewayProxyRejectsConflictingBackendHeaderAndModelPrefix(t *testing.T)
 	}
 }
 
+func TestGatewayProxyBlocksConfiguredModelPolicy(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "chatcmpl-policy"})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "policy-block-model-proxy-test", upstream.URL+"/v1", "sk-policy-block")
+	insertGatewayProxyPolicy(t, "policy-block-gpt-test", "model", "enforce", map[string]any{
+		"rules": []map[string]any{{
+			"id":          "block-gpt-test",
+			"action":      "block",
+			"reason_code": "model_blocked",
+			"message":     "model is blocked by workspace policy",
+			"match": map[string]any{
+				"models": []string{"gpt-test"},
+			},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	errBody, ok := resp["error"].(map[string]any)
+	if !ok || errBody["code"] != "model_blocked" {
+		t.Fatalf("blocked error body = %#v, want model_blocked", resp)
+	}
+
+	var decisions int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM gateway_policy_decision
+		WHERE workspace_id = $1
+		  AND decision = 'block'
+		  AND reason_code = 'model_blocked'
+		  AND resource_type = 'model'
+		  AND resource_label = 'gpt-test'
+	`, testWorkspaceID).Scan(&decisions); err != nil {
+		t.Fatalf("count policy decisions: %v", err)
+	}
+	if decisions == 0 {
+		t.Fatal("expected model policy block to record a policy decision")
+	}
+}
+
+func TestGatewayProxyRoutesConfiguredDataPolicy(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	defaultCalls := 0
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "default"})
+	}))
+	defer defaultUpstream.Close()
+
+	routedCalls := 0
+	routedUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routedCalls++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode routed body: %v", err)
+		}
+		if body["model"] != "gpt-route" {
+			t.Fatalf("routed body model = %#v, want gpt-route", body["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "routed"})
+	}))
+	defer routedUpstream.Close()
+
+	createGatewayProxyBackend(t, "local", "policy-route-default-proxy-test", defaultUpstream.URL+"/v1", "sk-policy-default")
+	createGatewayProxyBackendWithDefault(t, "local", "policy-route-target-proxy-test", routedUpstream.URL+"/v1", "sk-policy-routed", false)
+	setGatewayProxyDefaultBackend(t, "policy-route-default-proxy-test")
+	insertGatewayProxyPolicy(t, "policy-route-source-code", "routing", "enforce", map[string]any{
+		"rules": []map[string]any{{
+			"id":                 "route-source-code-local",
+			"action":             "route_to_backend",
+			"reason_code":        "source_code_routes_local",
+			"route_backend_slug": "policy-route-target-proxy-test",
+			"match": map[string]any{
+				"data_classes": []string{"source_code"},
+			},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{\"model\":\"gpt-route\",\"messages\":[{\"role\":\"user\",\"content\":\"Please review:\\n```go\\npackage main\\nfunc main() {}\\n```\"}]}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if defaultCalls != 0 || routedCalls != 1 {
+		t.Fatalf("calls default=%d routed=%d, want default=0 routed=1", defaultCalls, routedCalls)
+	}
+
+	var decisions int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM gateway_policy_decision
+		WHERE workspace_id = $1
+		  AND decision = 'route_to_backend'
+		  AND reason_code = 'source_code_routes_local'
+		  AND resource_type = 'data_class'
+		  AND resource_label = 'source_code'
+	`, testWorkspaceID).Scan(&decisions); err != nil {
+		t.Fatalf("count policy decisions: %v", err)
+	}
+	if decisions == 0 {
+		t.Fatal("expected routing policy to record a policy decision")
+	}
+}
+
+func TestGatewayProxyMonitorPolicyRecordsButAllows(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "chatcmpl-monitor"})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "policy-monitor-proxy-test", upstream.URL+"/v1", "sk-policy-monitor")
+	insertGatewayProxyPolicy(t, "policy-monitor-gpt-test", "model", "monitor", map[string]any{
+		"rules": []map[string]any{{
+			"id":          "monitor-gpt-test",
+			"action":      "block",
+			"reason_code": "model_monitor_only",
+			"match": map[string]any{
+				"models": []string{"gpt-monitor"},
+			},
+		}},
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-monitor","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("upstream calls = %d, want 1", upstreamCalls)
+	}
+
+	var decisions int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM gateway_policy_decision
+		WHERE workspace_id = $1
+		  AND decision = 'block'
+		  AND reason_code = 'model_monitor_only'
+		  AND resource_label = 'gpt-monitor'
+	`, testWorkspaceID).Scan(&decisions); err != nil {
+		t.Fatalf("count policy decisions: %v", err)
+	}
+	if decisions == 0 {
+		t.Fatal("expected monitor policy to record a policy decision")
+	}
+}
+
 func TestGatewayModelsAggregatesEnabledBackends(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)
@@ -1045,4 +1234,28 @@ func setGatewayProxyDefaultBackend(t *testing.T, slug string) {
 	if resp.DefaultBackend.Slug != slug {
 		t.Fatalf("default backend slug = %q, want %q", resp.DefaultBackend.Slug, slug)
 	}
+}
+
+func insertGatewayProxyPolicy(t *testing.T, name, policyType, enforcementMode string, ruleDefinition map[string]any) {
+	t.Helper()
+
+	rules, err := json.Marshal(ruleDefinition)
+	if err != nil {
+		t.Fatalf("marshal policy rules: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_policy (
+			workspace_id, name, description, policy_type, enabled,
+			version, rule_definition, enforcement_mode, created_by, updated_by
+		)
+		VALUES ($1, $2, '', $3, TRUE, 1, $4::jsonb, $5, $6, $6)
+	`, testWorkspaceID, name, policyType, string(rules), enforcementMode, testUserID); err != nil {
+		t.Fatalf("insert gateway policy %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM gateway_policy
+			WHERE workspace_id = $1 AND name = $2
+		`, testWorkspaceID, name)
+	})
 }
