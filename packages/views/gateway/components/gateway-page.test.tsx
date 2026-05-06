@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceIdProvider } from "@multica/core/hooks";
@@ -14,6 +14,7 @@ import type {
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
   GatewayOverviewResponse,
+  GatewayGovernancePolicyItem,
   GatewayPolicyDecisionItem,
   GatewayPolicyExceptionItem,
   GatewayProviderRisk,
@@ -50,6 +51,9 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayAudit: vi.fn(),
     listGatewayProviderRisks: vi.fn(),
     listGatewayPolicyDecisions: vi.fn(),
+    listGatewayGovernancePolicies: vi.fn(),
+    createGatewayGovernancePolicy: vi.fn(),
+    updateGatewayGovernancePolicy: vi.fn(),
     listGatewayEvidence: vi.fn(),
     listGatewayControlMappings: vi.fn(),
     listGatewayIncidents: vi.fn(),
@@ -380,6 +384,32 @@ const gatewayPolicyDecisions: GatewayPolicyDecisionItem[] = [
   },
 ];
 
+const gatewayGovernancePolicies: GatewayGovernancePolicyItem[] = [
+  {
+    id: "policy-1",
+    name: "Block test model",
+    description: "Stops unapproved model usage",
+    policy_type: "model",
+    enabled: true,
+    version: 1,
+    rule_definition: {
+      rules: [
+        {
+          id: "block-gpt-test",
+          action: "block",
+          reason_code: "model_blocked",
+          match: { models: ["gpt-test"] },
+        },
+      ],
+    },
+    enforcement_mode: "enforce",
+    created_by: "user-1",
+    updated_by: "user-1",
+    created_at: "2026-05-04T12:40:00Z",
+    updated_at: "2026-05-04T12:40:00Z",
+  },
+];
+
 const gatewayEvidence: GatewayEvidenceItem[] = [
   {
     id: "evidence-1",
@@ -499,6 +529,18 @@ describe("GatewayPage", () => {
     mockApi.listGatewayAudit.mockResolvedValue(gatewayAudit);
     mockApi.listGatewayProviderRisks.mockResolvedValue(gatewayProviderRisks);
     mockApi.listGatewayPolicyDecisions.mockResolvedValue(gatewayPolicyDecisions);
+    mockApi.listGatewayGovernancePolicies.mockResolvedValue(gatewayGovernancePolicies);
+    mockApi.createGatewayGovernancePolicy.mockResolvedValue({
+      ...gatewayGovernancePolicies[0],
+      id: "policy-2",
+      name: "Route source code",
+      policy_type: "routing",
+    });
+    mockApi.updateGatewayGovernancePolicy.mockResolvedValue({
+      ...gatewayGovernancePolicies[0],
+      enabled: false,
+      version: 2,
+    });
     mockApi.listGatewayEvidence.mockResolvedValue(gatewayEvidence);
     mockApi.listGatewayControlMappings.mockResolvedValue(gatewayControlMappings);
     mockApi.listGatewayIncidents.mockResolvedValue(gatewayIncidents);
@@ -750,6 +792,74 @@ describe("GatewayPage", () => {
     expect(within(decisionsTable).getByText("provider_risk_rejected")).toBeInTheDocument();
     expect(within(decisionsTable).getByText("openrouter")).toBeInTheDocument();
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
+  });
+
+  it("creates and toggles Gateway governance policies from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    expect(await screen.findByText("Governance Policies")).toBeInTheDocument();
+    const policiesTable = await screen.findByRole("table", { name: /Gateway governance policies/ });
+    expect(within(policiesTable).getByText("Block test model")).toBeInTheDocument();
+    expect(within(policiesTable).getByText("model")).toBeInTheDocument();
+    expect(within(policiesTable).getByText("enforce")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Policy name"));
+    await user.type(screen.getByLabelText("Policy name"), "Route source code");
+    await user.selectOptions(screen.getByLabelText("Policy type"), "routing");
+    await user.selectOptions(screen.getByLabelText("Enforcement mode"), "enforce");
+    fireEvent.change(screen.getByLabelText("Policy rule definition"), {
+      target: {
+        value: JSON.stringify({
+        rules: [
+          {
+            id: "route-source-code",
+            action: "route_to_backend",
+            reason_code: "source_code_routes_local",
+            route_backend_slug: "local",
+            match: { data_classes: ["source_code"] },
+          },
+        ],
+        }),
+      },
+    });
+    await user.click(screen.getByRole("button", { name: /Create policy/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayGovernancePolicy).toHaveBeenCalledWith({
+        name: "Route source code",
+        description: "",
+        policy_type: "routing",
+        enabled: true,
+        enforcement_mode: "enforce",
+        rule_definition: {
+          rules: [
+            {
+              id: "route-source-code",
+              action: "route_to_backend",
+              reason_code: "source_code_routes_local",
+              route_backend_slug: "local",
+              match: { data_classes: ["source_code"] },
+            },
+          ],
+        },
+      });
+    });
+
+    await user.click(within(policiesTable).getByRole("button", { name: /Disable policy Block test model/ }));
+    await waitFor(() => {
+      expect(mockApi.updateGatewayGovernancePolicy).toHaveBeenCalledWith("policy-1", {
+        name: "Block test model",
+        description: "Stops unapproved model usage",
+        policy_type: "model",
+        enabled: false,
+        enforcement_mode: "enforce",
+        rule_definition: gatewayGovernancePolicies[0]!.rule_definition,
+      });
+    });
+    expect(mockApi.listGatewayGovernancePolicies).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
   it("shows Gateway evidence for admins from the Setup tab", async () => {

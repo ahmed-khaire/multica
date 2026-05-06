@@ -87,6 +87,15 @@ type gatewayUpdatePolicyExceptionRequest struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+type gatewayGovernancePolicyRequest struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	PolicyType      string `json:"policy_type"`
+	Enabled         bool   `json:"enabled"`
+	RuleDefinition  any    `json:"rule_definition"`
+	EnforcementMode string `json:"enforcement_mode"`
+}
+
 func (h *Handler) GatewayStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -434,6 +443,67 @@ func (h *Handler) UpdateGatewayPolicyException(w http.ResponseWriter, r *http.Re
 		ExceptionID: chi.URLParam(r, "id"),
 		Status:      req.Status,
 		ExpiresAt:   req.ExpiresAt,
+	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) ListGatewayGovernancePolicies(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ListGovernancePolicies(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) CreateGatewayGovernancePolicy(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayGovernancePolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.CreateGovernancePolicy(r.Context(), management.CreateGovernancePolicyInput{
+		WorkspaceID:     workspaceID,
+		ActorUserID:     userID,
+		Name:            req.Name,
+		Description:     req.Description,
+		PolicyType:      req.PolicyType,
+		Enabled:         req.Enabled,
+		RuleDefinition:  req.RuleDefinition,
+		EnforcementMode: req.EnforcementMode,
+	})
+	h.writeGatewayResult(w, http.StatusCreated, resp, err)
+}
+
+func (h *Handler) UpdateGatewayGovernancePolicy(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayGovernancePolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpdateGovernancePolicy(r.Context(), management.UpdateGovernancePolicyInput{
+		WorkspaceID:     workspaceID,
+		ActorUserID:     userID,
+		PolicyID:        chi.URLParam(r, "id"),
+		Name:            req.Name,
+		Description:     req.Description,
+		PolicyType:      req.PolicyType,
+		Enabled:         req.Enabled,
+		RuleDefinition:  req.RuleDefinition,
+		EnforcementMode: req.EnforcementMode,
 	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/gateway/keyring"
+	gatewaypolicy "github.com/multica-ai/multica/server/internal/gateway/policy"
 	"github.com/multica-ai/multica/server/internal/gateway/secrets"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -48,6 +49,31 @@ var policyExceptionStatuses = map[string]struct{}{
 	"denied":    {},
 	"expired":   {},
 	"revoked":   {},
+}
+
+var gatewayPolicyTypes = map[string]struct{}{
+	"provider": {},
+	"model":    {},
+	"tool":     {},
+	"data":     {},
+	"budget":   {},
+	"approval": {},
+	"routing":  {},
+	"capture":  {},
+}
+
+var gatewayPolicyEnforcementModes = map[string]struct{}{
+	"monitor": {},
+	"enforce": {},
+}
+
+var gatewayPolicyActions = map[gatewaypolicy.Action]struct{}{
+	gatewaypolicy.ActionAllow:           {},
+	gatewaypolicy.ActionWarn:            {},
+	gatewaypolicy.ActionRequireApproval: {},
+	gatewaypolicy.ActionRedact:          {},
+	gatewaypolicy.ActionRouteToBackend:  {},
+	gatewaypolicy.ActionBlock:           {},
 }
 
 type defaultControlMapping struct {
@@ -1690,6 +1716,111 @@ func (s *Service) UpdatePolicyException(ctx context.Context, input UpdatePolicyE
 	return policyExceptionItem(row), nil
 }
 
+func (s *Service) ListGovernancePolicies(ctx context.Context, workspaceID string) ([]GovernancePolicyItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListGatewayPolicies(ctx, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]GovernancePolicyItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, governancePolicyItem(row))
+	}
+	return items, nil
+}
+
+func (s *Service) CreateGovernancePolicy(ctx context.Context, input CreateGovernancePolicyInput) (GovernancePolicyItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	normalized, rules, err := normalizeCreateGovernancePolicyInput(input)
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+
+	var row db.GatewayPolicy
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.CreateGatewayPolicy(ctx, db.CreateGatewayPolicyParams{
+			WorkspaceID:     workspaceUUID,
+			Name:            normalized.Name,
+			Description:     normalized.Description,
+			PolicyType:      normalized.PolicyType,
+			Enabled:         normalized.Enabled,
+			Version:         1,
+			RuleDefinition:  rules,
+			EnforcementMode: normalized.EnforcementMode,
+			CreatedBy:       actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy.create", "gateway_policy", uuidString(row.ID), nil, governancePolicyItem(row))
+	}); err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	return governancePolicyItem(row), nil
+}
+
+func (s *Service) UpdateGovernancePolicy(ctx context.Context, input UpdateGovernancePolicyInput) (GovernancePolicyItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	policyUUID, err := uuidValue(input.PolicyID, "policy_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	normalized, rules, err := normalizeUpdateGovernancePolicyInput(input)
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+
+	var row db.GatewayPolicy
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		current, err := q.GetGatewayPolicy(ctx, db.GetGatewayPolicyParams{
+			WorkspaceID: workspaceUUID,
+			ID:          policyUUID,
+		})
+		if err != nil {
+			return err
+		}
+		row, err = q.UpdateGatewayPolicy(ctx, db.UpdateGatewayPolicyParams{
+			WorkspaceID:     workspaceUUID,
+			ID:              policyUUID,
+			Name:            normalized.Name,
+			Description:     normalized.Description,
+			PolicyType:      normalized.PolicyType,
+			Enabled:         normalized.Enabled,
+			RuleDefinition:  rules,
+			EnforcementMode: normalized.EnforcementMode,
+			UpdatedBy:       actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy.update", "gateway_policy", uuidString(row.ID), governancePolicyItem(current), governancePolicyItem(row))
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GovernancePolicyItem{}, ErrGatewayBackendNotFound
+		}
+		return GovernancePolicyItem{}, err
+	}
+	return governancePolicyItem(row), nil
+}
+
 func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, workspaceID pgtype.UUID) error {
 	for _, control := range defaultGatewayControlMappings {
 		mappedEvidenceQueries, err := json.Marshal(control.MappedEvidenceQueries)
@@ -1967,6 +2098,90 @@ func policyExceptionItem(row db.AiPolicyException) PolicyExceptionItem {
 		CreatedAt:          textTimestamp(row.CreatedAt),
 		UpdatedAt:          textTimestamp(row.UpdatedAt),
 	}
+}
+
+func governancePolicyItem(row db.GatewayPolicy) GovernancePolicyItem {
+	return GovernancePolicyItem{
+		ID:              uuidString(row.ID),
+		Name:            row.Name,
+		Description:     row.Description,
+		PolicyType:      row.PolicyType,
+		Enabled:         row.Enabled,
+		Version:         row.Version,
+		RuleDefinition:  auditJSON(row.RuleDefinition),
+		EnforcementMode: row.EnforcementMode,
+		CreatedBy:       optionalUUIDString(row.CreatedBy),
+		UpdatedBy:       optionalUUIDString(row.UpdatedBy),
+		CreatedAt:       textTimestamp(row.CreatedAt),
+		UpdatedAt:       textTimestamp(row.UpdatedAt),
+	}
+}
+
+func normalizeCreateGovernancePolicyInput(input CreateGovernancePolicyInput) (CreateGovernancePolicyInput, []byte, error) {
+	normalized := input
+	normalized.Name = strings.TrimSpace(normalized.Name)
+	normalized.Description = strings.TrimSpace(normalized.Description)
+	normalized.PolicyType = strings.ToLower(strings.TrimSpace(normalized.PolicyType))
+	normalized.EnforcementMode = strings.ToLower(strings.TrimSpace(normalized.EnforcementMode))
+	if normalized.EnforcementMode == "" {
+		normalized.EnforcementMode = "enforce"
+	}
+	rules, err := validateGatewayPolicy(normalized.Name, normalized.PolicyType, normalized.EnforcementMode, normalized.RuleDefinition)
+	return normalized, rules, err
+}
+
+func normalizeUpdateGovernancePolicyInput(input UpdateGovernancePolicyInput) (UpdateGovernancePolicyInput, []byte, error) {
+	normalized := input
+	normalized.Name = strings.TrimSpace(normalized.Name)
+	normalized.Description = strings.TrimSpace(normalized.Description)
+	normalized.PolicyType = strings.ToLower(strings.TrimSpace(normalized.PolicyType))
+	normalized.EnforcementMode = strings.ToLower(strings.TrimSpace(normalized.EnforcementMode))
+	if normalized.EnforcementMode == "" {
+		normalized.EnforcementMode = "enforce"
+	}
+	rules, err := validateGatewayPolicy(normalized.Name, normalized.PolicyType, normalized.EnforcementMode, normalized.RuleDefinition)
+	return normalized, rules, err
+}
+
+func validateGatewayPolicy(name, policyType, enforcementMode string, ruleDefinition any) ([]byte, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: name is required", ErrInvalidGatewayBackend)
+	}
+	if _, ok := gatewayPolicyTypes[policyType]; !ok {
+		return nil, fmt.Errorf("%w: invalid policy_type", ErrInvalidGatewayBackend)
+	}
+	if _, ok := gatewayPolicyEnforcementModes[enforcementMode]; !ok {
+		return nil, fmt.Errorf("%w: invalid enforcement_mode", ErrInvalidGatewayBackend)
+	}
+	raw, err := json.Marshal(ruleDefinition)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid rule_definition", ErrInvalidGatewayBackend)
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, fmt.Errorf("%w: rule_definition is required", ErrInvalidGatewayBackend)
+	}
+	rules, err := gatewaypolicy.DecodeRules(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid rule_definition", ErrInvalidGatewayBackend)
+	}
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("%w: at least one rule is required", ErrInvalidGatewayBackend)
+	}
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.ID) == "" {
+			return nil, fmt.Errorf("%w: rule id is required", ErrInvalidGatewayBackend)
+		}
+		if _, ok := gatewayPolicyActions[rule.Action]; !ok {
+			return nil, fmt.Errorf("%w: invalid policy action", ErrInvalidGatewayBackend)
+		}
+		if strings.TrimSpace(rule.ReasonCode) == "" {
+			return nil, fmt.Errorf("%w: reason_code is required", ErrInvalidGatewayBackend)
+		}
+		if rule.Action == gatewaypolicy.ActionRouteToBackend && strings.TrimSpace(rule.RouteBackendSlug) == "" {
+			return nil, fmt.Errorf("%w: route_backend_slug is required", ErrInvalidGatewayBackend)
+		}
+	}
+	return raw, nil
 }
 
 func policyExceptionScope(resourceType, resourceID, resourceLabel string) ([]byte, error) {

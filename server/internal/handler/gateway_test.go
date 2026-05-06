@@ -689,6 +689,137 @@ func TestGatewayPolicyExceptionHandlersCreateListAndApprove(t *testing.T) {
 	}
 }
 
+func TestGatewayPolicyHandlersCreateListAndUpdate(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/policies", map[string]any{
+		"name":             "Block test model",
+		"description":      "Stops a model in enforcement mode",
+		"policy_type":      "model",
+		"enabled":          true,
+		"enforcement_mode": "enforce",
+		"rule_definition": map[string]any{
+			"rules": []map[string]any{{
+				"id":          "block-gpt-test",
+				"action":      "block",
+				"reason_code": "model_blocked",
+				"message":     "This model is blocked",
+				"match": map[string]any{
+					"models": []string{"gpt-test"},
+				},
+			}},
+		},
+	})
+	testHandler.CreateGatewayGovernancePolicy(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayGovernancePolicy: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var created struct {
+		ID              string         `json:"id"`
+		Name            string         `json:"name"`
+		PolicyType      string         `json:"policy_type"`
+		Enabled         bool           `json:"enabled"`
+		Version         int            `json:"version"`
+		EnforcementMode string         `json:"enforcement_mode"`
+		RuleDefinition  map[string]any `json:"rule_definition"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayGovernancePolicy: decode response: %v", err)
+	}
+	if created.ID == "" || created.Name != "Block test model" || created.PolicyType != "model" || created.Version != 1 {
+		t.Fatalf("CreateGatewayGovernancePolicy: response = %#v", created)
+	}
+	if created.RuleDefinition["rules"] == nil {
+		t.Fatalf("CreateGatewayGovernancePolicy: missing rule_definition rules: %#v", created.RuleDefinition)
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/governance/policies", nil)
+	testHandler.ListGatewayGovernancePolicies(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayGovernancePolicies: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listed []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listed); err != nil {
+		t.Fatalf("ListGatewayGovernancePolicies: decode response: %v", err)
+	}
+	found := false
+	for _, item := range listed {
+		if item.ID == created.ID && item.Name == "Block test model" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ListGatewayGovernancePolicies: did not find created policy in %#v", listed)
+	}
+
+	updateW := httptest.NewRecorder()
+	updateReq := newRequest("PATCH", "/api/gateway/governance/policies/"+created.ID, map[string]any{
+		"name":             "Monitor test model",
+		"description":      "Record only",
+		"policy_type":      "model",
+		"enabled":          false,
+		"enforcement_mode": "monitor",
+		"rule_definition": map[string]any{
+			"rules": []map[string]any{{
+				"id":          "warn-gpt-test",
+				"action":      "warn",
+				"reason_code": "model_monitored",
+				"match": map[string]any{
+					"models": []string{"gpt-test"},
+				},
+			}},
+		},
+	})
+	updateReq = withURLParam(updateReq, "id", created.ID)
+	testHandler.UpdateGatewayGovernancePolicy(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayGovernancePolicy: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	var updated struct {
+		ID              string `json:"id"`
+		Name            string `json:"name"`
+		Enabled         bool   `json:"enabled"`
+		Version         int    `json:"version"`
+		EnforcementMode string `json:"enforcement_mode"`
+	}
+	if err := json.NewDecoder(updateW.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateGatewayGovernancePolicy: decode response: %v", err)
+	}
+	if updated.ID != created.ID || updated.Name != "Monitor test model" || updated.Enabled || updated.Version != 2 || updated.EnforcementMode != "monitor" {
+		t.Fatalf("UpdateGatewayGovernancePolicy: response = %#v", updated)
+	}
+}
+
+func TestGatewayPolicyHandlersRejectInvalidRuleDefinition(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/gateway/governance/policies", map[string]any{
+		"name":             "Bad policy",
+		"policy_type":      "model",
+		"enabled":          true,
+		"enforcement_mode": "enforce",
+		"rule_definition": map[string]any{
+			"rules": []map[string]any{{
+				"id":          "bad-action",
+				"action":      "blok",
+				"reason_code": "invalid",
+				"match": map[string]any{
+					"models": []string{"gpt-test"},
+				},
+			}},
+		},
+	})
+
+	testHandler.CreateGatewayGovernancePolicy(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateGatewayGovernancePolicy: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestGatewayServerBaseURLPrefersConfiguredGatewayURL(t *testing.T) {
 	t.Setenv("MULTICA_GATEWAY_BASE_URL", "https://gateway.multica.ai/root/")
 	t.Setenv("MULTICA_SERVER_URL", "https://server.multica.ai")

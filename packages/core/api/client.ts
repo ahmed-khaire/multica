@@ -44,6 +44,7 @@ import type {
   UpdateProjectRequest,
   ListProjectsResponse,
   CreateGatewayBackendRequest,
+  CreateGatewayGovernancePolicyRequest,
   CreateGatewayPolicyExceptionRequest,
   DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
@@ -58,6 +59,7 @@ import type {
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
+  GatewayGovernancePolicyItem,
   GatewayPolicyDecisionItem,
   GatewayPolicyExceptionItem,
   GatewayProviderRisk,
@@ -69,6 +71,7 @@ import type {
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
   UpdateGatewayBackendRequest,
+  UpdateGatewayGovernancePolicyRequest,
   UpdateGatewayIncidentRequest,
   UpdateGatewayPolicyExceptionRequest,
   UpsertGatewayProviderRiskRequest,
@@ -698,6 +701,24 @@ export class ApiClient {
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     const query = search.toString();
     return this.fetch(`/api/gateway/governance/policy-decisions${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayGovernancePolicies(params?: { signal?: AbortSignal }): Promise<GatewayGovernancePolicyItem[]> {
+    return this.fetch("/api/gateway/governance/policies", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async createGatewayGovernancePolicy(data: CreateGatewayGovernancePolicyRequest): Promise<GatewayGovernancePolicyItem> {
+    return this.fetch("/api/gateway/governance/policies", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateGatewayGovernancePolicy(id: string, data: UpdateGatewayGovernancePolicyRequest): Promise<GatewayGovernancePolicyItem> {
+    return this.fetch(`/api/gateway/governance/policies/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   }
 
   async listGatewayEvidence(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayEvidenceItem[]> {

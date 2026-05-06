@@ -234,6 +234,21 @@ type PolicyExceptionItem struct {
 	UpdatedAt          string  `json:"updated_at"`
 }
 
+type GovernancePolicyItem struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	PolicyType      string `json:"policy_type"`
+	Enabled         bool   `json:"enabled"`
+	Version         int32  `json:"version"`
+	RuleDefinition  any    `json:"rule_definition"`
+	EnforcementMode string `json:"enforcement_mode"`
+	CreatedBy       string `json:"created_by"`
+	UpdatedBy       string `json:"updated_by"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
 type CreateBackendInput struct {
 	WorkspaceID string
 	ActorUserID string
@@ -325,6 +340,29 @@ type UpdateIncidentInput struct {
 	IncidentID       string
 	Status           string
 	RemediationNotes string
+}
+
+type CreateGovernancePolicyInput struct {
+	WorkspaceID     string
+	ActorUserID     string
+	Name            string
+	Description     string
+	PolicyType      string
+	Enabled         bool
+	RuleDefinition  any
+	EnforcementMode string
+}
+
+type UpdateGovernancePolicyInput struct {
+	WorkspaceID     string
+	ActorUserID     string
+	PolicyID        string
+	Name            string
+	Description     string
+	PolicyType      string
+	Enabled         bool
+	RuleDefinition  any
+	EnforcementMode string
 }
 
 var providerPresets = map[string]ProviderPreset{

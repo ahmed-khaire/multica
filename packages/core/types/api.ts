@@ -291,6 +291,32 @@ export interface GatewayPolicyExceptionItem {
   updated_at: string;
 }
 
+export interface GatewayGovernancePolicyItem {
+  id: string;
+  name: string;
+  description: string;
+  policy_type: string;
+  enabled: boolean;
+  version: number;
+  rule_definition: unknown;
+  enforcement_mode: string;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGatewayGovernancePolicyRequest {
+  name: string;
+  description?: string;
+  policy_type: string;
+  enabled: boolean;
+  rule_definition: unknown;
+  enforcement_mode: string;
+}
+
+export interface UpdateGatewayGovernancePolicyRequest extends CreateGatewayGovernancePolicyRequest {}
+
 export interface CreateGatewayPolicyExceptionRequest {
   reason: string;
   resource_type: string;

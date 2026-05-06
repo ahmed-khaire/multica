@@ -29,6 +29,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateGatewayBackendRequest,
+  CreateGatewayGovernancePolicyRequest,
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayCapturePolicy,
@@ -38,6 +39,7 @@ import type {
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
+  GatewayGovernancePolicyItem,
   GatewayStatusResponse,
   GatewayUserKeyResponse,
   GatewayBackendUsage,
@@ -69,6 +71,7 @@ import {
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
   gatewayOverviewOptions,
+  gatewayGovernancePoliciesOptions,
   gatewayPolicyDecisionsOptions,
   gatewayPolicyExceptionsOptions,
   gatewayProviderRisksOptions,
@@ -85,6 +88,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -119,6 +123,25 @@ const gatewayProviderPresets = [
 const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];
 
 const governanceStatuses = ["unknown", "not_started", "in_review", "approved", "rejected", "expired"];
+const gatewayPolicyTypes = ["provider", "model", "tool", "data", "budget", "approval", "routing", "capture"];
+const gatewayPolicyModes = ["enforce", "monitor"];
+const defaultGatewayPolicyRule = JSON.stringify(
+  {
+    rules: [
+      {
+        id: "block-gpt-test",
+        action: "block",
+        reason_code: "model_blocked",
+        message: "This model is blocked by workspace policy.",
+        match: {
+          models: ["gpt-test"],
+        },
+      },
+    ],
+  },
+  null,
+  2,
+);
 
 function formatCount(value: number | null | undefined): string {
   if (!value) return "0";
@@ -1657,6 +1680,258 @@ function GatewayPolicyDecisions({
   );
 }
 
+function GatewayGovernancePolicies({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const policiesQuery = useQuery(gatewayGovernancePoliciesOptions(wsId, canManage));
+  const policies = policiesQuery.data ?? [];
+  const [policyName, setPolicyName] = useState("");
+  const [policyDescription, setPolicyDescription] = useState("");
+  const [policyType, setPolicyType] = useState("model");
+  const [policyMode, setPolicyMode] = useState("enforce");
+  const [policyEnabled, setPolicyEnabled] = useState("true");
+  const [ruleDefinition, setRuleDefinition] = useState(defaultGatewayPolicyRule);
+  const [ruleError, setRuleError] = useState("");
+
+  const invalidatePolicies = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.governancePolicies(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+  };
+
+  const createPolicyMutation = useMutation({
+    mutationFn: (input: CreateGatewayGovernancePolicyRequest) => api.createGatewayGovernancePolicy(input),
+    onSuccess: () => {
+      setPolicyName("");
+      setPolicyDescription("");
+      setPolicyType("model");
+      setPolicyMode("enforce");
+      setPolicyEnabled("true");
+      setRuleDefinition(defaultGatewayPolicyRule);
+      setRuleError("");
+      invalidatePolicies();
+    },
+  });
+
+  const updatePolicyMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: CreateGatewayGovernancePolicyRequest }) =>
+      api.updateGatewayGovernancePolicy(id, input),
+    onSuccess: invalidatePolicies,
+  });
+
+  if (!canManage) return null;
+
+  const submitPolicy = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(ruleDefinition);
+    } catch {
+      setRuleError("Rule definition must be valid JSON.");
+      return;
+    }
+    setRuleError("");
+    createPolicyMutation.mutate({
+      name: policyName.trim(),
+      description: policyDescription.trim(),
+      policy_type: policyType,
+      enabled: policyEnabled === "true",
+      enforcement_mode: policyMode,
+      rule_definition: parsed,
+    });
+  };
+
+  const togglePolicy = (policy: GatewayGovernancePolicyItem) => {
+    updatePolicyMutation.mutate({
+      id: policy.id,
+      input: {
+        name: policy.name,
+        description: policy.description,
+        policy_type: policy.policy_type,
+        enabled: !policy.enabled,
+        enforcement_mode: policy.enforcement_mode,
+        rule_definition: policy.rule_definition,
+      },
+    });
+  };
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          Governance Policies
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <form className="space-y-3" onSubmit={submitPolicy}>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-policy-name">Policy name</Label>
+              <Input
+                id="gateway-policy-name"
+                value={policyName}
+                onChange={(event) => setPolicyName(event.target.value)}
+                placeholder="Block unapproved model"
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-policy-description">Policy description</Label>
+              <Input
+                id="gateway-policy-description"
+                value={policyDescription}
+                onChange={(event) => setPolicyDescription(event.target.value)}
+                placeholder="Short admin note"
+                autoComplete="off"
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-policy-type">Policy type</Label>
+                <NativeSelect
+                  id="gateway-policy-type"
+                  className="w-full"
+                  value={policyType}
+                  onChange={(event) => setPolicyType(event.target.value)}
+                >
+                  {gatewayPolicyTypes.map((type) => (
+                    <NativeSelectOption key={type} value={type}>
+                      {type}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-policy-mode">Enforcement mode</Label>
+                <NativeSelect
+                  id="gateway-policy-mode"
+                  className="w-full"
+                  value={policyMode}
+                  onChange={(event) => setPolicyMode(event.target.value)}
+                >
+                  {gatewayPolicyModes.map((mode) => (
+                    <NativeSelectOption key={mode} value={mode}>
+                      {mode}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-policy-enabled">State</Label>
+                <NativeSelect
+                  id="gateway-policy-enabled"
+                  className="w-full"
+                  value={policyEnabled}
+                  onChange={(event) => setPolicyEnabled(event.target.value)}
+                >
+                  <NativeSelectOption value="true">enabled</NativeSelectOption>
+                  <NativeSelectOption value="false">disabled</NativeSelectOption>
+                </NativeSelect>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-policy-rule">Policy rule definition</Label>
+              <Textarea
+                id="gateway-policy-rule"
+                className="min-h-44 font-mono text-xs"
+                value={ruleDefinition}
+                onChange={(event) => setRuleDefinition(event.target.value)}
+                spellCheck={false}
+              />
+            </div>
+            {ruleError ? <p className="text-xs text-destructive">{ruleError}</p> : null}
+            {createPolicyMutation.error instanceof Error ? (
+              <p className="text-xs text-destructive">{createPolicyMutation.error.message}</p>
+            ) : null}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!policyName.trim() || createPolicyMutation.isPending}
+            >
+              <Save className="size-3.5" />
+              Create policy
+            </Button>
+          </form>
+
+          <div className="min-w-0">
+            {policiesQuery.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-14 rounded-md" />
+                ))}
+              </div>
+            ) : policies.length === 0 ? (
+              <div className="flex h-44 flex-col items-center justify-center rounded-md border text-center">
+                <ShieldCheck className="size-8 text-muted-foreground/40" />
+                <p className="mt-3 text-sm font-medium">No governance policies configured</p>
+                <p className="mt-1 text-xs text-muted-foreground">Create JSON-backed policies to enforce model, tool, data, routing, and capture rules.</p>
+              </div>
+            ) : (
+              <Table aria-label="Gateway governance policies">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Policy</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Mode</TableHead>
+                    <TableHead>Version</TableHead>
+                    <TableHead className="text-right">State</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {policies.map((policy: GatewayGovernancePolicyItem) => (
+                    <TableRow key={policy.id}>
+                      <TableCell>
+                        <div className="flex max-w-64 flex-col">
+                          <span className="truncate font-medium">{policy.name}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {policy.description || "No description"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{policy.policy_type}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={policy.enforcement_mode === "enforce" ? "secondary" : "outline"}>
+                          {policy.enforcement_mode}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">v{policy.version}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant={policy.enabled ? "outline" : "default"}
+                          disabled={updatePolicyMutation.isPending}
+                          onClick={() => togglePolicy(policy)}
+                          aria-label={`${policy.enabled ? "Disable" : "Enable"} policy ${policy.name}`}
+                        >
+                          {policy.enabled ? "enabled" : "disabled"}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            {policiesQuery.error instanceof Error ? (
+              <p className="mt-3 text-xs text-destructive">{policiesQuery.error.message}</p>
+            ) : null}
+            {updatePolicyMutation.error instanceof Error ? (
+              <p className="mt-3 text-xs text-destructive">{updatePolicyMutation.error.message}</p>
+            ) : null}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function evidenceFrameworks(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
@@ -2588,6 +2863,7 @@ export function GatewayPage() {
                   wsId={wsId}
                 />
                 <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
+                <GatewayGovernancePolicies canManage={canManage} wsId={wsId} />
                 <GatewayComplianceControls canManage={canManage} wsId={wsId} />
                 <GatewayIncidents canManage={canManage} wsId={wsId} />
                 <GatewayPolicyExceptions canManage={canManage} wsId={wsId} />
