@@ -1646,6 +1646,18 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID string, limit int32
 	return items, nil
 }
 
+func (s *Service) RecordExportAudit(ctx context.Context, workspaceID, actorUserID string, details map[string]any) error {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return err
+	}
+	return audit(ctx, s.queries, workspaceUUID, actorUUID, "gateway.export.read", "gateway_export", uuidString(workspaceUUID), nil, details)
+}
+
 func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, limit int32) ([]PolicyDecisionItem, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {

@@ -312,6 +312,27 @@ func TestGatewayExportBundlesObservableAndGovernanceData(t *testing.T) {
 	if len(resp.Evidence) == 0 {
 		t.Fatal("expected evidence in export")
 	}
+
+	auditW := httptest.NewRecorder()
+	auditReq := newRequest(http.MethodGet, "/api/gateway/audit?limit=5", nil)
+	testHandler.ListGatewayAudit(auditW, auditReq)
+	if auditW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayAudit status = %d, want 200: %s", auditW.Code, auditW.Body.String())
+	}
+	var auditRows []struct {
+		Action     string         `json:"action"`
+		TargetType string         `json:"target_type"`
+		AfterState map[string]any `json:"after_state"`
+	}
+	if err := json.NewDecoder(auditW.Body).Decode(&auditRows); err != nil {
+		t.Fatalf("ListGatewayAudit decode response: %v", err)
+	}
+	if len(auditRows) == 0 || auditRows[0].Action != "gateway.export.read" {
+		t.Fatalf("latest audit action = %#v, want gateway.export.read", auditRows)
+	}
+	if auditRows[0].TargetType != "gateway_export" || auditRows[0].AfterState["limit"] != float64(10) {
+		t.Fatalf("export audit row = %#v, want target gateway_export and limit 10", auditRows[0])
+	}
 }
 
 func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObservabilitySeed {

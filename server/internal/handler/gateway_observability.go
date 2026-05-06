@@ -86,7 +86,7 @@ func (h *Handler) ListGatewayLLMCalls(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ExportGatewayData(w http.ResponseWriter, r *http.Request) {
-	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {
 		return
 	}
@@ -123,6 +123,15 @@ func (h *Handler) ExportGatewayData(w http.ResponseWriter, r *http.Request) {
 	}
 	evidence, err := h.Gateway.ListEvidence(r.Context(), workspaceID, limit)
 	if err != nil {
+		h.writeGatewayResult(w, http.StatusOK, nil, err)
+		return
+	}
+	if err := h.Gateway.RecordExportAudit(r.Context(), workspaceID, userID, map[string]any{
+		"since":    filter.Since.Format(time.RFC3339Nano),
+		"until":    filter.Until.Format(time.RFC3339Nano),
+		"limit":    limit,
+		"sections": []string{"overview", "sessions", "llm_calls", "policy_decisions", "evidence"},
+	}); err != nil {
 		h.writeGatewayResult(w, http.StatusOK, nil, err)
 		return
 	}
