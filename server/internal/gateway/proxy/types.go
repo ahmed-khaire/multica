@@ -35,6 +35,7 @@ type BackendTarget struct {
 	ID                string
 	Slug              string
 	BackendType       string
+	CredentialID      string
 	UpstreamProtocol  string
 	BaseURL           string
 	UpstreamSecret    string

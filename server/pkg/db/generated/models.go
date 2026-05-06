@@ -314,6 +314,24 @@ type GatewayBackend struct {
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
+type GatewayBackendCredential struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	BackendID           pgtype.UUID        `json:"backend_id"`
+	Label               string             `json:"label"`
+	EncryptedCredential []byte             `json:"encrypted_credential"`
+	CredentialHint      string             `json:"credential_hint"`
+	Enabled             bool               `json:"enabled"`
+	Priority            int32              `json:"priority"`
+	LastUsedAt          pgtype.Timestamptz `json:"last_used_at"`
+	LastErrorAt         pgtype.Timestamptz `json:"last_error_at"`
+	LastError           string             `json:"last_error"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+	UpdatedBy           pgtype.UUID        `json:"updated_by"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GatewayEvent struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

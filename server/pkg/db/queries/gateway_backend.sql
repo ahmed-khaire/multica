@@ -68,3 +68,18 @@ UPDATE gateway_workspace_settings
 SET default_backend_id = $2, updated_at = now()
 WHERE workspace_id = $1
 RETURNING *;
+
+-- name: CreateGatewayBackendCredential :one
+INSERT INTO gateway_backend_credential (
+    workspace_id, backend_id, label, encrypted_credential,
+    credential_hint, enabled, priority, created_by, updated_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+RETURNING *;
+
+-- name: ListActiveGatewayBackendCredentialsForBackend :many
+SELECT * FROM gateway_backend_credential
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND enabled = TRUE
+ORDER BY priority ASC, created_at ASC;

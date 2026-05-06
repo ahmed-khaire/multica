@@ -116,7 +116,20 @@ func (r *Resolver) ResolveBackend(ctx context.Context, workspaceID, protocol, ba
 	if err != nil {
 		return BackendTarget{}, RoutingError(http.StatusServiceUnavailable, "gateway secret key is not configured", "gateway_secret_unavailable", ErrGatewaySecretNotConfigured)
 	}
-	secret, err := box.DecryptString(backend.EncryptedCredential)
+	credentialID := ""
+	encryptedCredential := backend.EncryptedCredential
+	credentials, err := r.queries.ListActiveGatewayBackendCredentialsForBackend(ctx, db.ListActiveGatewayBackendCredentialsForBackendParams{
+		WorkspaceID: workspaceUUID,
+		BackendID:   backend.ID,
+	})
+	if err != nil {
+		return BackendTarget{}, err
+	}
+	if len(credentials) > 0 {
+		credentialID = util.UUIDToString(credentials[0].ID)
+		encryptedCredential = credentials[0].EncryptedCredential
+	}
+	secret, err := box.DecryptString(encryptedCredential)
 	if err != nil {
 		return BackendTarget{}, err
 	}
@@ -124,6 +137,7 @@ func (r *Resolver) ResolveBackend(ctx context.Context, workspaceID, protocol, ba
 		ID:                util.UUIDToString(backend.ID),
 		Slug:              backend.Slug,
 		BackendType:       backend.BackendType,
+		CredentialID:      credentialID,
 		UpstreamProtocol:  BackendProtocolForType(backend.BackendType),
 		BaseURL:           backend.BaseUrl,
 		UpstreamSecret:    secret,

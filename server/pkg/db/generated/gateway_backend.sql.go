@@ -66,6 +66,58 @@ func (q *Queries) CreateGatewayBackend(ctx context.Context, arg CreateGatewayBac
 	return i, err
 }
 
+const createGatewayBackendCredential = `-- name: CreateGatewayBackendCredential :one
+INSERT INTO gateway_backend_credential (
+    workspace_id, backend_id, label, encrypted_credential,
+    credential_hint, enabled, priority, created_by, updated_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at
+`
+
+type CreateGatewayBackendCredentialParams struct {
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	BackendID           pgtype.UUID `json:"backend_id"`
+	Label               string      `json:"label"`
+	EncryptedCredential []byte      `json:"encrypted_credential"`
+	CredentialHint      string      `json:"credential_hint"`
+	Enabled             bool        `json:"enabled"`
+	Priority            int32       `json:"priority"`
+	CreatedBy           pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateGatewayBackendCredential(ctx context.Context, arg CreateGatewayBackendCredentialParams) (GatewayBackendCredential, error) {
+	row := q.db.QueryRow(ctx, createGatewayBackendCredential,
+		arg.WorkspaceID,
+		arg.BackendID,
+		arg.Label,
+		arg.EncryptedCredential,
+		arg.CredentialHint,
+		arg.Enabled,
+		arg.Priority,
+		arg.CreatedBy,
+	)
+	var i GatewayBackendCredential
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.BackendID,
+		&i.Label,
+		&i.EncryptedCredential,
+		&i.CredentialHint,
+		&i.Enabled,
+		&i.Priority,
+		&i.LastUsedAt,
+		&i.LastErrorAt,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteGatewayBackend = `-- name: DeleteGatewayBackend :exec
 DELETE FROM gateway_backend
 WHERE workspace_id = $1 AND id = $2
@@ -161,6 +213,55 @@ func (q *Queries) GetGatewayWorkspaceSettings(ctx context.Context, workspaceID p
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listActiveGatewayBackendCredentialsForBackend = `-- name: ListActiveGatewayBackendCredentialsForBackend :many
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at FROM gateway_backend_credential
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND enabled = TRUE
+ORDER BY priority ASC, created_at ASC
+`
+
+type ListActiveGatewayBackendCredentialsForBackendParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	BackendID   pgtype.UUID `json:"backend_id"`
+}
+
+func (q *Queries) ListActiveGatewayBackendCredentialsForBackend(ctx context.Context, arg ListActiveGatewayBackendCredentialsForBackendParams) ([]GatewayBackendCredential, error) {
+	rows, err := q.db.Query(ctx, listActiveGatewayBackendCredentialsForBackend, arg.WorkspaceID, arg.BackendID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayBackendCredential{}
+	for rows.Next() {
+		var i GatewayBackendCredential
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.BackendID,
+			&i.Label,
+			&i.EncryptedCredential,
+			&i.CredentialHint,
+			&i.Enabled,
+			&i.Priority,
+			&i.LastUsedAt,
+			&i.LastErrorAt,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.UpdatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listEnabledGatewayBackends = `-- name: ListEnabledGatewayBackends :many

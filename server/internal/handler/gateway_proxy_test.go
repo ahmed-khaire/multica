@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/gateway/management"
+	"github.com/multica-ai/multica/server/internal/gateway/secrets"
 )
 
 func TestGatewayProxyOpenAIRequiresGatewayKey(t *testing.T) {
@@ -743,6 +746,51 @@ func TestGatewayProxyBlocksCanonicalToolAliasPolicy(t *testing.T) {
 	errBody, ok := resp["error"].(map[string]any)
 	if !ok || errBody["code"] != "shell_tool_blocked" {
 		t.Fatalf("blocked error body = %#v, want shell_tool_blocked", resp)
+	}
+}
+
+func TestGatewayProxyUsesFirstActivePooledCredential(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var authHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "chatcmpl-pooled-credential"})
+	}))
+	defer upstream.Close()
+
+	backendID := createGatewayProxyBackend(t, "local", "credential-pool-proxy-test", upstream.URL+"/v1", "sk-primary")
+	box, err := secrets.FromEnv()
+	if err != nil {
+		t.Fatalf("load secrets box: %v", err)
+	}
+	pooledCredential, err := box.EncryptString("sk-pooled")
+	if err != nil {
+		t.Fatalf("encrypt pooled credential: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_backend_credential (
+			workspace_id, backend_id, label, encrypted_credential,
+			credential_hint, enabled, priority, created_by, updated_by
+		)
+		VALUES ($1, $2, 'primary pool credential', $3, $4, true, 1, $5, $5)
+	`, testWorkspaceID, backendID, pooledCredential, management.CredentialHint("sk-pooled"), testUserID); err != nil {
+		t.Fatalf("insert pooled credential: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if authHeader != "Bearer sk-pooled" {
+		t.Fatalf("upstream Authorization = %q, want pooled credential", authHeader)
 	}
 }
 
