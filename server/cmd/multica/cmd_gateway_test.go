@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -24,6 +24,45 @@ func TestGatewayCommandTree(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
 			}
 		})
+	}
+}
+
+func TestGatewayExportCommandCallsAPI(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/export" {
+			t.Errorf("path = %s, want /api/gateway/export", r.URL.Path)
+		}
+		if r.URL.Query().Get("since") != "24h" || r.URL.Query().Get("limit") != "10" {
+			t.Errorf("query = %s, want since=24h&limit=10", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"generated_at":     "2026-05-06T12:00:00Z",
+			"workspace_id":     "workspace-1",
+			"overview":         map[string]any{"summary": map[string]any{"request_count": 3}},
+			"sessions":         map[string]any{"sessions": []any{}},
+			"llm_calls":        map[string]any{"calls": []any{}},
+			"policy_decisions": []any{},
+			"evidence":         []any{},
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "export", "--workspace-id", "workspace-1", "--since", "24h", "--limit", "10")
+	if err != nil {
+		t.Fatalf("execute gateway export: %v", err)
+	}
+	if !called {
+		t.Fatal("server was not called")
+	}
+	if !strings.Contains(out, `"workspace_id": "workspace-1"`) {
+		t.Fatalf("output = %q, want export JSON", out)
 	}
 }
 

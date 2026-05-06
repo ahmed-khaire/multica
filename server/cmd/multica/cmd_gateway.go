@@ -110,6 +110,12 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewayCredentialDisable,
 	}
 
+	exportCmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export Observer Gateway observability and governance data",
+		RunE:  runGatewayExport,
+	}
+
 	defaultCmd := &cobra.Command{
 		Use:   "default <backend-slug>",
 		Short: "Set the default Observer Gateway backend",
@@ -136,6 +142,7 @@ func newGatewayCommand() *cobra.Command {
 	cmd.AddCommand(backendsCmd)
 	cmd.AddCommand(credentialsCmd)
 	cmd.AddCommand(credentialCmd)
+	cmd.AddCommand(exportCmd)
 	cmd.AddCommand(defaultCmd)
 	cmd.AddCommand(policyCmd)
 	credentialCmd.AddCommand(credentialAddCmd)
@@ -165,6 +172,8 @@ func newGatewayCommand() *cobra.Command {
 	credentialAddCmd.Flags().Int32("priority", 100, "Routing priority, lower values are tried first")
 	credentialAddCmd.Flags().String("output", "table", "Output format: table or json")
 	credentialDisableCmd.Flags().String("output", "table", "Output format: table or json")
+	exportCmd.Flags().String("since", "24h", "Export lookback window, such as 24h, 7d, or an RFC3339 timestamp")
+	exportCmd.Flags().Int32("limit", 50, "Maximum rows per exported section")
 	defaultCmd.Flags().String("output", "table", "Output format: table or json")
 	policyCmd.Flags().String("output", "table", "Output format: table or json")
 
@@ -719,6 +728,34 @@ func runGatewayCredentialDisable(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Disabled credential %s\n", credentialID)
 	return nil
+}
+
+func runGatewayExport(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	params := url.Values{}
+	if since, _ := cmd.Flags().GetString("since"); strings.TrimSpace(since) != "" {
+		params.Set("since", strings.TrimSpace(since))
+	}
+	if limit, _ := cmd.Flags().GetInt32("limit"); limit > 0 {
+		params.Set("limit", strconv.Itoa(int(limit)))
+	}
+	path := "/api/gateway/export"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var resp map[string]any
+	if err := client.GetJSON(ctx, path, &resp); err != nil {
+		return fmt.Errorf("export gateway data: %w", err)
+	}
+	return cli.PrintJSON(cmd.OutOrStdout(), resp)
 }
 
 func runGatewayDefault(cmd *cobra.Command, args []string) error {
