@@ -20,11 +20,12 @@ import (
 )
 
 var (
-	ErrInvalidCapturePolicy       = errors.New("invalid gateway capture policy")
-	ErrInvalidGatewayBackend      = errors.New("invalid gateway backend")
-	ErrGatewaySecretNotConfigured = errors.New("gateway secret key is not configured")
-	ErrGatewayBackendNotFound     = errors.New("gateway backend not found")
-	ErrGatewayKeyNotFound         = errors.New("gateway key not found")
+	ErrInvalidCapturePolicy          = errors.New("invalid gateway capture policy")
+	ErrInvalidGatewayBackend         = errors.New("invalid gateway backend")
+	ErrGatewaySecretNotConfigured    = errors.New("gateway secret key is not configured")
+	ErrGatewayBackendNotFound        = errors.New("gateway backend not found")
+	ErrGatewayKeyNotFound            = errors.New("gateway key not found")
+	ErrGatewayPolicyDecisionNotFound = errors.New("gateway policy decision not found")
 )
 
 var governanceStatuses = map[string]struct{}{
@@ -1483,6 +1484,159 @@ func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, l
 		items = append(items, policyDecisionItem(row))
 	}
 	return items, nil
+}
+
+func (s *Service) ApprovePolicyDecision(ctx context.Context, input ApprovePolicyDecisionInput) (PolicyDecisionApprovalResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	decisionUUID, err := uuidValue(input.DecisionID, "decision_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	expiresAt, err := optionalRFC3339(input.ExpiresAt, "expires_at")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "Approved policy decision"
+	}
+
+	var decision db.GatewayPolicyDecision
+	var exception db.AiPolicyException
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		before, err := q.GetGatewayPolicyDecision(ctx, db.GetGatewayPolicyDecisionParams{
+			WorkspaceID: workspaceUUID,
+			ID:          decisionUUID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGatewayPolicyDecisionNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if optionalTextString(before.ApprovalStatus) != "requested" {
+			return fmt.Errorf("%w: policy decision is not awaiting approval", ErrInvalidGatewayBackend)
+		}
+
+		scope, err := policyExceptionScope(before.ResourceType, before.ResourceID, before.ResourceLabel)
+		if err != nil {
+			return err
+		}
+		evidenceReferences, err := json.Marshal([]map[string]string{{
+			"type": "gateway_policy_decision",
+			"id":   uuidString(before.ID),
+		}})
+		if err != nil {
+			return err
+		}
+		requesterUUID := before.SubjectUserID
+		if !requesterUUID.Valid {
+			requesterUUID = actorUUID
+		}
+		exception, err = q.CreateAIPolicyException(ctx, db.CreateAIPolicyExceptionParams{
+			WorkspaceID:        workspaceUUID,
+			PolicyID:           before.PolicyID,
+			RequesterUserID:    requesterUUID,
+			ApproverUserID:     actorUUID,
+			Reason:             reason,
+			Scope:              scope,
+			Status:             "approved",
+			ExpiresAt:          expiresAt,
+			EvidenceReferences: evidenceReferences,
+		})
+		if err != nil {
+			return err
+		}
+
+		decision, err = q.UpdateGatewayPolicyDecisionApprovalStatus(ctx, db.UpdateGatewayPolicyDecisionApprovalStatusParams{
+			WorkspaceID:    workspaceUUID,
+			ID:             decisionUUID,
+			ApprovalStatus: pgtype.Text{String: "approved", Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		resp := PolicyDecisionApprovalResponse{
+			Decision: policyDecisionItem(decision),
+		}
+		exceptionItem := policyExceptionItem(exception)
+		resp.Exception = &exceptionItem
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy_decision.approve", "gateway_policy_decision", uuidString(decision.ID), policyDecisionItem(before), resp)
+	}); err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+
+	exceptionItem := policyExceptionItem(exception)
+	return PolicyDecisionApprovalResponse{
+		Decision:  policyDecisionItem(decision),
+		Exception: &exceptionItem,
+	}, nil
+}
+
+func (s *Service) DenyPolicyDecision(ctx context.Context, input DenyPolicyDecisionInput) (PolicyDecisionApprovalResponse, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	decisionUUID, err := uuidValue(input.DecisionID, "decision_id")
+	if err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "Denied policy decision"
+	}
+
+	var decision db.GatewayPolicyDecision
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		before, err := q.GetGatewayPolicyDecision(ctx, db.GetGatewayPolicyDecisionParams{
+			WorkspaceID: workspaceUUID,
+			ID:          decisionUUID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGatewayPolicyDecisionNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if optionalTextString(before.ApprovalStatus) != "requested" {
+			return fmt.Errorf("%w: policy decision is not awaiting approval", ErrInvalidGatewayBackend)
+		}
+
+		decision, err = q.UpdateGatewayPolicyDecisionApprovalStatus(ctx, db.UpdateGatewayPolicyDecisionApprovalStatusParams{
+			WorkspaceID:    workspaceUUID,
+			ID:             decisionUUID,
+			ApprovalStatus: pgtype.Text{String: "denied", Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		resp := PolicyDecisionApprovalResponse{
+			Decision: policyDecisionItem(decision),
+		}
+		after := map[string]any{
+			"decision": resp.Decision,
+			"reason":   reason,
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy_decision.deny", "gateway_policy_decision", uuidString(decision.ID), policyDecisionItem(before), after)
+	}); err != nil {
+		return PolicyDecisionApprovalResponse{}, err
+	}
+
+	return PolicyDecisionApprovalResponse{
+		Decision: policyDecisionItem(decision),
+	}, nil
 }
 
 func (s *Service) ListEvidence(ctx context.Context, workspaceID string, limit int32) ([]EvidenceItem, error) {

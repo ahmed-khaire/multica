@@ -94,6 +94,42 @@ func (q *Queries) GetGatewayPolicy(ctx context.Context, arg GetGatewayPolicyPara
 	return i, err
 }
 
+const getGatewayPolicyDecision = `-- name: GetGatewayPolicyDecision :one
+SELECT id, workspace_id, policy_id, policy_version, subject_user_id, subject_agent_id, resource_type, resource_id, resource_label, decision, reason_code, matched_rules, request_id, session_id, span_row_id, approval_status, evidence_references, created_at FROM gateway_policy_decision
+WHERE workspace_id = $1 AND id = $2
+`
+
+type GetGatewayPolicyDecisionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetGatewayPolicyDecision(ctx context.Context, arg GetGatewayPolicyDecisionParams) (GatewayPolicyDecision, error) {
+	row := q.db.QueryRow(ctx, getGatewayPolicyDecision, arg.WorkspaceID, arg.ID)
+	var i GatewayPolicyDecision
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PolicyID,
+		&i.PolicyVersion,
+		&i.SubjectUserID,
+		&i.SubjectAgentID,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.ResourceLabel,
+		&i.Decision,
+		&i.ReasonCode,
+		&i.MatchedRules,
+		&i.RequestID,
+		&i.SessionID,
+		&i.SpanRowID,
+		&i.ApprovalStatus,
+		&i.EvidenceReferences,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listEnabledGatewayPolicies = `-- name: ListEnabledGatewayPolicies :many
 SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at FROM gateway_policy
 WHERE workspace_id = $1 AND enabled = TRUE
@@ -354,6 +390,45 @@ func (q *Queries) UpdateGatewayPolicy(ctx context.Context, arg UpdateGatewayPoli
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateGatewayPolicyDecisionApprovalStatus = `-- name: UpdateGatewayPolicyDecisionApprovalStatus :one
+UPDATE gateway_policy_decision
+SET approval_status = $3
+WHERE workspace_id = $1 AND id = $2
+RETURNING id, workspace_id, policy_id, policy_version, subject_user_id, subject_agent_id, resource_type, resource_id, resource_label, decision, reason_code, matched_rules, request_id, session_id, span_row_id, approval_status, evidence_references, created_at
+`
+
+type UpdateGatewayPolicyDecisionApprovalStatusParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	ID             pgtype.UUID `json:"id"`
+	ApprovalStatus pgtype.Text `json:"approval_status"`
+}
+
+func (q *Queries) UpdateGatewayPolicyDecisionApprovalStatus(ctx context.Context, arg UpdateGatewayPolicyDecisionApprovalStatusParams) (GatewayPolicyDecision, error) {
+	row := q.db.QueryRow(ctx, updateGatewayPolicyDecisionApprovalStatus, arg.WorkspaceID, arg.ID, arg.ApprovalStatus)
+	var i GatewayPolicyDecision
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PolicyID,
+		&i.PolicyVersion,
+		&i.SubjectUserID,
+		&i.SubjectAgentID,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.ResourceLabel,
+		&i.Decision,
+		&i.ReasonCode,
+		&i.MatchedRules,
+		&i.RequestID,
+		&i.SessionID,
+		&i.SpanRowID,
+		&i.ApprovalStatus,
+		&i.EvidenceReferences,
+		&i.CreatedAt,
 	)
 	return i, err
 }

@@ -60,6 +60,8 @@ import type {
   GatewayObservabilityParams,
   GatewayOverviewResponse,
   GatewayGovernancePolicyItem,
+  GatewayPolicyDecisionApprovalRequest,
+  GatewayPolicyDecisionApprovalResponse,
   GatewayPolicyDecisionItem,
   GatewayPolicyExceptionItem,
   GatewayProviderRisk,
@@ -701,6 +703,20 @@ export class ApiClient {
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     const query = search.toString();
     return this.fetch(`/api/gateway/governance/policy-decisions${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async approveGatewayPolicyDecision(id: string, data: GatewayPolicyDecisionApprovalRequest): Promise<GatewayPolicyDecisionApprovalResponse> {
+    return this.fetch(`/api/gateway/governance/policy-decisions/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async denyGatewayPolicyDecision(id: string, data: GatewayPolicyDecisionApprovalRequest): Promise<GatewayPolicyDecisionApprovalResponse> {
+    return this.fetch(`/api/gateway/governance/policy-decisions/${encodeURIComponent(id)}/deny`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async listGatewayGovernancePolicies(params?: { signal?: AbortSignal }): Promise<GatewayGovernancePolicyItem[]> {

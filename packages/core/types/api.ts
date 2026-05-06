@@ -230,6 +230,16 @@ export interface GatewayPolicyDecisionItem {
   created_at: string;
 }
 
+export interface GatewayPolicyDecisionApprovalRequest {
+  reason?: string;
+  expires_at?: string;
+}
+
+export interface GatewayPolicyDecisionApprovalResponse {
+  decision: GatewayPolicyDecisionItem;
+  exception?: GatewayPolicyExceptionItem;
+}
+
 export interface GatewayEvidenceItem {
   id: string;
   evidence_type: string;

@@ -51,6 +51,8 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayAudit: vi.fn(),
     listGatewayProviderRisks: vi.fn(),
     listGatewayPolicyDecisions: vi.fn(),
+    approveGatewayPolicyDecision: vi.fn(),
+    denyGatewayPolicyDecision: vi.fn(),
     listGatewayGovernancePolicies: vi.fn(),
     createGatewayGovernancePolicy: vi.fn(),
     updateGatewayGovernancePolicy: vi.fn(),
@@ -381,6 +383,25 @@ const gatewayPolicyDecisions: GatewayPolicyDecisionItem[] = [
     approval_status: "",
     evidence_references: [],
     created_at: "2026-05-04T12:45:00Z",
+  },
+  {
+    id: "decision-approval-1",
+    policy_id: "policy-1",
+    policy_version: 1,
+    subject_user_id: "user-1",
+    subject_agent_id: "",
+    resource_type: "model",
+    resource_id: "gpt-approval",
+    resource_label: "gpt-approval",
+    decision: "require_approval",
+    reason_code: "model_requires_approval",
+    matched_rules: [{ id: "approval-test", action: "require_approval" }],
+    request_id: "",
+    session_id: "",
+    span_row_id: "",
+    approval_status: "requested",
+    evidence_references: [],
+    created_at: "2026-05-04T12:50:00Z",
   },
 ];
 
@@ -792,6 +813,30 @@ describe("GatewayPage", () => {
     expect(within(decisionsTable).getByText("provider_risk_rejected")).toBeInTheDocument();
     expect(within(decisionsTable).getByText("openrouter")).toBeInTheDocument();
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
+  });
+
+  it("approves and denies requested Gateway policy decisions from the Setup tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+
+    const decisionsTable = await screen.findByRole("table", { name: /Gateway policy decisions/ });
+    await user.click(within(decisionsTable).getByRole("button", { name: /Approve gpt-approval/ }));
+
+    await waitFor(() => {
+      expect(mockApi.approveGatewayPolicyDecision).toHaveBeenCalledWith("decision-approval-1", {
+        reason: "Approved from Gateway policy decisions",
+      });
+    });
+
+    await user.click(within(decisionsTable).getByRole("button", { name: /Deny gpt-approval/ }));
+
+    await waitFor(() => {
+      expect(mockApi.denyGatewayPolicyDecision).toHaveBeenCalledWith("decision-approval-1", {
+        reason: "Denied from Gateway policy decisions",
+      });
+    });
   });
 
   it("creates and toggles Gateway governance policies from the Setup tab", async () => {

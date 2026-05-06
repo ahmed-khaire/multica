@@ -50,3 +50,13 @@ WHERE workspace_id = $1
   AND created_at >= @since::timestamptz
 ORDER BY created_at DESC
 LIMIT $2;
+
+-- name: GetGatewayPolicyDecision :one
+SELECT * FROM gateway_policy_decision
+WHERE workspace_id = $1 AND id = $2;
+
+-- name: UpdateGatewayPolicyDecisionApprovalStatus :one
+UPDATE gateway_policy_decision
+SET approval_status = $3
+WHERE workspace_id = $1 AND id = $2
+RETURNING *;

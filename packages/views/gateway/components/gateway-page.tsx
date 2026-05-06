@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Bot,
   Boxes,
+  Check,
   CircleDollarSign,
   Copy,
   DatabaseZap,
@@ -25,6 +26,7 @@ import {
   TerminalSquare,
   Trash2,
   Wrench,
+  X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -1615,8 +1617,28 @@ function GatewayPolicyDecisions({
   canManage: boolean;
   wsId: string;
 }) {
+  const qc = useQueryClient();
   const decisionsQuery = useQuery(gatewayPolicyDecisionsOptions(wsId, 20, canManage));
   const rows = decisionsQuery.data ?? [];
+  const invalidateDecisions = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.policyDecisions(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.policyExceptions(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+  };
+  const approveDecisionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.approveGatewayPolicyDecision(id, {
+        reason: "Approved from Gateway policy decisions",
+      }),
+    onSuccess: invalidateDecisions,
+  });
+  const denyDecisionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.denyGatewayPolicyDecision(id, {
+        reason: "Denied from Gateway policy decisions",
+      }),
+    onSuccess: invalidateDecisions,
+  });
 
   if (!canManage) return null;
 
@@ -1649,31 +1671,77 @@ function GatewayPolicyDecisions({
                 <TableHead>Reason</TableHead>
                 <TableHead>Resource</TableHead>
                 <TableHead className="text-right">Time</TableHead>
+                <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row: GatewayPolicyDecisionItem) => (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <Badge variant={row.decision === "block" ? "destructive" : "outline"}>{row.decision}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-medium">{row.reason_code}</span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex max-w-64 flex-col">
-                      <span className="truncate font-medium">{row.resource_label || row.resource_id}</span>
-                      <span className="truncate text-xs text-muted-foreground">{row.resource_type}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.created_at)}</TableCell>
-                </TableRow>
-              ))}
+              {rows.map((row: GatewayPolicyDecisionItem) => {
+                const resourceLabel = row.resource_label || row.resource_id || row.resource_type;
+                const canApprove = row.approval_status === "requested";
+                const approving = approveDecisionMutation.isPending && approveDecisionMutation.variables === row.id;
+                const denying = denyDecisionMutation.isPending && denyDecisionMutation.variables === row.id;
+                return (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={row.decision === "block" ? "destructive" : "outline"}>{row.decision}</Badge>
+                        {row.approval_status ? <Badge variant="outline">{row.approval_status}</Badge> : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-medium">{row.reason_code}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex max-w-64 flex-col">
+                        <span className="truncate font-medium">{resourceLabel}</span>
+                        <span className="truncate text-xs text-muted-foreground">{row.resource_type}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.created_at)}</TableCell>
+                    <TableCell className="text-right">
+                      {canApprove ? (
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={approving || denying}
+                            onClick={() => approveDecisionMutation.mutate(row.id)}
+                            aria-label={`Approve ${resourceLabel}`}
+                          >
+                            <Check className="size-3.5" />
+                            Approve
+                          </Button>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={approving || denying}
+                            onClick={() => denyDecisionMutation.mutate(row.id)}
+                            aria-label={`Deny ${resourceLabel}`}
+                          >
+                            <X className="size-3.5" />
+                            Deny
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No action</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}
         {decisionsQuery.error instanceof Error ? (
           <p className="border-t p-3 text-xs text-destructive">{decisionsQuery.error.message}</p>
+        ) : null}
+        {approveDecisionMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{approveDecisionMutation.error.message}</p>
+        ) : null}
+        {denyDecisionMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{denyDecisionMutation.error.message}</p>
         ) : null}
       </CardContent>
     </Card>

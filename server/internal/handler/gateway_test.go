@@ -408,6 +408,125 @@ func TestGatewayPolicyDecisionHandlerListsRecentDecisions(t *testing.T) {
 	}
 }
 
+func TestGatewayPolicyDecisionHandlersApproveAndDenyRequestedDecision(t *testing.T) {
+	var policyID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO gateway_policy (
+			workspace_id, name, description, policy_type, enabled,
+			version, rule_definition, enforcement_mode, created_by, updated_by
+		)
+		VALUES (
+			$1, 'Approval workflow test policy', 'Requires approval for a model',
+			'model', true, 1,
+			'{"rules":[{"id":"approval-test","action":"require_approval"}]}'::jsonb,
+			'enforce', $2, $2
+		)
+		RETURNING id::text
+	`, testWorkspaceID, testUserID).Scan(&policyID); err != nil {
+		t.Fatalf("insert gateway policy: %v", err)
+	}
+
+	var approveDecisionID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, policy_id, policy_version, subject_user_id,
+			resource_type, resource_id, resource_label, decision, reason_code,
+			matched_rules, approval_status, evidence_references
+		)
+		VALUES (
+			$1, $2, 1, $3,
+			'model', 'gpt-approval', 'gpt-approval', 'require_approval', 'model_requires_approval',
+			'[{"id":"approval-test"}]'::jsonb, 'requested', '[]'::jsonb
+		)
+		RETURNING id::text
+	`, testWorkspaceID, policyID, testUserID).Scan(&approveDecisionID); err != nil {
+		t.Fatalf("insert approval decision: %v", err)
+	}
+
+	approveW := httptest.NewRecorder()
+	approveReq := newRequest("POST", "/api/gateway/governance/policy-decisions/"+approveDecisionID+"/approve", map[string]any{
+		"reason":     "Approved for incident response",
+		"expires_at": "2026-12-31T00:00:00Z",
+	})
+	approveReq = withURLParam(approveReq, "id", approveDecisionID)
+	testHandler.ApproveGatewayPolicyDecision(approveW, approveReq)
+	if approveW.Code != http.StatusOK {
+		t.Fatalf("ApproveGatewayPolicyDecision: expected 200, got %d: %s", approveW.Code, approveW.Body.String())
+	}
+
+	var approved struct {
+		Decision struct {
+			ID             string `json:"id"`
+			ApprovalStatus string `json:"approval_status"`
+		} `json:"decision"`
+		Exception *struct {
+			PolicyID       string         `json:"policy_id"`
+			ApproverUserID string         `json:"approver_user_id"`
+			Status         string         `json:"status"`
+			Scope          map[string]any `json:"scope"`
+			ExpiresAt      *string        `json:"expires_at"`
+		} `json:"exception"`
+	}
+	if err := json.NewDecoder(approveW.Body).Decode(&approved); err != nil {
+		t.Fatalf("ApproveGatewayPolicyDecision: decode response: %v", err)
+	}
+	if approved.Decision.ID != approveDecisionID || approved.Decision.ApprovalStatus != "approved" {
+		t.Fatalf("ApproveGatewayPolicyDecision: decision = %#v, want approved %s", approved.Decision, approveDecisionID)
+	}
+	if approved.Exception == nil {
+		t.Fatal("ApproveGatewayPolicyDecision: expected approved exception")
+	}
+	if approved.Exception.PolicyID != policyID || approved.Exception.Status != "approved" || approved.Exception.ApproverUserID == "" {
+		t.Fatalf("ApproveGatewayPolicyDecision: exception = %#v, want approved policy-linked exception", approved.Exception)
+	}
+	if approved.Exception.Scope["resource_type"] != "model" || approved.Exception.Scope["resource_id"] != "gpt-approval" {
+		t.Fatalf("ApproveGatewayPolicyDecision: scope = %#v, want model/gpt-approval", approved.Exception.Scope)
+	}
+	if approved.Exception.ExpiresAt == nil {
+		t.Fatal("ApproveGatewayPolicyDecision: expected expires_at on exception")
+	}
+
+	var denyDecisionID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, policy_id, policy_version, subject_user_id,
+			resource_type, resource_id, resource_label, decision, reason_code,
+			matched_rules, approval_status, evidence_references
+		)
+		VALUES (
+			$1, $2, 1, $3,
+			'tool', 'shell', 'shell', 'require_approval', 'tool_requires_approval',
+			'[{"id":"approval-test"}]'::jsonb, 'requested', '[]'::jsonb
+		)
+		RETURNING id::text
+	`, testWorkspaceID, policyID, testUserID).Scan(&denyDecisionID); err != nil {
+		t.Fatalf("insert denial decision: %v", err)
+	}
+
+	denyW := httptest.NewRecorder()
+	denyReq := newRequest("POST", "/api/gateway/governance/policy-decisions/"+denyDecisionID+"/deny", map[string]any{
+		"reason": "Not approved for shell access",
+	})
+	denyReq = withURLParam(denyReq, "id", denyDecisionID)
+	testHandler.DenyGatewayPolicyDecision(denyW, denyReq)
+	if denyW.Code != http.StatusOK {
+		t.Fatalf("DenyGatewayPolicyDecision: expected 200, got %d: %s", denyW.Code, denyW.Body.String())
+	}
+
+	var denied struct {
+		Decision struct {
+			ID             string `json:"id"`
+			ApprovalStatus string `json:"approval_status"`
+		} `json:"decision"`
+	}
+	if err := json.NewDecoder(denyW.Body).Decode(&denied); err != nil {
+		t.Fatalf("DenyGatewayPolicyDecision: decode response: %v", err)
+	}
+	if denied.Decision.ID != denyDecisionID || denied.Decision.ApprovalStatus != "denied" {
+		t.Fatalf("DenyGatewayPolicyDecision: decision = %#v, want denied %s", denied.Decision, denyDecisionID)
+	}
+}
+
 func TestGatewayEvidenceHandlerListsRecentEvidence(t *testing.T) {
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO ai_evidence (

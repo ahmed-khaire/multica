@@ -87,6 +87,11 @@ type gatewayUpdatePolicyExceptionRequest struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+type gatewayPolicyDecisionApprovalRequest struct {
+	Reason    string `json:"reason"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 type gatewayGovernancePolicyRequest struct {
 	Name            string `json:"name"`
 	Description     string `json:"description"`
@@ -321,6 +326,49 @@ func (h *Handler) ListGatewayPolicyDecisions(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp, err := h.Gateway.ListPolicyDecisions(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) ApproveGatewayPolicyDecision(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayPolicyDecisionApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.ApprovePolicyDecision(r.Context(), management.ApprovePolicyDecisionInput{
+		WorkspaceID: workspaceID,
+		ActorUserID: userID,
+		DecisionID:  chi.URLParam(r, "id"),
+		Reason:      req.Reason,
+		ExpiresAt:   req.ExpiresAt,
+	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) DenyGatewayPolicyDecision(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayPolicyDecisionApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.DenyPolicyDecision(r.Context(), management.DenyPolicyDecisionInput{
+		WorkspaceID: workspaceID,
+		ActorUserID: userID,
+		DecisionID:  chi.URLParam(r, "id"),
+		Reason:      req.Reason,
+	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
@@ -705,7 +753,7 @@ func (h *Handler) writeGatewayResult(w http.ResponseWriter, status int, payload 
 	switch {
 	case errors.Is(err, management.ErrInvalidCapturePolicy), errors.Is(err, management.ErrInvalidGatewayBackend):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, management.ErrGatewayBackendNotFound), errors.Is(err, management.ErrGatewayKeyNotFound):
+	case errors.Is(err, management.ErrGatewayBackendNotFound), errors.Is(err, management.ErrGatewayKeyNotFound), errors.Is(err, management.ErrGatewayPolicyDecisionNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, management.ErrGatewaySecretNotConfigured):
 		writeError(w, http.StatusInternalServerError, "gateway secret key is not configured")

@@ -173,6 +173,11 @@ type PolicyDecisionItem struct {
 	CreatedAt          string `json:"created_at"`
 }
 
+type PolicyDecisionApprovalResponse struct {
+	Decision  PolicyDecisionItem   `json:"decision"`
+	Exception *PolicyExceptionItem `json:"exception,omitempty"`
+}
+
 type EvidenceItem struct {
 	ID                   string  `json:"id"`
 	EvidenceType         string  `json:"evidence_type"`
@@ -332,6 +337,21 @@ type UpdatePolicyExceptionInput struct {
 	ExceptionID string
 	Status      string
 	ExpiresAt   string
+}
+
+type ApprovePolicyDecisionInput struct {
+	WorkspaceID string
+	ActorUserID string
+	DecisionID  string
+	Reason      string
+	ExpiresAt   string
+}
+
+type DenyPolicyDecisionInput struct {
+	WorkspaceID string
+	ActorUserID string
+	DecisionID  string
+	Reason      string
 }
 
 type UpdateIncidentInput struct {
