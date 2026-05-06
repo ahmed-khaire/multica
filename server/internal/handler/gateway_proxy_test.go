@@ -614,7 +614,7 @@ func TestGatewayProxyBlocksConfiguredModelPolicy(t *testing.T) {
 	defer upstream.Close()
 
 	createGatewayProxyBackend(t, "local", "policy-block-model-proxy-test", upstream.URL+"/v1", "sk-policy-block")
-	insertGatewayProxyPolicy(t, "policy-block-gpt-test", "model", "enforce", map[string]any{
+	policyID := insertGatewayProxyPolicy(t, "policy-block-gpt-test", "model", "enforce", map[string]any{
 		"rules": []map[string]any{{
 			"id":          "block-gpt-test",
 			"action":      "block",
@@ -661,6 +661,36 @@ func TestGatewayProxyBlocksConfiguredModelPolicy(t *testing.T) {
 	}
 	if decisions == 0 {
 		t.Fatal("expected model policy block to record a policy decision")
+	}
+
+	var evidence int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM ai_evidence
+		WHERE workspace_id = $1
+		  AND linked_policy_id = $2
+		  AND evidence_type = 'gateway_policy_decision'
+		  AND summary LIKE '%model_blocked%'
+	`, testWorkspaceID, policyID).Scan(&evidence); err != nil {
+		t.Fatalf("count policy block evidence: %v", err)
+	}
+	if evidence == 0 {
+		t.Fatal("expected model policy block to create evidence")
+	}
+
+	var incidents int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM ai_incident
+		WHERE workspace_id = $1
+		  AND linked_policy_id = $2
+		  AND category = 'gateway_policy_block'
+		  AND summary LIKE '%model_blocked%'
+	`, testWorkspaceID, policyID).Scan(&incidents); err != nil {
+		t.Fatalf("count policy block incidents: %v", err)
+	}
+	if incidents == 0 {
+		t.Fatal("expected model policy block to create an incident")
 	}
 }
 
@@ -1236,20 +1266,22 @@ func setGatewayProxyDefaultBackend(t *testing.T, slug string) {
 	}
 }
 
-func insertGatewayProxyPolicy(t *testing.T, name, policyType, enforcementMode string, ruleDefinition map[string]any) {
+func insertGatewayProxyPolicy(t *testing.T, name, policyType, enforcementMode string, ruleDefinition map[string]any) string {
 	t.Helper()
 
 	rules, err := json.Marshal(ruleDefinition)
 	if err != nil {
 		t.Fatalf("marshal policy rules: %v", err)
 	}
-	if _, err := testPool.Exec(context.Background(), `
+	var policyID string
+	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO gateway_policy (
 			workspace_id, name, description, policy_type, enabled,
 			version, rule_definition, enforcement_mode, created_by, updated_by
 		)
 		VALUES ($1, $2, '', $3, TRUE, 1, $4::jsonb, $5, $6, $6)
-	`, testWorkspaceID, name, policyType, string(rules), enforcementMode, testUserID); err != nil {
+		RETURNING id
+	`, testWorkspaceID, name, policyType, string(rules), enforcementMode, testUserID).Scan(&policyID); err != nil {
 		t.Fatalf("insert gateway policy %s: %v", name, err)
 	}
 	t.Cleanup(func() {
@@ -1258,4 +1290,5 @@ func insertGatewayProxyPolicy(t *testing.T, name, policyType, enforcementMode st
 			WHERE workspace_id = $1 AND name = $2
 		`, testWorkspaceID, name)
 	})
+	return policyID
 }

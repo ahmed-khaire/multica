@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	gatewaypolicy "github.com/multica-ai/multica/server/internal/gateway/policy"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -169,6 +170,7 @@ func (s *Service) applyGatewayPolicy(w http.ResponseWriter, r *http.Request, pro
 
 	switch evaluation.Decision.Action {
 	case gatewaypolicy.ActionBlock, gatewaypolicy.ActionRequireApproval:
+		s.recordEnforcedPolicyArtifacts(context.Background(), authCtx, req, evaluation)
 		writeProviderError(w, protocol, policyDecisionError(evaluation.Decision))
 		return target, summary, false
 	case gatewaypolicy.ActionRedact:
@@ -214,6 +216,107 @@ func policyDecisionError(decision gatewaypolicy.Decision) GatewayError {
 		Cause:         ErrPolicyBlocked,
 		ResourceType:  "policy",
 	}
+}
+
+func (s *Service) recordEnforcedPolicyArtifacts(ctx context.Context, authCtx AuthContext, req gatewaypolicy.RequestContext, evaluation gatewaypolicy.Evaluation) {
+	if s.Queries == nil {
+		return
+	}
+	workspaceID, err := parseUUID(authCtx.WorkspaceID)
+	if err != nil {
+		return
+	}
+	for _, applied := range evaluation.Applied {
+		if applied.EnforcementMode != gatewaypolicy.EnforcementModeEnforce {
+			continue
+		}
+		if applied.Decision.Action != gatewaypolicy.ActionBlock && applied.Decision.Action != gatewaypolicy.ActionRequireApproval {
+			continue
+		}
+		matchedRules, err := json.Marshal(applied.Decision.MatchedRules)
+		if err != nil {
+			matchedRules = []byte("[]")
+		}
+		payload, err := json.Marshal(map[string]any{
+			"decision":        string(applied.Decision.Action),
+			"reason_code":     applied.Decision.ReasonCode,
+			"policy_id":       util.UUIDToString(applied.PolicyID),
+			"policy_name":     applied.PolicyName,
+			"resource_type":   applied.ResourceType,
+			"resource_id":     applied.ResourceID,
+			"resource_label":  applied.ResourceLabel,
+			"subject_user_id": authCtx.UserID,
+			"provider":        req.Provider,
+			"model":           req.Model,
+			"matched_rules":   json.RawMessage(matchedRules),
+		})
+		if err != nil {
+			payload = []byte("{}")
+		}
+		summary := policyArtifactSummary(applied)
+		_, _ = s.Queries.CreateAIEvidence(ctx, db.CreateAIEvidenceParams{
+			WorkspaceID:     workspaceID,
+			EvidenceType:    "gateway_policy_decision",
+			FrameworkRefs:   []byte(`["internal_gateway_governance"]`),
+			LinkedPolicyID:  applied.PolicyID,
+			LinkedBackendID: policyLinkedBackendID(applied),
+			Summary:         summary,
+			Payload:         payload,
+			AttachmentRef:   "",
+		})
+		_, _ = s.Queries.CreateAIIncident(ctx, db.CreateAIIncidentParams{
+			WorkspaceID:      workspaceID,
+			Severity:         policyArtifactSeverity(applied.Decision.Action),
+			Category:         policyArtifactCategory(applied.Decision.Action),
+			LinkedPolicyID:   applied.PolicyID,
+			Summary:          summary,
+			Status:           "open",
+			RemediationNotes: policyArtifactRemediation(applied.Decision.Action),
+		})
+	}
+}
+
+func policyLinkedBackendID(applied gatewaypolicy.AppliedDecision) pgtype.UUID {
+	if applied.ResourceType != "provider" {
+		return pgtype.UUID{}
+	}
+	return optionalParsedUUID(applied.ResourceID)
+}
+
+func policyArtifactSummary(applied gatewaypolicy.AppliedDecision) string {
+	resource := applied.ResourceLabel
+	if strings.TrimSpace(resource) == "" {
+		resource = applied.ResourceID
+	}
+	if strings.TrimSpace(resource) == "" {
+		resource = applied.ResourceType
+	}
+	action := "blocked"
+	if applied.Decision.Action == gatewaypolicy.ActionRequireApproval {
+		action = "requires approval for"
+	}
+	return fmt.Sprintf("Gateway %s %s %s: %s", action, applied.ResourceType, resource, applied.Decision.ReasonCode)
+}
+
+func policyArtifactSeverity(action gatewaypolicy.Action) string {
+	if action == gatewaypolicy.ActionBlock {
+		return "high"
+	}
+	return "medium"
+}
+
+func policyArtifactCategory(action gatewaypolicy.Action) string {
+	if action == gatewaypolicy.ActionRequireApproval {
+		return "gateway_policy_approval_required"
+	}
+	return "gateway_policy_block"
+}
+
+func policyArtifactRemediation(action gatewaypolicy.Action) string {
+	if action == gatewaypolicy.ActionRequireApproval {
+		return "Review the policy decision and approve a scoped exception if the request is valid."
+	}
+	return "Review the Gateway policy and request context before allowing this traffic."
 }
 
 func (s *Service) recordExceptionAllow(ctx context.Context, authCtx AuthContext, target BackendTarget) {
