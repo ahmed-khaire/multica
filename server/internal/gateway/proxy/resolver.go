@@ -10,18 +10,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/gateway/management"
 	"github.com/multica-ai/multica/server/internal/gateway/secrets"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func CompatibleBackendType(protocol, backendType string) bool {
+	upstreamProtocol := BackendProtocolForType(backendType)
 	switch protocol {
-	case ProtocolOpenAI:
-		return backendType == management.BackendTypeOpenAICompatible
-	case ProtocolAnthropic:
-		return backendType == management.BackendTypeAnthropic
+	case ProtocolOpenAI, ProtocolAnthropic:
+		return upstreamProtocol == ProtocolOpenAI || upstreamProtocol == ProtocolAnthropic
 	default:
 		return false
 	}
@@ -126,6 +124,7 @@ func (r *Resolver) ResolveBackend(ctx context.Context, workspaceID, protocol, ba
 		ID:                util.UUIDToString(backend.ID),
 		Slug:              backend.Slug,
 		BackendType:       backend.BackendType,
+		UpstreamProtocol:  BackendProtocolForType(backend.BackendType),
 		BaseURL:           backend.BaseUrl,
 		UpstreamSecret:    secret,
 		CapturePolicy:     settings.CapturePolicy,

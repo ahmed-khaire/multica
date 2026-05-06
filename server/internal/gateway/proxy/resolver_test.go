@@ -9,11 +9,14 @@ func TestCompatibleBackendType(t *testing.T) {
 	if !CompatibleBackendType(ProtocolOpenAI, "openai_compatible") {
 		t.Fatal("OpenAI protocol should accept openai_compatible backend")
 	}
-	if CompatibleBackendType(ProtocolOpenAI, "anthropic") {
-		t.Fatal("OpenAI protocol should reject anthropic backend in this phase")
+	if !CompatibleBackendType(ProtocolOpenAI, "anthropic") {
+		t.Fatal("OpenAI protocol should accept anthropic backend through translation")
 	}
 	if !CompatibleBackendType(ProtocolAnthropic, "anthropic") {
 		t.Fatal("Anthropic protocol should accept anthropic backend")
+	}
+	if !CompatibleBackendType(ProtocolAnthropic, "openai_compatible") {
+		t.Fatal("Anthropic protocol should accept openai_compatible backend through translation")
 	}
 }
 

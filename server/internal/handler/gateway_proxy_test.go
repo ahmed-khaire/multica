@@ -153,6 +153,140 @@ func TestGatewayProxyAnthropicMessagesRoutesToDefaultBackend(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyTranslatesOpenAIClientToAnthropicBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("upstream path = %s, want /v1/messages", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "sk-translate-anthropic" {
+			t.Errorf("x-api-key = %q, want upstream key", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("authorization leaked upstream: %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		if body["system"] != "Be concise." {
+			t.Errorf("system = %#v, want Be concise.", body["system"])
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) != 1 || messages[0].(map[string]any)["role"] != "user" {
+			t.Errorf("messages = %#v, want one user message", body["messages"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":          "msg_translate",
+			"type":        "message",
+			"role":        "assistant",
+			"model":       "claude-test",
+			"content":     []any{map[string]any{"type": "text", "text": "translated hello"}},
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 3, "output_tokens": 4},
+		})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "anthropic", "translate-anthropic-proxy-test", upstream.URL, "sk-translate-anthropic")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"claude-test","messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Hello"}],"max_tokens":64}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode client response: %v", err)
+	}
+	if resp["object"] != "chat.completion" {
+		t.Fatalf("client response = %#v, want OpenAI chat.completion", resp)
+	}
+	choices := resp["choices"].([]any)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	if message["content"] != "translated hello" {
+		t.Fatalf("message content = %#v, want translated hello", message["content"])
+	}
+}
+
+func TestGatewayProxyTranslatesAnthropicClientToOpenAIBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("upstream path = %s, want /v1/chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-translate-openai" {
+			t.Errorf("Authorization = %q, want upstream key", got)
+		}
+		if got := r.Header.Get("x-api-key"); got != "" {
+			t.Errorf("x-api-key leaked upstream: %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) != 2 || messages[0].(map[string]any)["role"] != "system" {
+			t.Errorf("messages = %#v, want system plus user", body["messages"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl_translate",
+			"object": "chat.completion",
+			"model":  "gpt-test",
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"role": "assistant", "content": "translated hello"},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+		})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "translate-openai-proxy-test", upstream.URL+"/v1", "sk-translate-openai")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-test","system":"Be concise.","messages":[{"role":"user","content":"Hello"}],"max_tokens":64}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", gatewayKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	testHandler.GatewayAnthropicMessages(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode client response: %v", err)
+	}
+	if resp["type"] != "message" || resp["role"] != "assistant" {
+		t.Fatalf("client response = %#v, want Anthropic message", resp)
+	}
+	content := resp["content"].([]any)
+	if content[0].(map[string]any)["text"] != "translated hello" {
+		t.Fatalf("content = %#v, want translated hello", content)
+	}
+}
+
 func TestGatewayProxyStreamingPassThrough(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)
@@ -183,6 +317,101 @@ func TestGatewayProxyStreamingPassThrough(t *testing.T) {
 	}
 	if got := w.Body.String(); got != "data: one\n\ndata: two\n\n" {
 		t.Fatalf("stream body = %q", got)
+	}
+}
+
+func TestGatewayProxyTranslatesAnthropicStreamToOpenAIClient(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("upstream path = %s, want /v1/messages", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		if body["stream"] != true {
+			t.Fatalf("stream = %#v, want true", body["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, chunk := range []string{
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+		} {
+			_, _ = w.Write([]byte(chunk))
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "anthropic", "stream-anthropic-translate-proxy-test", upstream.URL, "sk-stream-anthropic")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"claude-test","stream":true,"messages":[{"role":"user","content":"hello"}],"max_tokens":64}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIChatCompletions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !w.Flushed {
+		t.Fatal("expected streaming response to flush")
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"content":"hello"`) || !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("stream body = %q, want OpenAI chunks and DONE", body)
+	}
+}
+
+func TestGatewayProxyTranslatesOpenAIStreamToAnthropicClient(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("upstream path = %s, want /v1/chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		if body["stream"] != true {
+			t.Fatalf("stream = %#v, want true", body["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, chunk := range []string{
+			"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"index\":0}]}\n\n",
+			"data: [DONE]\n\n",
+		} {
+			_, _ = w.Write([]byte(chunk))
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "stream-openai-translate-proxy-test", upstream.URL+"/v1", "sk-stream-openai")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-test","stream":true,"messages":[{"role":"user","content":"hello"}],"max_tokens":64}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", gatewayKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	testHandler.GatewayAnthropicMessages(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !w.Flushed {
+		t.Fatal("expected streaming response to flush")
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "event: content_block_delta") || !strings.Contains(body, `"text":"hello"`) || !strings.Contains(body, "event: message_stop") {
+		t.Fatalf("stream body = %q, want Anthropic events", body)
 	}
 }
 

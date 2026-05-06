@@ -114,6 +114,7 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 		return
 	}
 	summary.RoutePath = routePathFor(surface, target)
+	summary.TranslationMode = TranslationModeFor(protocol, target.UpstreamProtocol)
 	if target.PolicyExceptionID != "" {
 		s.recordExceptionAllow(context.Background(), authCtx, target)
 	}
@@ -327,14 +328,23 @@ func summarizeRequest(r *http.Request, surface, protocol string) (RequestSummary
 }
 
 func routePathFor(surface string, target BackendTarget) string {
-	switch surface {
-	case SurfaceOpenAIChatCompletions:
-		return "/chat/completions"
-	case SurfaceAnthropicMessages:
-		if strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
-			return "/messages"
+	if target.UpstreamProtocol == ProtocolAnthropic {
+		switch surface {
+		case SurfaceModels:
+			if !strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
+				return "/v1/models"
+			}
+			return "/models"
+		default:
+			if strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
+				return "/messages"
+			}
+			return "/v1/messages"
 		}
-		return "/v1/messages"
+	}
+	switch surface {
+	case SurfaceOpenAIChatCompletions, SurfaceAnthropicMessages:
+		return "/chat/completions"
 	case SurfaceModels:
 		if target.BackendType == "anthropic" && !strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
 			return "/v1/models"

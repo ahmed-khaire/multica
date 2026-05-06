@@ -16,6 +16,14 @@ const (
 	StatusPolicyBlocked = "policy_blocked"
 )
 
+type TranslationMode string
+
+const (
+	TranslationNone              TranslationMode = "none"
+	TranslationOpenAIToAnthropic TranslationMode = "openai_to_anthropic"
+	TranslationAnthropicToOpenAI TranslationMode = "anthropic_to_openai"
+)
+
 type AuthContext struct {
 	KeyID       string
 	WorkspaceID string
@@ -27,6 +35,7 @@ type BackendTarget struct {
 	ID                string
 	Slug              string
 	BackendType       string
+	UpstreamProtocol  string
 	BaseURL           string
 	UpstreamSecret    string
 	CapturePolicy     string
@@ -54,6 +63,7 @@ type RequestSummary struct {
 	ExplicitBackendSlug string
 	BackendSlug         string
 	RoutingSource       string
+	TranslationMode     TranslationMode
 }
 
 type ProxyResult struct {
