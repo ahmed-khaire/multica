@@ -214,6 +214,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/governance/exceptions", h.ListGatewayPolicyExceptions)
 					r.Post("/governance/exceptions", h.CreateGatewayPolicyException)
 					r.Patch("/governance/exceptions/{id}", h.UpdateGatewayPolicyException)
+					r.Get("/export", h.ExportGatewayData)
 					r.Post("/default", h.SetGatewayDefaultBackend)
 					r.Post("/policy", h.UpdateGatewayPolicy)
 				})

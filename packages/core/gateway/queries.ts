@@ -34,6 +34,8 @@ export const gatewayKeys = {
     [...gatewayKeys.session(wsId, id), "spans"] as const,
   llmCalls: (wsId: string, params?: GatewayObservabilityParams) =>
     [...gatewayKeys.all(wsId), "llm-calls", filterKey(params)] as const,
+  export: (wsId: string, params?: GatewayObservabilityParams) =>
+    [...gatewayKeys.all(wsId), "export", filterKey(params)] as const,
   ingestKeys: (wsId: string) =>
     [...gatewayKeys.all(wsId), "ingest-keys"] as const,
   status: (wsId: string) =>
@@ -100,6 +102,14 @@ export function gatewayLLMCallsOptions(wsId: string, params?: GatewayObservabili
   return queryOptions({
     queryKey: gatewayKeys.llmCalls(wsId, params),
     queryFn: ({ signal }) => api.listGatewayLLMCalls(withSignal(params, signal)),
+    enabled: !!wsId,
+  });
+}
+
+export function gatewayExportOptions(wsId: string, params?: GatewayObservabilityParams) {
+  return queryOptions({
+    queryKey: gatewayKeys.export(wsId, params),
+    queryFn: ({ signal }) => api.exportGatewayData(withSignal(params, signal)),
     enabled: !!wsId,
   });
 }

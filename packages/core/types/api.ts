@@ -142,6 +142,16 @@ export interface GatewaySettingsResponse {
   default_backend: GatewayBackend | null;
 }
 
+export interface GatewayExportResponse {
+  generated_at: string;
+  workspace_id: string;
+  overview: GatewayOverviewResponse;
+  sessions: GatewaySessionListResponse;
+  llm_calls: GatewayLLMCallListResponse;
+  policy_decisions: GatewayPolicyDecisionItem[];
+  evidence: GatewayEvidenceItem[];
+}
+
 export interface GatewayStatusResponse extends GatewaySettingsResponse {
   openai_base_url: string;
   anthropic_base_url: string;

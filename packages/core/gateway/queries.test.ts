@@ -7,6 +7,7 @@ const { mockApi } = vi.hoisted(() => ({
     getGatewaySession: vi.fn(),
     getGatewaySessionSpans: vi.fn(),
     listGatewayLLMCalls: vi.fn(),
+    exportGatewayData: vi.fn(),
     listGatewayIngestKeys: vi.fn(),
     getGatewayStatus: vi.fn(),
     listGatewayBackends: vi.fn(),
@@ -32,6 +33,7 @@ import {
   gatewaySessionDetailOptions,
   gatewaySessionSpansOptions,
   gatewayLLMCallsOptions,
+  gatewayExportOptions,
   gatewayIngestKeysOptions,
   gatewayStatusOptions,
   gatewayBackendsOptions,
@@ -86,6 +88,12 @@ describe("gateway query options", () => {
       "backends",
       "backend-1",
       "credentials",
+    ]);
+    expect(gatewayKeys.export("ws-1", { since: "24h", limit: 10 })).toEqual([
+      "gateway",
+      "ws-1",
+      "export",
+      { since: "24h", limit: 10 },
     ]);
     expect(gatewayKeys.audit("ws-1", 20)).toEqual([
       "gateway",
@@ -145,6 +153,7 @@ describe("gateway query options", () => {
     mockApi.getGatewaySession.mockResolvedValueOnce({ id: "session-1" });
     mockApi.getGatewaySessionSpans.mockResolvedValueOnce({ spans: [] });
     mockApi.listGatewayLLMCalls.mockResolvedValueOnce({ calls: [] });
+    mockApi.exportGatewayData.mockResolvedValueOnce({ generated_at: "now" });
     mockApi.listGatewayIngestKeys.mockResolvedValueOnce([]);
     mockApi.getGatewayStatus.mockResolvedValueOnce({ capture_policy: "full_content" });
     mockApi.listGatewayBackends.mockResolvedValueOnce([]);
@@ -164,6 +173,7 @@ describe("gateway query options", () => {
     const sessionQuery = gatewaySessionDetailOptions("ws-1", "session-1");
     const spansQuery = gatewaySessionSpansOptions("ws-1", "session-1");
     const callsQuery = gatewayLLMCallsOptions("ws-1", { model: "gpt-4.1" });
+    const exportQuery = gatewayExportOptions("ws-1", { since: "24h", limit: 10 });
     const ingestKeysQuery = gatewayIngestKeysOptions("ws-1");
     const statusQuery = gatewayStatusOptions("ws-1");
     const backendsQuery = gatewayBackendsOptions("ws-1");
@@ -183,6 +193,7 @@ describe("gateway query options", () => {
     expect(sessionQuery.queryFn).toBeTypeOf("function");
     expect(spansQuery.queryFn).toBeTypeOf("function");
     expect(callsQuery.queryFn).toBeTypeOf("function");
+    expect(exportQuery.queryFn).toBeTypeOf("function");
     expect(ingestKeysQuery.queryFn).toBeTypeOf("function");
     expect(statusQuery.queryFn).toBeTypeOf("function");
     expect(backendsQuery.queryFn).toBeTypeOf("function");
@@ -202,6 +213,7 @@ describe("gateway query options", () => {
     await sessionQuery.queryFn!({} as never);
     await spansQuery.queryFn!({} as never);
     await callsQuery.queryFn!({} as never);
+    await exportQuery.queryFn!({} as never);
     await ingestKeysQuery.queryFn!({} as never);
     await statusQuery.queryFn!({} as never);
     await backendsQuery.queryFn!({} as never);
@@ -221,6 +233,7 @@ describe("gateway query options", () => {
     expect(mockApi.getGatewaySession).toHaveBeenCalledWith("session-1");
     expect(mockApi.getGatewaySessionSpans).toHaveBeenCalledWith("session-1");
     expect(mockApi.listGatewayLLMCalls).toHaveBeenCalledWith({ model: "gpt-4.1" });
+    expect(mockApi.exportGatewayData).toHaveBeenCalledWith({ since: "24h", limit: 10 });
     expect(mockApi.listGatewayIngestKeys).toHaveBeenCalledWith();
     expect(mockApi.getGatewayStatus).toHaveBeenCalledWith();
     expect(mockApi.listGatewayBackends).toHaveBeenCalledWith();
@@ -240,6 +253,7 @@ describe("gateway query options", () => {
     const signal = new AbortController().signal;
     mockApi.getGatewayOverview.mockResolvedValueOnce({ summary: {} });
     mockApi.getGatewaySession.mockResolvedValueOnce({ id: "session-1" });
+    mockApi.exportGatewayData.mockResolvedValueOnce({ generated_at: "now" });
     mockApi.listGatewayIngestKeys.mockResolvedValueOnce([]);
     mockApi.getGatewayStatus.mockResolvedValueOnce({ capture_policy: "full_content" });
     mockApi.listGatewayBackends.mockResolvedValueOnce([]);
@@ -256,6 +270,7 @@ describe("gateway query options", () => {
 
     await gatewayOverviewOptions("ws-1", { since: "24h" }).queryFn!({ signal } as never);
     await gatewaySessionDetailOptions("ws-1", "session-1").queryFn!({ signal } as never);
+    await gatewayExportOptions("ws-1", { since: "24h", limit: 10 }).queryFn!({ signal } as never);
     await gatewayIngestKeysOptions("ws-1").queryFn!({ signal } as never);
     await gatewayStatusOptions("ws-1").queryFn!({ signal } as never);
     await gatewayBackendsOptions("ws-1").queryFn!({ signal } as never);
@@ -272,6 +287,7 @@ describe("gateway query options", () => {
 
     expect(mockApi.getGatewayOverview).toHaveBeenCalledWith({ since: "24h", signal });
     expect(mockApi.getGatewaySession).toHaveBeenCalledWith("session-1", { signal });
+    expect(mockApi.exportGatewayData).toHaveBeenCalledWith({ since: "24h", limit: 10, signal });
     expect(mockApi.listGatewayIngestKeys).toHaveBeenCalledWith({ signal });
     expect(mockApi.getGatewayStatus).toHaveBeenCalledWith({ signal });
     expect(mockApi.listGatewayBackends).toHaveBeenCalledWith({ signal });

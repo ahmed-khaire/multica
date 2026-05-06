@@ -56,6 +56,7 @@ import type {
   GatewayControlMappingItem,
   GatewayDoctorResponse,
   GatewayEvidenceItem,
+  GatewayExportResponse,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -649,6 +650,10 @@ export class ApiClient {
 
   async listGatewayLLMCalls(params?: GatewayObservabilityParams): Promise<GatewayLLMCallListResponse> {
     return this.fetch(`/api/gateway/llm-calls${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
+  async exportGatewayData(params?: GatewayObservabilityParams): Promise<GatewayExportResponse> {
+    return this.fetch(`/api/gateway/export${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
   }
 
   async getGatewayStatus(params?: { signal?: AbortSignal }): Promise<GatewayStatusResponse> {

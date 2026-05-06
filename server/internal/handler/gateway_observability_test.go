@@ -242,6 +242,78 @@ func TestGatewayObservabilityLLMCallsFiltersAndErrors(t *testing.T) {
 	}
 }
 
+func TestGatewayExportBundlesObservableAndGovernanceData(t *testing.T) {
+	seed := seedGatewayObservabilityTelemetry(t, "export")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, subject_user_id, resource_type, resource_id, resource_label,
+			decision, reason_code, matched_rules, evidence_references
+		)
+		VALUES ($1, $2, 'model', 'gpt-export', 'gpt-export',
+			'warn', 'model_export_warning', '[{"id":"model-export-warning"}]'::jsonb, '[]'::jsonb)
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("insert policy decision: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_evidence (
+			workspace_id, evidence_type, summary, payload, attachment_ref
+		)
+		VALUES ($1, 'gateway_export_test', 'Gateway export evidence', jsonb_build_object('session_id', $2::text), '')
+	`, testWorkspaceID, seed.SessionID); err != nil {
+		t.Fatalf("insert evidence: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/gateway/export?since=24h&limit=10", nil)
+	testHandler.ExportGatewayData(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ExportGatewayData status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		GeneratedAt string `json:"generated_at"`
+		WorkspaceID string `json:"workspace_id"`
+		Overview    any    `json:"overview"`
+		Sessions    struct {
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
+		} `json:"sessions"`
+		LLMCalls struct {
+			Calls []struct {
+				SessionID string `json:"session_id"`
+			} `json:"calls"`
+		} `json:"llm_calls"`
+		PolicyDecisions []struct {
+			ReasonCode string `json:"reason_code"`
+		} `json:"policy_decisions"`
+		Evidence []struct {
+			EvidenceType string `json:"evidence_type"`
+		} `json:"evidence"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ExportGatewayData decode response: %v", err)
+	}
+	if resp.GeneratedAt == "" || resp.WorkspaceID != testWorkspaceID {
+		t.Fatalf("export metadata = generated_at %q workspace %q", resp.GeneratedAt, resp.WorkspaceID)
+	}
+	if resp.Overview == nil {
+		t.Fatal("expected overview in export")
+	}
+	if len(resp.Sessions.Sessions) == 0 || resp.Sessions.Sessions[0].ID != seed.SessionID {
+		t.Fatalf("export sessions = %#v, want seeded session", resp.Sessions.Sessions)
+	}
+	if len(resp.LLMCalls.Calls) == 0 || resp.LLMCalls.Calls[0].SessionID != seed.SessionID {
+		t.Fatalf("export llm calls = %#v, want seeded session", resp.LLMCalls.Calls)
+	}
+	if len(resp.PolicyDecisions) == 0 {
+		t.Fatal("expected policy decisions in export")
+	}
+	if len(resp.Evidence) == 0 {
+		t.Fatal("expected evidence in export")
+	}
+}
+
 func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObservabilitySeed {
 	t.Helper()
 
