@@ -43,6 +43,7 @@ import type {
   GatewayEvidenceItem,
   GatewayEvidenceBundleParams,
   GatewayEvidenceBundleResponse,
+  GatewayEvidenceExportItem,
   GatewayExportResponse,
   GatewayHealthReportResponse,
   GatewayIncidentItem,
@@ -80,6 +81,8 @@ import {
   gatewayControlMappingsOptions,
   gatewayEvidenceOptions,
   gatewayEvidenceBundleOptions,
+  gatewayEvidenceExportOptions,
+  gatewayEvidenceExportsOptions,
   gatewayHealthReportOptions,
   gatewayGovernanceInsightsOptions,
   gatewayIncidentsOptions,
@@ -807,6 +810,65 @@ function EvidenceBundlePanel({
         <pre className="max-h-72 overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
           {JSON.stringify(bundle, null, 2)}
         </pre>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EvidenceExportHistory({
+  rows,
+  loading,
+  error,
+  pendingExportId,
+  onOpenExport,
+}: {
+  rows: GatewayEvidenceExportItem[];
+  loading: boolean;
+  error: unknown;
+  pendingExportId: string;
+  onOpenExport: (id: string) => void;
+}) {
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <History className="size-4 text-muted-foreground" />
+          Evidence Export History
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-14 rounded-md" />)
+        ) : rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No stored Gateway evidence exports yet.</p>
+        ) : (
+          rows.slice(0, 5).map((row) => (
+            <div key={row.id} className="rounded-md border p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {row.subject_type} · {row.subject_id}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatTime(row.created_at)} · {row.digest_sha256.slice(0, 16)}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => onOpenExport(row.id)}
+                  disabled={pendingExportId === row.id}
+                  aria-label={`Open stored evidence export ${row.id}`}
+                >
+                  <Eye className="size-3.5" />
+                  Open
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
+        {error instanceof Error ? <p className="text-xs text-destructive">{error.message}</p> : null}
       </CardContent>
     </Card>
   );
@@ -2081,10 +2143,17 @@ function GatewayGovernanceInsights({
   const insightsQuery = useQuery(gatewayGovernanceInsightsOptions(wsId, canManage));
   const insights = insightsQuery.data as GatewayGovernanceInsightsResponse | undefined;
   const [selectedEvidenceBundle, setSelectedEvidenceBundle] = useState<GatewayEvidenceBundleParams | null>(null);
+  const [selectedEvidenceExportID, setSelectedEvidenceExportID] = useState("");
   const bundleQuery = useQuery(gatewayEvidenceBundleOptions(
     wsId,
     selectedEvidenceBundle ?? {},
-    canManage && Boolean(selectedEvidenceBundle),
+    canManage && Boolean(selectedEvidenceBundle) && !selectedEvidenceExportID,
+  ));
+  const evidenceExportsQuery = useQuery(gatewayEvidenceExportsOptions(wsId, 5, canManage));
+  const evidenceExportQuery = useQuery(gatewayEvidenceExportOptions(
+    wsId,
+    selectedEvidenceExportID,
+    canManage && Boolean(selectedEvidenceExportID),
   ));
 
   const invalidateGovernance = () => {
@@ -2095,6 +2164,7 @@ function GatewayGovernanceInsights({
     void qc.invalidateQueries({ queryKey: gatewayKeys.policyDecisions(wsId, 20) });
     void qc.invalidateQueries({ queryKey: gatewayKeys.providerRisks(wsId) });
     void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.evidenceExports(wsId, 5) });
   };
 
   const remediateIncidentMutation = useMutation({
@@ -2185,6 +2255,9 @@ function GatewayGovernanceInsights({
   const maxBackendCalls = Math.max(...behavior.top_backends.map((backend) => backend.call_count), 1);
   const maxReasonCount = Math.max(...behavior.policy_reason_counts.map((reason) => reason.count), 1);
   const maxBlockedCount = Math.max(...behavior.blocked_resources.map((resource) => resource.count), 1);
+  const activeBundle = selectedEvidenceExportID
+    ? evidenceExportQuery.data?.bundle_snapshot
+    : bundleQuery.data;
 
   return (
     <div className="space-y-3">
@@ -2394,7 +2467,10 @@ function GatewayGovernanceInsights({
               onDenyPolicyDecision={(id) => denyDecisionMutation.mutate(id)}
               onRemediateIncident={(id) => remediateIncidentMutation.mutate(id)}
               onRevokePolicyException={(id) => revokeExceptionMutation.mutate(id)}
-              onViewEvidenceBundle={setSelectedEvidenceBundle}
+              onViewEvidenceBundle={(params) => {
+                setSelectedEvidenceExportID("");
+                setSelectedEvidenceBundle(params);
+              }}
               pendingDecisionId={approveDecisionMutation.isPending ? approveDecisionMutation.variables ?? "" : ""}
               pendingExceptionId={revokeExceptionMutation.isPending ? revokeExceptionMutation.variables ?? "" : ""}
               pendingIncidentId={remediateIncidentMutation.isPending ? remediateIncidentMutation.variables ?? "" : ""}
@@ -2403,12 +2479,26 @@ function GatewayGovernanceInsights({
         </Card>
       </div>
 
-      {selectedEvidenceBundle ? (
+      <EvidenceExportHistory
+        rows={evidenceExportsQuery.data ?? []}
+        loading={evidenceExportsQuery.isLoading}
+        error={evidenceExportsQuery.error}
+        pendingExportId={evidenceExportQuery.isLoading ? selectedEvidenceExportID : ""}
+        onOpenExport={(id) => {
+          setSelectedEvidenceBundle(null);
+          setSelectedEvidenceExportID(id);
+        }}
+      />
+
+      {selectedEvidenceBundle || selectedEvidenceExportID ? (
         <EvidenceBundlePanel
-          bundle={bundleQuery.data ?? undefined}
-          loading={bundleQuery.isLoading}
-          error={bundleQuery.error}
-          onClose={() => setSelectedEvidenceBundle(null)}
+          bundle={activeBundle ?? undefined}
+          loading={selectedEvidenceExportID ? evidenceExportQuery.isLoading : bundleQuery.isLoading}
+          error={selectedEvidenceExportID ? evidenceExportQuery.error : bundleQuery.error}
+          onClose={() => {
+            setSelectedEvidenceBundle(null);
+            setSelectedEvidenceExportID("");
+          }}
         />
       ) : null}
 

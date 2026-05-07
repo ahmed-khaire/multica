@@ -379,6 +379,7 @@ func TestGatewayEvidenceBundleExportComposesServerSideAndAudits(t *testing.T) {
 			} `json:"subject"`
 		} `json:"evidence_bundle"`
 		Export struct {
+			ID           string   `json:"id"`
 			WorkspaceID  string   `json:"workspace_id"`
 			SubjectID    string   `json:"subject_id"`
 			DigestSHA256 string   `json:"digest_sha256"`
@@ -416,7 +417,7 @@ func TestGatewayEvidenceBundleExportComposesServerSideAndAudits(t *testing.T) {
 	if resp.EvidenceBundle.Subject.GeneratedBy != "multica gateway api" || resp.EvidenceBundle.Subject.CapturePolicyNote == "" {
 		t.Fatalf("bundle subject metadata = %#v, want api generator and capture note", resp.EvidenceBundle.Subject)
 	}
-	if resp.Export.WorkspaceID != testWorkspaceID || resp.Export.SubjectID != seed.SessionID || resp.Export.DigestSHA256 == "" {
+	if resp.Export.ID == "" || resp.Export.WorkspaceID != testWorkspaceID || resp.Export.SubjectID != seed.SessionID || resp.Export.DigestSHA256 == "" {
 		t.Fatalf("export metadata = %#v, want workspace/subject/digest", resp.Export)
 	}
 	if len(resp.Export.Sections) == 0 {
@@ -457,6 +458,60 @@ func TestGatewayEvidenceBundleExportComposesServerSideAndAudits(t *testing.T) {
 	}
 	if auditRows[0].TargetType != "gateway_export" || auditRows[0].AfterState["export_type"] != "evidence_bundle" {
 		t.Fatalf("evidence bundle audit row = %#v, want gateway export evidence bundle", auditRows[0])
+	}
+
+	historyW := httptest.NewRecorder()
+	historyReq := newRequest(http.MethodGet, "/api/gateway/governance/evidence-exports?limit=5", nil)
+	testHandler.ListGatewayEvidenceExports(historyW, historyReq)
+	if historyW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayEvidenceExports status = %d, want 200: %s", historyW.Code, historyW.Body.String())
+	}
+	var historyRows []struct {
+		ID           string   `json:"id"`
+		ExportType   string   `json:"export_type"`
+		SubjectType  string   `json:"subject_type"`
+		SubjectID    string   `json:"subject_id"`
+		DigestSHA256 string   `json:"digest_sha256"`
+		Sections     []string `json:"sections"`
+		ActorEmail   string   `json:"actor_email"`
+	}
+	if err := json.NewDecoder(historyW.Body).Decode(&historyRows); err != nil {
+		t.Fatalf("ListGatewayEvidenceExports decode response: %v", err)
+	}
+	if len(historyRows) == 0 || historyRows[0].ID != resp.Export.ID {
+		t.Fatalf("history rows = %#v, want latest export %s", historyRows, resp.Export.ID)
+	}
+	if historyRows[0].ExportType != "evidence_bundle" || historyRows[0].SubjectID != seed.SessionID || historyRows[0].DigestSHA256 != resp.Export.DigestSHA256 {
+		t.Fatalf("history export = %#v, want evidence bundle metadata", historyRows[0])
+	}
+
+	detailW := httptest.NewRecorder()
+	detailReq := newRequest(http.MethodGet, "/api/gateway/governance/evidence-exports/"+resp.Export.ID, nil)
+	detailReq = withURLParam(detailReq, "id", resp.Export.ID)
+	testHandler.GetGatewayEvidenceExport(detailW, detailReq)
+	if detailW.Code != http.StatusOK {
+		t.Fatalf("GetGatewayEvidenceExport status = %d, want 200: %s", detailW.Code, detailW.Body.String())
+	}
+	var detail struct {
+		ID             string `json:"id"`
+		DigestSHA256   string `json:"digest_sha256"`
+		BundleSnapshot struct {
+			Export struct {
+				ID string `json:"id"`
+			} `json:"export"`
+			Evidence []struct {
+				Summary string `json:"summary"`
+			} `json:"evidence"`
+		} `json:"bundle_snapshot"`
+	}
+	if err := json.NewDecoder(detailW.Body).Decode(&detail); err != nil {
+		t.Fatalf("GetGatewayEvidenceExport decode response: %v", err)
+	}
+	if detail.ID != resp.Export.ID || detail.DigestSHA256 != resp.Export.DigestSHA256 {
+		t.Fatalf("export detail = %#v, want generated export metadata", detail)
+	}
+	if detail.BundleSnapshot.Export.ID != resp.Export.ID || len(detail.BundleSnapshot.Evidence) == 0 {
+		t.Fatalf("bundle snapshot = %#v, want stored export snapshot", detail.BundleSnapshot)
 	}
 }
 

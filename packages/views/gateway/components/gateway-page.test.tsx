@@ -13,6 +13,8 @@ import type {
   GatewayControlMappingItem,
   GatewayDoctorResponse,
   GatewayEvidenceBundleResponse,
+  GatewayEvidenceExportDetail,
+  GatewayEvidenceExportItem,
   GatewayEvidenceItem,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
@@ -71,6 +73,8 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     getGatewayHealthReport: vi.fn(),
     getGatewayGovernanceInsights: vi.fn(),
     getGatewayEvidenceBundle: vi.fn(),
+    listGatewayEvidenceExports: vi.fn(),
+    getGatewayEvidenceExport: vi.fn(),
     createGatewayPolicyException: vi.fn(),
     updateGatewayPolicyException: vi.fn(),
     updateGatewayIncident: vi.fn(),
@@ -685,6 +689,7 @@ const gatewayEvidenceBundle: GatewayEvidenceBundleResponse = {
     },
   },
   export: {
+    id: "export-1",
     generated_at: "2026-05-04T12:52:00Z",
     workspace_id: "ws-1",
     subject_id: "incident-1",
@@ -699,6 +704,37 @@ const gatewayEvidenceBundle: GatewayEvidenceBundleResponse = {
   provider_risks: gatewayProviderRisks,
   control_mappings: gatewayControlMappings,
   governance_policies: gatewayGovernancePolicies,
+};
+
+const gatewayEvidenceExports: GatewayEvidenceExportItem[] = [
+  {
+    id: "export-1",
+    workspace_id: "ws-1",
+    actor_user_id: "user-1",
+    actor_name: "Admin User",
+    actor_email: "admin@example.com",
+    export_type: "evidence_bundle",
+    subject_type: "incident",
+    subject_id: "incident-1",
+    digest_sha256: "bundle-digest-sha256",
+    sections: ["evidence_bundle", "policy_decisions", "evidence", "incidents"],
+    created_at: "2026-05-04T12:52:00Z",
+  },
+];
+
+const gatewayEvidenceExportDetail: GatewayEvidenceExportDetail = {
+  id: "export-1",
+  workspace_id: "ws-1",
+  actor_user_id: "user-1",
+  actor_name: "Admin User",
+  actor_email: "admin@example.com",
+  export_type: "evidence_bundle",
+  subject_type: "incident",
+  subject_id: "incident-1",
+  digest_sha256: "bundle-digest-sha256",
+  sections: ["evidence_bundle", "policy_decisions", "evidence", "incidents"],
+  created_at: "2026-05-04T12:52:00Z",
+  bundle_snapshot: gatewayEvidenceBundle,
 };
 
 const gatewayExport: GatewayExportResponse = {
@@ -777,6 +813,8 @@ describe("GatewayPage", () => {
     mockApi.getGatewayHealthReport.mockResolvedValue(gatewayHealthReport);
     mockApi.getGatewayGovernanceInsights.mockResolvedValue(gatewayGovernanceInsights);
     mockApi.getGatewayEvidenceBundle.mockResolvedValue(gatewayEvidenceBundle);
+    mockApi.listGatewayEvidenceExports.mockResolvedValue(gatewayEvidenceExports);
+    mockApi.getGatewayEvidenceExport.mockResolvedValue(gatewayEvidenceExportDetail);
     mockApi.createGatewayPolicyException.mockResolvedValue(gatewayPolicyExceptions[0]);
     mockApi.updateGatewayPolicyException.mockResolvedValue({
       ...gatewayPolicyExceptions[0],
@@ -1190,6 +1228,24 @@ describe("GatewayPage", () => {
       });
       clickSpy.mockRestore();
     }
+  });
+
+  it("opens a stored evidence export from Gateway governance history", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+
+    expect(await screen.findByText("Evidence Export History")).toBeInTheDocument();
+    expect(screen.getByText(/bundle-digest/)).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /Open stored evidence export export-1/ }));
+
+    expect(await screen.findByText("Evidence Bundle")).toBeInTheDocument();
+    expect(screen.getAllByText("incident-1").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/bundle-digest/).length).toBeGreaterThanOrEqual(1);
+    expect(mockApi.listGatewayEvidenceExports).toHaveBeenCalledWith({ limit: 5, signal: expect.any(AbortSignal) });
+    expect(mockApi.getGatewayEvidenceExport).toHaveBeenCalledWith("export-1", { signal: expect.any(AbortSignal) });
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {

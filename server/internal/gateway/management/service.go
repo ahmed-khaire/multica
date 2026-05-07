@@ -30,6 +30,7 @@ var (
 	ErrGatewayBackendNotFound        = errors.New("gateway backend not found")
 	ErrGatewayKeyNotFound            = errors.New("gateway key not found")
 	ErrGatewayPolicyDecisionNotFound = errors.New("gateway policy decision not found")
+	ErrGatewayEvidenceExportNotFound = errors.New("gateway evidence export not found")
 )
 
 var governanceStatuses = map[string]struct{}{
@@ -2070,6 +2071,102 @@ func (s *Service) RecordExportAudit(ctx context.Context, workspaceID, actorUserI
 	return audit(ctx, s.queries, workspaceUUID, actorUUID, "gateway.export.read", "gateway_export", uuidString(workspaceUUID), nil, details)
 }
 
+func (s *Service) RecordEvidenceExport(ctx context.Context, input RecordEvidenceExportInput) (EvidenceExportDetail, error) {
+	exportUUID, err := uuidValue(input.ID, "export_id")
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	sections, err := json.Marshal(input.Sections)
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	snapshot, err := json.Marshal(input.BundleSnapshot)
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	row, err := s.queries.CreateAIEvidenceExport(ctx, db.CreateAIEvidenceExportParams{
+		ID:             exportUUID,
+		WorkspaceID:    workspaceUUID,
+		ActorUserID:    actorUUID,
+		ExportType:     strings.TrimSpace(input.ExportType),
+		SubjectType:    strings.TrimSpace(input.SubjectType),
+		SubjectID:      strings.TrimSpace(input.SubjectID),
+		DigestSha256:   strings.TrimSpace(input.DigestSHA256),
+		Sections:       sections,
+		BundleSnapshot: snapshot,
+	})
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	return evidenceExportDetailFromRow(db.GetAIEvidenceExportRow{
+		ID:             row.ID,
+		WorkspaceID:    row.WorkspaceID,
+		ActorUserID:    row.ActorUserID,
+		ExportType:     row.ExportType,
+		SubjectType:    row.SubjectType,
+		SubjectID:      row.SubjectID,
+		DigestSha256:   row.DigestSha256,
+		Sections:       row.Sections,
+		BundleSnapshot: row.BundleSnapshot,
+		CreatedAt:      row.CreatedAt,
+	}), nil
+}
+
+func (s *Service) ListEvidenceExports(ctx context.Context, workspaceID string, limit int32) ([]EvidenceExportItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.queries.ListAIEvidenceExports(ctx, db.ListAIEvidenceExportsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]EvidenceExportItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, evidenceExportItem(row))
+	}
+	return items, nil
+}
+
+func (s *Service) GetEvidenceExport(ctx context.Context, workspaceID, exportID string) (EvidenceExportDetail, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	exportUUID, err := uuidValue(exportID, "export_id")
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	row, err := s.queries.GetAIEvidenceExport(ctx, db.GetAIEvidenceExportParams{
+		WorkspaceID: workspaceUUID,
+		ID:          exportUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return EvidenceExportDetail{}, ErrGatewayEvidenceExportNotFound
+	}
+	if err != nil {
+		return EvidenceExportDetail{}, err
+	}
+	return evidenceExportDetailFromRow(row), nil
+}
+
 func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, limit int32) ([]PolicyDecisionItem, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -3162,6 +3259,41 @@ func governancePolicyItem(row db.GatewayPolicy) GovernancePolicyItem {
 		UpdatedBy:       optionalUUIDString(row.UpdatedBy),
 		CreatedAt:       textTimestamp(row.CreatedAt),
 		UpdatedAt:       textTimestamp(row.UpdatedAt),
+	}
+}
+
+func evidenceExportItem(row db.ListAIEvidenceExportsRow) EvidenceExportItem {
+	return EvidenceExportItem{
+		ID:           uuidString(row.ID),
+		WorkspaceID:  uuidString(row.WorkspaceID),
+		ActorUserID:  optionalUUIDString(row.ActorUserID),
+		ActorName:    row.ActorName,
+		ActorEmail:   row.ActorEmail,
+		ExportType:   row.ExportType,
+		SubjectType:  row.SubjectType,
+		SubjectID:    row.SubjectID,
+		DigestSHA256: row.DigestSha256,
+		Sections:     jsonStringSlice(row.Sections),
+		CreatedAt:    textTimestamp(row.CreatedAt),
+	}
+}
+
+func evidenceExportDetailFromRow(row db.GetAIEvidenceExportRow) EvidenceExportDetail {
+	return EvidenceExportDetail{
+		EvidenceExportItem: EvidenceExportItem{
+			ID:           uuidString(row.ID),
+			WorkspaceID:  uuidString(row.WorkspaceID),
+			ActorUserID:  optionalUUIDString(row.ActorUserID),
+			ActorName:    row.ActorName,
+			ActorEmail:   row.ActorEmail,
+			ExportType:   row.ExportType,
+			SubjectType:  row.SubjectType,
+			SubjectID:    row.SubjectID,
+			DigestSHA256: row.DigestSha256,
+			Sections:     jsonStringSlice(row.Sections),
+			CreatedAt:    textTimestamp(row.CreatedAt),
+		},
+		BundleSnapshot: auditJSON(row.BundleSnapshot),
 	}
 }
 

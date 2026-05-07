@@ -122,6 +122,55 @@ func (q *Queries) CreateAIEvidence(ctx context.Context, arg CreateAIEvidencePara
 	return i, err
 }
 
+const createAIEvidenceExport = `-- name: CreateAIEvidenceExport :one
+INSERT INTO ai_evidence_export (
+    id, workspace_id, actor_user_id, export_type, subject_type, subject_id,
+    digest_sha256, sections, bundle_snapshot
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, workspace_id, actor_user_id, export_type, subject_type, subject_id, digest_sha256, sections, bundle_snapshot, created_at
+`
+
+type CreateAIEvidenceExportParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	ActorUserID    pgtype.UUID `json:"actor_user_id"`
+	ExportType     string      `json:"export_type"`
+	SubjectType    string      `json:"subject_type"`
+	SubjectID      string      `json:"subject_id"`
+	DigestSha256   string      `json:"digest_sha256"`
+	Sections       []byte      `json:"sections"`
+	BundleSnapshot []byte      `json:"bundle_snapshot"`
+}
+
+func (q *Queries) CreateAIEvidenceExport(ctx context.Context, arg CreateAIEvidenceExportParams) (AiEvidenceExport, error) {
+	row := q.db.QueryRow(ctx, createAIEvidenceExport,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActorUserID,
+		arg.ExportType,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.DigestSha256,
+		arg.Sections,
+		arg.BundleSnapshot,
+	)
+	var i AiEvidenceExport
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ActorUserID,
+		&i.ExportType,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.DigestSha256,
+		&i.Sections,
+		&i.BundleSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createAIIncident = `-- name: CreateAIIncident :one
 INSERT INTO ai_incident (
     workspace_id, severity, category, linked_request_id, linked_session_id,
@@ -295,6 +344,66 @@ func (q *Queries) CreateAISystemInventory(ctx context.Context, arg CreateAISyste
 	return i, err
 }
 
+const getAIEvidenceExport = `-- name: GetAIEvidenceExport :one
+SELECT
+    e.id,
+    e.workspace_id,
+    e.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    e.export_type,
+    e.subject_type,
+    e.subject_id,
+    e.digest_sha256,
+    e.sections,
+    e.bundle_snapshot,
+    e.created_at
+FROM ai_evidence_export e
+LEFT JOIN "user" u ON u.id = e.actor_user_id
+WHERE e.workspace_id = $1
+  AND e.id = $2
+`
+
+type GetAIEvidenceExportParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+type GetAIEvidenceExportRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorUserID    pgtype.UUID        `json:"actor_user_id"`
+	ActorName      string             `json:"actor_name"`
+	ActorEmail     string             `json:"actor_email"`
+	ExportType     string             `json:"export_type"`
+	SubjectType    string             `json:"subject_type"`
+	SubjectID      string             `json:"subject_id"`
+	DigestSha256   string             `json:"digest_sha256"`
+	Sections       []byte             `json:"sections"`
+	BundleSnapshot []byte             `json:"bundle_snapshot"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetAIEvidenceExport(ctx context.Context, arg GetAIEvidenceExportParams) (GetAIEvidenceExportRow, error) {
+	row := q.db.QueryRow(ctx, getAIEvidenceExport, arg.WorkspaceID, arg.ID)
+	var i GetAIEvidenceExportRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ActorUserID,
+		&i.ActorName,
+		&i.ActorEmail,
+		&i.ExportType,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.DigestSha256,
+		&i.Sections,
+		&i.BundleSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getActiveAIPolicyExceptionForProvider = `-- name: GetActiveAIPolicyExceptionForProvider :one
 SELECT id, workspace_id, policy_id, requester_user_id, approver_user_id, reason, scope, status, expires_at, evidence_references, created_at, updated_at FROM ai_policy_exception
 WHERE workspace_id = $1
@@ -437,6 +546,77 @@ func (q *Queries) ListAIEvidence(ctx context.Context, arg ListAIEvidenceParams) 
 			&i.AttachmentRef,
 			&i.GeneratedAt,
 			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAIEvidenceExports = `-- name: ListAIEvidenceExports :many
+SELECT
+    e.id,
+    e.workspace_id,
+    e.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    e.export_type,
+    e.subject_type,
+    e.subject_id,
+    e.digest_sha256,
+    e.sections,
+    e.created_at
+FROM ai_evidence_export e
+LEFT JOIN "user" u ON u.id = e.actor_user_id
+WHERE e.workspace_id = $1
+ORDER BY e.created_at DESC
+LIMIT $2
+`
+
+type ListAIEvidenceExportsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+type ListAIEvidenceExportsRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	ActorName    string             `json:"actor_name"`
+	ActorEmail   string             `json:"actor_email"`
+	ExportType   string             `json:"export_type"`
+	SubjectType  string             `json:"subject_type"`
+	SubjectID    string             `json:"subject_id"`
+	DigestSha256 string             `json:"digest_sha256"`
+	Sections     []byte             `json:"sections"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListAIEvidenceExports(ctx context.Context, arg ListAIEvidenceExportsParams) ([]ListAIEvidenceExportsRow, error) {
+	rows, err := q.db.Query(ctx, listAIEvidenceExports, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAIEvidenceExportsRow{}
+	for rows.Next() {
+		var i ListAIEvidenceExportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ActorUserID,
+			&i.ActorName,
+			&i.ActorEmail,
+			&i.ExportType,
+			&i.SubjectType,
+			&i.SubjectID,
+			&i.DigestSha256,
+			&i.Sections,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

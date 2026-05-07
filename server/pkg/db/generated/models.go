@@ -125,6 +125,19 @@ type AiEvidence struct {
 	RetainUntil          pgtype.Timestamptz `json:"retain_until"`
 }
 
+type AiEvidenceExport struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorUserID    pgtype.UUID        `json:"actor_user_id"`
+	ExportType     string             `json:"export_type"`
+	SubjectType    string             `json:"subject_type"`
+	SubjectID      string             `json:"subject_id"`
+	DigestSha256   string             `json:"digest_sha256"`
+	Sections       []byte             `json:"sections"`
+	BundleSnapshot []byte             `json:"bundle_snapshot"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type AiIncident struct {
 	ID                   pgtype.UUID        `json:"id"`
 	WorkspaceID          pgtype.UUID        `json:"workspace_id"`

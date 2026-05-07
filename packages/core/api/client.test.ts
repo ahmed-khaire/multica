@@ -64,4 +64,74 @@ describe("ApiClient Gateway evidence bundles", () => {
       }),
     );
   });
+
+  it("fetches Gateway evidence export history and stored snapshots", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () =>
+        new Response(
+          JSON.stringify([
+            {
+              id: "export-1",
+              export_type: "evidence_bundle",
+              subject_type: "incident",
+              subject_id: "incident-1",
+              digest_sha256: "digest-1",
+              sections: ["evidence_bundle"],
+              created_at: "2026-05-04T12:52:00Z",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockImplementationOnce(async () =>
+        new Response(
+          JSON.stringify({
+            id: "export-1",
+            export_type: "evidence_bundle",
+            subject_type: "incident",
+            subject_id: "incident-1",
+            digest_sha256: "digest-1",
+            sections: ["evidence_bundle"],
+            created_at: "2026-05-04T12:52:00Z",
+            bundle_snapshot: {
+              evidence_bundle: {
+                subject: {
+                  incident_id: "incident-1",
+                },
+              },
+              llm_calls: { calls: [] },
+              policy_decisions: [],
+              evidence: [],
+              incidents: [],
+              provider_risks: [],
+              control_mappings: [],
+              governance_policies: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const signal = new AbortController().signal;
+    const client = new ApiClient("https://api.example.test");
+    client.setWorkspaceId("ws-1");
+
+    const rows = await client.listGatewayEvidenceExports({ limit: 5, signal });
+    const detail = await client.getGatewayEvidenceExport("export-1", { signal });
+
+    expect(rows[0]?.digest_sha256).toBe("digest-1");
+    expect(detail.bundle_snapshot.evidence_bundle.subject.incident_id).toBe("incident-1");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://api.example.test/api/gateway/governance/evidence-exports?limit=5",
+      expect.objectContaining({ signal }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://api.example.test/api/gateway/governance/evidence-exports/export-1",
+      expect.objectContaining({ signal }),
+    );
+  });
 });

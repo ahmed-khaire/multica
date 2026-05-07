@@ -192,3 +192,49 @@ WHERE l.workspace_id = $1
   AND l.action LIKE 'gateway.%'
 ORDER BY l.created_at DESC
 LIMIT $2;
+
+-- name: CreateAIEvidenceExport :one
+INSERT INTO ai_evidence_export (
+    id, workspace_id, actor_user_id, export_type, subject_type, subject_id,
+    digest_sha256, sections, bundle_snapshot
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING *;
+
+-- name: ListAIEvidenceExports :many
+SELECT
+    e.id,
+    e.workspace_id,
+    e.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    e.export_type,
+    e.subject_type,
+    e.subject_id,
+    e.digest_sha256,
+    e.sections,
+    e.created_at
+FROM ai_evidence_export e
+LEFT JOIN "user" u ON u.id = e.actor_user_id
+WHERE e.workspace_id = $1
+ORDER BY e.created_at DESC
+LIMIT $2;
+
+-- name: GetAIEvidenceExport :one
+SELECT
+    e.id,
+    e.workspace_id,
+    e.actor_user_id,
+    COALESCE(u.name, '')::text AS actor_name,
+    COALESCE(u.email, '')::text AS actor_email,
+    e.export_type,
+    e.subject_type,
+    e.subject_id,
+    e.digest_sha256,
+    e.sections,
+    e.bundle_snapshot,
+    e.created_at
+FROM ai_evidence_export e
+LEFT JOIN "user" u ON u.id = e.actor_user_id
+WHERE e.workspace_id = $1
+  AND e.id = $2;

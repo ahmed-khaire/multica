@@ -16,6 +16,8 @@ const { mockApi } = vi.hoisted(() => ({
     listGatewayProviderRisks: vi.fn(),
     getGatewayGovernanceInsights: vi.fn(),
     getGatewayEvidenceBundle: vi.fn(),
+    listGatewayEvidenceExports: vi.fn(),
+    getGatewayEvidenceExport: vi.fn(),
     listGatewayPolicyDecisions: vi.fn(),
     listGatewayGovernancePolicies: vi.fn(),
     listGatewayEvidence: vi.fn(),
@@ -45,6 +47,8 @@ import {
   gatewayProviderRisksOptions,
   gatewayGovernanceInsightsOptions,
   gatewayEvidenceBundleOptions,
+  gatewayEvidenceExportOptions,
+  gatewayEvidenceExportsOptions,
   gatewayPolicyDecisionsOptions,
   gatewayGovernancePoliciesOptions,
   gatewayEvidenceOptions,
@@ -123,6 +127,18 @@ describe("gateway query options", () => {
       "evidence-bundle",
       { session_id: "session-1", limit: 25 },
     ]);
+    expect(gatewayKeys.evidenceExports("ws-1", 20)).toEqual([
+      "gateway",
+      "ws-1",
+      "evidence-exports",
+      20,
+    ]);
+    expect(gatewayKeys.evidenceExport("ws-1", "export-1")).toEqual([
+      "gateway",
+      "ws-1",
+      "evidence-exports",
+      "export-1",
+    ]);
     expect(gatewayKeys.policyDecisions("ws-1", 20)).toEqual([
       "gateway",
       "ws-1",
@@ -184,6 +200,8 @@ describe("gateway query options", () => {
     mockApi.listGatewayProviderRisks.mockResolvedValueOnce([]);
     mockApi.getGatewayGovernanceInsights.mockResolvedValueOnce({ action_queue: [] });
     mockApi.getGatewayEvidenceBundle.mockResolvedValueOnce({ evidence_bundle: { subject: { session_id: "session-1" } } });
+    mockApi.listGatewayEvidenceExports.mockResolvedValueOnce([]);
+    mockApi.getGatewayEvidenceExport.mockResolvedValueOnce({ id: "export-1" });
     mockApi.listGatewayPolicyDecisions.mockResolvedValueOnce([]);
     mockApi.listGatewayGovernancePolicies.mockResolvedValueOnce([]);
     mockApi.listGatewayEvidence.mockResolvedValueOnce([]);
@@ -207,6 +225,8 @@ describe("gateway query options", () => {
     const providerRisksQuery = gatewayProviderRisksOptions("ws-1");
     const insightsQuery = gatewayGovernanceInsightsOptions("ws-1");
     const bundleQuery = gatewayEvidenceBundleOptions("ws-1", { session_id: "session-1", limit: 25 });
+    const exportsQuery = gatewayEvidenceExportsOptions("ws-1");
+    const exportDetailQuery = gatewayEvidenceExportOptions("ws-1", "export-1");
     const policyDecisionsQuery = gatewayPolicyDecisionsOptions("ws-1");
     const governancePoliciesQuery = gatewayGovernancePoliciesOptions("ws-1");
     const evidenceQuery = gatewayEvidenceOptions("ws-1");
@@ -230,6 +250,8 @@ describe("gateway query options", () => {
     expect(providerRisksQuery.queryFn).toBeTypeOf("function");
     expect(insightsQuery.queryFn).toBeTypeOf("function");
     expect(bundleQuery.queryFn).toBeTypeOf("function");
+    expect(exportsQuery.queryFn).toBeTypeOf("function");
+    expect(exportDetailQuery.queryFn).toBeTypeOf("function");
     expect(policyDecisionsQuery.queryFn).toBeTypeOf("function");
     expect(governancePoliciesQuery.queryFn).toBeTypeOf("function");
     expect(evidenceQuery.queryFn).toBeTypeOf("function");
@@ -253,6 +275,8 @@ describe("gateway query options", () => {
     await providerRisksQuery.queryFn!({} as never);
     await insightsQuery.queryFn!({} as never);
     await bundleQuery.queryFn!({} as never);
+    await exportsQuery.queryFn!({} as never);
+    await exportDetailQuery.queryFn!({} as never);
     await policyDecisionsQuery.queryFn!({} as never);
     await governancePoliciesQuery.queryFn!({} as never);
     await evidenceQuery.queryFn!({} as never);
@@ -280,6 +304,8 @@ describe("gateway query options", () => {
       limit: 25,
       signal: undefined,
     });
+    expect(mockApi.listGatewayEvidenceExports).toHaveBeenCalledWith({ limit: 20, signal: undefined });
+    expect(mockApi.getGatewayEvidenceExport).toHaveBeenCalledWith("export-1", { signal: undefined });
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: undefined });
     expect(mockApi.listGatewayGovernancePolicies).toHaveBeenCalledWith();
     expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 20, signal: undefined });
@@ -303,6 +329,8 @@ describe("gateway query options", () => {
     mockApi.listGatewayProviderRisks.mockResolvedValueOnce([]);
     mockApi.getGatewayGovernanceInsights.mockResolvedValueOnce({ action_queue: [] });
     mockApi.getGatewayEvidenceBundle.mockResolvedValueOnce({ evidence_bundle: { subject: { incident_id: "incident-1" } } });
+    mockApi.listGatewayEvidenceExports.mockResolvedValueOnce([]);
+    mockApi.getGatewayEvidenceExport.mockResolvedValueOnce({ id: "export-1" });
     mockApi.listGatewayPolicyDecisions.mockResolvedValueOnce([]);
     mockApi.listGatewayGovernancePolicies.mockResolvedValueOnce([]);
     mockApi.listGatewayEvidence.mockResolvedValueOnce([]);
@@ -323,6 +351,8 @@ describe("gateway query options", () => {
     await gatewayProviderRisksOptions("ws-1").queryFn!({ signal } as never);
     await gatewayGovernanceInsightsOptions("ws-1").queryFn!({ signal } as never);
     await gatewayEvidenceBundleOptions("ws-1", { incident_id: "incident-1", limit: 10 }).queryFn!({ signal } as never);
+    await gatewayEvidenceExportsOptions("ws-1", 10).queryFn!({ signal } as never);
+    await gatewayEvidenceExportOptions("ws-1", "export-1").queryFn!({ signal } as never);
     await gatewayPolicyDecisionsOptions("ws-1", 10).queryFn!({ signal } as never);
     await gatewayGovernancePoliciesOptions("ws-1").queryFn!({ signal } as never);
     await gatewayEvidenceOptions("ws-1", 10).queryFn!({ signal } as never);
@@ -347,6 +377,8 @@ describe("gateway query options", () => {
       limit: 10,
       signal,
     });
+    expect(mockApi.listGatewayEvidenceExports).toHaveBeenCalledWith({ limit: 10, signal });
+    expect(mockApi.getGatewayEvidenceExport).toHaveBeenCalledWith("export-1", { signal });
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 10, signal });
     expect(mockApi.listGatewayGovernancePolicies).toHaveBeenCalledWith({ signal });
     expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 10, signal });

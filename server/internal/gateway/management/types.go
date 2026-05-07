@@ -265,6 +265,25 @@ type AuditLogItem struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type EvidenceExportItem struct {
+	ID           string   `json:"id"`
+	WorkspaceID  string   `json:"workspace_id"`
+	ActorUserID  string   `json:"actor_user_id"`
+	ActorName    string   `json:"actor_name"`
+	ActorEmail   string   `json:"actor_email"`
+	ExportType   string   `json:"export_type"`
+	SubjectType  string   `json:"subject_type"`
+	SubjectID    string   `json:"subject_id"`
+	DigestSHA256 string   `json:"digest_sha256"`
+	Sections     []string `json:"sections"`
+	CreatedAt    string   `json:"created_at"`
+}
+
+type EvidenceExportDetail struct {
+	EvidenceExportItem
+	BundleSnapshot any `json:"bundle_snapshot"`
+}
+
 type ProviderRiskResponse struct {
 	ID                   string   `json:"id"`
 	BackendID            string   `json:"backend_id"`
@@ -541,6 +560,18 @@ type UpdateGovernancePolicyInput struct {
 	Enabled         bool
 	RuleDefinition  any
 	EnforcementMode string
+}
+
+type RecordEvidenceExportInput struct {
+	ID             string
+	WorkspaceID    string
+	ActorUserID    string
+	ExportType     string
+	SubjectType    string
+	SubjectID      string
+	DigestSHA256   string
+	Sections       []string
+	BundleSnapshot any
 }
 
 var providerPresets = map[string]ProviderPreset{

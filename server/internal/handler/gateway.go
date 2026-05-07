@@ -850,7 +850,7 @@ func (h *Handler) writeGatewayResult(w http.ResponseWriter, status int, payload 
 	switch {
 	case errors.Is(err, management.ErrInvalidCapturePolicy), errors.Is(err, management.ErrInvalidGatewayBackend):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, management.ErrGatewayBackendNotFound), errors.Is(err, management.ErrGatewayKeyNotFound), errors.Is(err, management.ErrGatewayPolicyDecisionNotFound):
+	case errors.Is(err, management.ErrGatewayBackendNotFound), errors.Is(err, management.ErrGatewayKeyNotFound), errors.Is(err, management.ErrGatewayPolicyDecisionNotFound), errors.Is(err, management.ErrGatewayEvidenceExportNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, management.ErrGatewaySecretNotConfigured):
 		writeError(w, http.StatusInternalServerError, "gateway secret key is not configured")

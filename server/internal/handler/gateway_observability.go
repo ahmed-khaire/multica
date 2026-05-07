@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
 	"github.com/multica-ai/multica/server/internal/gateway/observability"
 )
@@ -39,6 +40,7 @@ type gatewayEvidenceBundleSubject struct {
 }
 
 type gatewayEvidenceBundleExportMetadata struct {
+	ID           string   `json:"id"`
 	GeneratedAt  string   `json:"generated_at"`
 	WorkspaceID  string   `json:"workspace_id"`
 	SubjectID    string   `json:"subject_id"`
@@ -285,7 +287,9 @@ func (h *Handler) ExportGatewayEvidenceBundle(w http.ResponseWriter, r *http.Req
 		ControlMappings:    controlMappings,
 		GovernancePolicies: governancePolicies,
 	}
+	exportID := uuid.NewString()
 	resp.Export = gatewayEvidenceBundleExportMetadata{
+		ID:           exportID,
 		GeneratedAt:  now.UTC().Format(time.RFC3339Nano),
 		WorkspaceID:  workspaceID,
 		SubjectID:    subjectID,
@@ -294,7 +298,23 @@ func (h *Handler) ExportGatewayEvidenceBundle(w http.ResponseWriter, r *http.Req
 		Sections:     sections,
 	}
 
+	if _, err := h.Gateway.RecordEvidenceExport(r.Context(), management.RecordEvidenceExportInput{
+		ID:             exportID,
+		WorkspaceID:    workspaceID,
+		ActorUserID:    userID,
+		ExportType:     "evidence_bundle",
+		SubjectType:    subjectType,
+		SubjectID:      subjectID,
+		DigestSHA256:   resp.Export.DigestSHA256,
+		Sections:       sections,
+		BundleSnapshot: resp,
+	}); err != nil {
+		h.writeGatewayResult(w, http.StatusOK, nil, err)
+		return
+	}
+
 	if err := h.Gateway.RecordExportAudit(r.Context(), workspaceID, userID, map[string]any{
+		"export_id":     exportID,
 		"export_type":   "evidence_bundle",
 		"subject_type":  subjectType,
 		"subject_id":    subjectID,
@@ -307,6 +327,28 @@ func (h *Handler) ExportGatewayEvidenceBundle(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) ListGatewayEvidenceExports(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := gatewayAuditLimit(w, r)
+	if !ok {
+		return
+	}
+	resp, err := h.Gateway.ListEvidenceExports(r.Context(), workspaceID, limit)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) GetGatewayEvidenceExport(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+	resp, err := h.Gateway.GetEvidenceExport(r.Context(), workspaceID, chi.URLParam(r, "id"))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
 func gatewayEvidenceBundleSubjectFromRequest(w http.ResponseWriter, r *http.Request, limit int32) (gatewayEvidenceBundleSubject, string, string, bool) {

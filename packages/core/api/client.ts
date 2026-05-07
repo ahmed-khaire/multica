@@ -58,6 +58,8 @@ import type {
   GatewayEvidenceItem,
   GatewayEvidenceBundleParams,
   GatewayEvidenceBundleResponse,
+  GatewayEvidenceExportDetail,
+  GatewayEvidenceExportItem,
   GatewayExportResponse,
   GatewayHealthReportResponse,
   GatewayIncidentItem,
@@ -754,6 +756,17 @@ export class ApiClient {
     if (policyDecisionId) search.set("policy_decision_id", policyDecisionId);
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     return this.fetch(`/api/gateway/governance/evidence-bundle?${search}`, params.signal ? { signal: params.signal } : undefined);
+  }
+
+  async listGatewayEvidenceExports(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayEvidenceExportItem[]> {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/gateway/governance/evidence-exports${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async getGatewayEvidenceExport(id: string, params?: { signal?: AbortSignal }): Promise<GatewayEvidenceExportDetail> {
+    return this.fetch(`/api/gateway/governance/evidence-exports/${encodeURIComponent(id)}`, params?.signal ? { signal: params.signal } : undefined);
   }
 
   async listGatewayPolicyDecisions(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayPolicyDecisionItem[]> {

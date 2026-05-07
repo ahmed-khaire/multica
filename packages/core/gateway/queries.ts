@@ -66,6 +66,10 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "governance-insights"] as const,
   evidenceBundle: (wsId: string, params: GatewayEvidenceBundleParams) =>
     [...gatewayKeys.all(wsId), "evidence-bundle", evidenceBundleKey(params)] as const,
+  evidenceExports: (wsId: string, limit = 20) =>
+    [...gatewayKeys.all(wsId), "evidence-exports", limit] as const,
+  evidenceExport: (wsId: string, id: string) =>
+    [...gatewayKeys.all(wsId), "evidence-exports", id] as const,
   policyDecisions: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "policy-decisions", limit] as const,
   governancePolicies: (wsId: string) =>
@@ -218,6 +222,22 @@ export function gatewayEvidenceBundleOptions(
     queryKey: gatewayKeys.evidenceBundle(wsId, params),
     queryFn: ({ signal }) => api.getGatewayEvidenceBundle({ ...params, signal }),
     enabled: !!wsId && enabled && Boolean(params.session_id || params.incident_id || params.policy_decision_id),
+  });
+}
+
+export function gatewayEvidenceExportsOptions(wsId: string, limit = 20, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.evidenceExports(wsId, limit),
+    queryFn: ({ signal }) => api.listGatewayEvidenceExports({ limit, signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayEvidenceExportOptions(wsId: string, id: string, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.evidenceExport(wsId, id),
+    queryFn: ({ signal }) => api.getGatewayEvidenceExport(id, { signal }),
+    enabled: !!wsId && !!id && enabled,
   });
 }
 

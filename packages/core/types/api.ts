@@ -317,6 +317,7 @@ export interface GatewayEvidenceBundleSubject {
 }
 
 export interface GatewayEvidenceBundleExportMetadata {
+  id: string;
   generated_at: string;
   workspace_id: string;
   subject_id: string;
@@ -339,6 +340,24 @@ export interface GatewayEvidenceBundleResponse {
   provider_risks: GatewayProviderRisk[];
   control_mappings: GatewayControlMappingItem[];
   governance_policies: GatewayGovernancePolicyItem[];
+}
+
+export interface GatewayEvidenceExportItem {
+  id: string;
+  workspace_id: string;
+  actor_user_id: string;
+  actor_name: string;
+  actor_email: string;
+  export_type: string;
+  subject_type: string;
+  subject_id: string;
+  digest_sha256: string;
+  sections: string[];
+  created_at: string;
+}
+
+export interface GatewayEvidenceExportDetail extends GatewayEvidenceExportItem {
+  bundle_snapshot: GatewayEvidenceBundleResponse;
 }
 
 export interface GatewayUserKeyResponse {
