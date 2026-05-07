@@ -740,46 +740,20 @@ export class ApiClient {
     const sessionId = params.session_id?.trim() ?? "";
     const incidentId = params.incident_id?.trim() ?? "";
     const policyDecisionId = params.policy_decision_id?.trim() ?? "";
-    if (!sessionId && !incidentId && !policyDecisionId) {
+    const subjectCount = [sessionId, incidentId, policyDecisionId].filter(Boolean).length;
+    if (subjectCount === 0) {
       throw new Error("one of session_id, incident_id, or policy_decision_id is required");
     }
-    const limit = params.limit ?? 25;
-    const signalParam = params.signal ? { signal: params.signal } : undefined;
-    const listParams = { limit, signal: params.signal };
+    if (subjectCount > 1) {
+      throw new Error("only one evidence bundle subject may be provided");
+    }
 
-    const [sessionDetail, sessionSpans, llmCalls, policyDecisions, evidence, incidents, providerRisks, controlMappings, governancePolicies] = await Promise.all([
-      sessionId ? this.getGatewaySession(sessionId, signalParam) : Promise.resolve(undefined),
-      sessionId ? this.getGatewaySessionSpans(sessionId, signalParam) : Promise.resolve(undefined),
-      this.listGatewayLLMCalls(listParams),
-      this.listGatewayPolicyDecisions(listParams),
-      this.listGatewayEvidence(listParams),
-      this.listGatewayIncidents(listParams),
-      this.listGatewayProviderRisks(signalParam),
-      this.listGatewayControlMappings(signalParam),
-      this.listGatewayGovernancePolicies(signalParam),
-    ]);
-
-    return {
-      evidence_bundle: {
-        subject: {
-          session_id: sessionId,
-          incident_id: incidentId,
-          policy_decision_id: policyDecisionId,
-          list_limit: limit,
-          generated_by: "multica web ui",
-          capture_policy_note: "content visibility follows the workspace Gateway capture policy",
-        },
-      },
-      session_detail: sessionDetail,
-      session_spans: sessionSpans,
-      llm_calls: llmCalls,
-      policy_decisions: policyDecisions,
-      evidence,
-      incidents,
-      provider_risks: providerRisks,
-      control_mappings: controlMappings,
-      governance_policies: governancePolicies,
-    };
+    const search = new URLSearchParams();
+    if (sessionId) search.set("session_id", sessionId);
+    if (incidentId) search.set("incident_id", incidentId);
+    if (policyDecisionId) search.set("policy_decision_id", policyDecisionId);
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    return this.fetch(`/api/gateway/governance/evidence-bundle?${search}`, params.signal ? { signal: params.signal } : undefined);
   }
 
   async listGatewayPolicyDecisions(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayPolicyDecisionItem[]> {

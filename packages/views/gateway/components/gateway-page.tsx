@@ -278,6 +278,18 @@ function gatewayEvidenceBundleMarkdown(bundle: GatewayEvidenceBundleResponse): s
     `- Governance policies: ${bundle.governance_policies.length}`,
   ];
 
+  if (bundle.export) {
+    lines.push(
+      "",
+      "## Export Integrity",
+      `- Generated at: ${evidenceValue(bundle.export.generated_at)}`,
+      `- Workspace ID: ${evidenceValue(bundle.export.workspace_id)}`,
+      `- Subject: ${evidenceLine([bundle.export.subject_type, bundle.export.subject_id])}`,
+      `- SHA-256 digest: ${evidenceValue(bundle.export.digest_sha256)}`,
+      `- Sections: ${evidenceValue(bundle.export.sections)}`,
+    );
+  }
+
   if (session) {
     lines.push(
       "",

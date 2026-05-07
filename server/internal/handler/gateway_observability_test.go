@@ -335,6 +335,131 @@ func TestGatewayExportBundlesObservableAndGovernanceData(t *testing.T) {
 	}
 }
 
+func TestGatewayEvidenceBundleExportComposesServerSideAndAudits(t *testing.T) {
+	seed := seedGatewayObservabilityTelemetry(t, "evidence-bundle")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, subject_user_id, resource_type, resource_id, resource_label,
+			decision, reason_code, matched_rules, request_id, session_id, evidence_references
+		)
+		VALUES ($1, $2, 'model', 'gpt-bundle', 'gpt-bundle',
+			'block', 'model_bundle_blocked', '[{"id":"model-bundle-blocked"}]'::jsonb,
+			$3, $4, '[]'::jsonb)
+	`, testWorkspaceID, testUserID, seed.RequestID, seed.SessionID); err != nil {
+		t.Fatalf("insert policy decision: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_evidence (
+			workspace_id, evidence_type, linked_request_id, linked_session_id,
+			summary, payload, attachment_ref
+		)
+		VALUES (
+			$1, 'gateway_policy_decision', $2, $3,
+			'Gateway blocked model gpt-bundle: model_bundle_blocked',
+			'{"reason_code":"model_bundle_blocked"}'::jsonb, ''
+		)
+	`, testWorkspaceID, seed.RequestID, seed.SessionID); err != nil {
+		t.Fatalf("insert evidence: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/gateway/governance/evidence-bundle?session_id="+seed.SessionID+"&limit=10", nil)
+	testHandler.ExportGatewayEvidenceBundle(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ExportGatewayEvidenceBundle status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		EvidenceBundle struct {
+			Subject struct {
+				SessionID         string `json:"session_id"`
+				ListLimit         int32  `json:"list_limit"`
+				GeneratedBy       string `json:"generated_by"`
+				CapturePolicyNote string `json:"capture_policy_note"`
+			} `json:"subject"`
+		} `json:"evidence_bundle"`
+		Export struct {
+			WorkspaceID  string   `json:"workspace_id"`
+			SubjectID    string   `json:"subject_id"`
+			DigestSHA256 string   `json:"digest_sha256"`
+			Sections     []string `json:"sections"`
+		} `json:"export"`
+		SessionDetail struct {
+			ID         string `json:"id"`
+			ModelCalls []struct {
+				RequestModel string `json:"request_model"`
+			} `json:"model_calls"`
+		} `json:"session_detail"`
+		SessionSpans struct {
+			Spans []struct {
+				SpanID string `json:"span_id"`
+			} `json:"spans"`
+		} `json:"session_spans"`
+		LLMCalls struct {
+			Calls []struct {
+				SessionID string `json:"session_id"`
+			} `json:"calls"`
+		} `json:"llm_calls"`
+		PolicyDecisions []struct {
+			ReasonCode string `json:"reason_code"`
+		} `json:"policy_decisions"`
+		Evidence []struct {
+			Summary string `json:"summary"`
+		} `json:"evidence"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("ExportGatewayEvidenceBundle decode response: %v", err)
+	}
+	if resp.EvidenceBundle.Subject.SessionID != seed.SessionID || resp.EvidenceBundle.Subject.ListLimit != 10 {
+		t.Fatalf("bundle subject = %#v, want session %s limit 10", resp.EvidenceBundle.Subject, seed.SessionID)
+	}
+	if resp.EvidenceBundle.Subject.GeneratedBy != "multica gateway api" || resp.EvidenceBundle.Subject.CapturePolicyNote == "" {
+		t.Fatalf("bundle subject metadata = %#v, want api generator and capture note", resp.EvidenceBundle.Subject)
+	}
+	if resp.Export.WorkspaceID != testWorkspaceID || resp.Export.SubjectID != seed.SessionID || resp.Export.DigestSHA256 == "" {
+		t.Fatalf("export metadata = %#v, want workspace/subject/digest", resp.Export)
+	}
+	if len(resp.Export.Sections) == 0 {
+		t.Fatal("expected export sections")
+	}
+	if resp.SessionDetail.ID != seed.SessionID || len(resp.SessionDetail.ModelCalls) == 0 {
+		t.Fatalf("session detail = %#v, want seeded session with model calls", resp.SessionDetail)
+	}
+	if len(resp.SessionSpans.Spans) == 0 {
+		t.Fatal("expected session spans in evidence bundle")
+	}
+	if len(resp.LLMCalls.Calls) == 0 || resp.LLMCalls.Calls[0].SessionID != seed.SessionID {
+		t.Fatalf("llm calls = %#v, want seeded session", resp.LLMCalls.Calls)
+	}
+	if len(resp.PolicyDecisions) == 0 || resp.PolicyDecisions[0].ReasonCode != "model_bundle_blocked" {
+		t.Fatalf("policy decisions = %#v, want model_bundle_blocked", resp.PolicyDecisions)
+	}
+	if len(resp.Evidence) == 0 || resp.Evidence[0].Summary == "" {
+		t.Fatalf("evidence = %#v, want evidence summary", resp.Evidence)
+	}
+
+	auditW := httptest.NewRecorder()
+	auditReq := newRequest(http.MethodGet, "/api/gateway/audit?limit=5", nil)
+	testHandler.ListGatewayAudit(auditW, auditReq)
+	if auditW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayAudit status = %d, want 200: %s", auditW.Code, auditW.Body.String())
+	}
+	var auditRows []struct {
+		Action     string         `json:"action"`
+		TargetType string         `json:"target_type"`
+		AfterState map[string]any `json:"after_state"`
+	}
+	if err := json.NewDecoder(auditW.Body).Decode(&auditRows); err != nil {
+		t.Fatalf("ListGatewayAudit decode response: %v", err)
+	}
+	if len(auditRows) == 0 || auditRows[0].Action != "gateway.export.read" {
+		t.Fatalf("latest audit action = %#v, want gateway.export.read", auditRows)
+	}
+	if auditRows[0].TargetType != "gateway_export" || auditRows[0].AfterState["export_type"] != "evidence_bundle" {
+		t.Fatalf("evidence bundle audit row = %#v, want gateway export evidence bundle", auditRows[0])
+	}
+}
+
 func seedGatewayObservabilityTelemetry(t *testing.T, suffix string) gatewayObservabilitySeed {
 	t.Helper()
 

@@ -209,6 +209,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/governance/policies", h.ListGatewayGovernancePolicies)
 					r.Post("/governance/policies", h.CreateGatewayGovernancePolicy)
 					r.Patch("/governance/policies/{id}", h.UpdateGatewayGovernancePolicy)
+					r.Get("/governance/evidence-bundle", h.ExportGatewayEvidenceBundle)
 					r.Get("/governance/evidence", h.ListGatewayEvidence)
 					r.Get("/governance/control-mappings", h.ListGatewayControlMappings)
 					r.Get("/governance/incidents", h.ListGatewayIncidents)

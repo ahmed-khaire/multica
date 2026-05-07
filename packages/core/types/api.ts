@@ -316,10 +316,20 @@ export interface GatewayEvidenceBundleSubject {
   capture_policy_note: string;
 }
 
+export interface GatewayEvidenceBundleExportMetadata {
+  generated_at: string;
+  workspace_id: string;
+  subject_id: string;
+  subject_type: string;
+  digest_sha256: string;
+  sections: string[];
+}
+
 export interface GatewayEvidenceBundleResponse {
   evidence_bundle: {
     subject: GatewayEvidenceBundleSubject;
   };
+  export?: GatewayEvidenceBundleExportMetadata;
   session_detail?: GatewaySessionDetail;
   session_spans?: GatewaySessionSpansResponse;
   llm_calls: GatewayLLMCallListResponse;

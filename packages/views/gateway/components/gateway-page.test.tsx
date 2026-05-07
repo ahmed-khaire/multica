@@ -684,6 +684,14 @@ const gatewayEvidenceBundle: GatewayEvidenceBundleResponse = {
       capture_policy_note: "content visibility follows the workspace Gateway capture policy",
     },
   },
+  export: {
+    generated_at: "2026-05-04T12:52:00Z",
+    workspace_id: "ws-1",
+    subject_id: "incident-1",
+    subject_type: "incident",
+    digest_sha256: "bundle-digest-sha256",
+    sections: ["evidence_bundle", "policy_decisions", "evidence", "incidents"],
+  },
   llm_calls: llmCalls,
   policy_decisions: gatewayPolicyDecisions,
   evidence: gatewayEvidence,
@@ -1165,6 +1173,7 @@ describe("GatewayPage", () => {
       await expect(markdownBlob.text()).resolves.toContain("# Gateway Evidence Bundle Report");
       await expect(markdownBlob.text()).resolves.toContain("Gateway blocked provider openrouter: provider_risk_rejected");
       await expect(markdownBlob.text()).resolves.toContain("provider_risk_rejected");
+      await expect(markdownBlob.text()).resolves.toContain("bundle-digest-sha256");
       await expect(markdownBlob.text()).resolves.toContain("content visibility follows the workspace Gateway capture policy");
     } finally {
       Object.defineProperty(navigator, "clipboard", {
