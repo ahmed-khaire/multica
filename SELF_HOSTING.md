@@ -93,6 +93,9 @@ For file uploads and attachments, configure S3 and CloudFront:
 |----------|-------------|
 | `S3_BUCKET` | S3 bucket name |
 | `S3_REGION` | AWS region (default: `us-west-2`) |
+| `S3_ENDPOINT` | Optional S3-compatible endpoint such as local MinIO |
+| `AWS_ACCESS_KEY_ID` | Optional explicit S3 access key |
+| `AWS_SECRET_ACCESS_KEY` | Optional explicit S3 secret key |
 | `CLOUDFRONT_DOMAIN` | CloudFront distribution domain |
 | `CLOUDFRONT_KEY_PAIR_ID` | CloudFront key pair ID for signed URLs |
 | `CLOUDFRONT_PRIVATE_KEY` | CloudFront private key (PEM format) |

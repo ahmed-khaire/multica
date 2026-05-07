@@ -19,6 +19,7 @@ type S3Storage struct {
 	client    *s3.Client
 	bucket    string
 	cdnDomain string // if set, returned URLs use this instead of bucket name
+	baseURL   string // optional local/dev endpoint, e.g. http://localhost:9000
 }
 
 // NewS3StorageFromEnv creates an S3Storage from environment variables.
@@ -27,6 +28,7 @@ type S3Storage struct {
 // Environment variables:
 //   - S3_BUCKET (required)
 //   - S3_REGION (default: us-west-2)
+//   - S3_ENDPOINT (optional; S3-compatible endpoint such as MinIO)
 //   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
 func NewS3StorageFromEnv() *S3Storage {
 	bucket := os.Getenv("S3_BUCKET")
@@ -58,13 +60,22 @@ func NewS3StorageFromEnv() *S3Storage {
 		return nil
 	}
 
+	baseURL := strings.TrimRight(os.Getenv("S3_ENDPOINT"), "/")
 	cdnDomain := os.Getenv("CLOUDFRONT_DOMAIN")
 
-	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if baseURL != "" {
+			o.BaseEndpoint = aws.String(baseURL)
+			o.UsePathStyle = true
+		}
+	})
+
+	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain, "base_url", baseURL)
 	return &S3Storage{
-		client:    s3.NewFromConfig(cfg),
+		client:    client,
 		bucket:    bucket,
 		cdnDomain: cdnDomain,
+		baseURL:   baseURL,
 	}
 }
 
@@ -90,6 +101,7 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 	for _, prefix := range []string{
 		"https://" + s.cdnDomain + "/",
 		"https://" + s.bucket + "/",
+		s.baseURL + "/" + s.bucket + "/",
 	} {
 		if strings.HasPrefix(rawURL, prefix) {
 			return strings.TrimPrefix(rawURL, prefix)
@@ -139,22 +151,29 @@ func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, content
 	if isInlineContentType(contentType) {
 		disposition = "inline"
 	}
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:             aws.String(s.bucket),
 		Key:                aws.String(key),
 		Body:               bytes.NewReader(data),
 		ContentType:        aws.String(contentType),
 		ContentDisposition: aws.String(fmt.Sprintf(`%s; filename="%s"`, disposition, safe)),
 		CacheControl:       aws.String("max-age=432000,public"),
-		StorageClass:       types.StorageClassIntelligentTiering,
-	})
+	}
+	if s.baseURL == "" {
+		input.StorageClass = types.StorageClassIntelligentTiering
+	}
+	_, err := s.client.PutObject(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("s3 PutObject: %w", err)
 	}
 
 	domain := s.bucket
-	if s.cdnDomain != "" {
+	switch {
+	case s.cdnDomain != "":
 		domain = s.cdnDomain
+		return fmt.Sprintf("https://%s/%s", domain, key), nil
+	case s.baseURL != "":
+		return fmt.Sprintf("%s/%s/%s", s.baseURL, s.bucket, key), nil
 	}
 	link := fmt.Sprintf("https://%s/%s", domain, key)
 	return link, nil
