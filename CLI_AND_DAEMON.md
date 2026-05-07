@@ -205,6 +205,20 @@ The session drilldown tools let an MCP-capable agent inspect a recorded session 
 - `gateway_session` returns session detail, including requests, model calls, events, logs, agents, and tools.
 - `gateway_session_spans` returns the session span tree.
 - `gateway_session_drilldown` returns both detail and spans in one read-only bundle.
+- `gateway_evidence_bundle` assembles session, model-call, policy decision, evidence, incident, provider risk, control mapping, and governance policy context for a session, incident, or policy decision.
+
+The MCP server also exposes JSON resources for clients that prefer attachable context over tool calls:
+
+- `gateway://status`
+- `gateway://health-report`
+- `gateway://sessions`
+- `gateway://sessions/{session_id}`
+- `gateway://sessions/{session_id}/spans`
+- `gateway://governance/evidence`
+- `gateway://governance/incidents`
+- `gateway://governance/policies`
+- `gateway://governance/provider-risks`
+- `gateway://evidence-bundles/session/{session_id}`
 
 `multica gateway smoke` checks status, doctor health, generated user key availability, `/v1/models` reachability through the Gateway key, and export reachability. See [Gateway Acceptance Checklist](docs/gateway-acceptance.md) for the full rollout checklist.
 

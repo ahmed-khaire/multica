@@ -78,6 +78,7 @@ func TestGatewayMCPListsReadOnlyTools(t *testing.T) {
 		"gateway_session_spans",
 		"gateway_session_drilldown",
 		"gateway_policy_decisions",
+		"gateway_evidence_bundle",
 		"gateway_governance_policies",
 		"gateway_policy_exceptions",
 		"gateway_incidents",
@@ -87,6 +88,201 @@ func TestGatewayMCPListsReadOnlyTools(t *testing.T) {
 	} {
 		if !names[expected] {
 			t.Fatalf("MCP tools missing %s; names = %#v", expected, names)
+		}
+	}
+}
+
+func TestGatewayMCPListsResourcesAndTemplates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("server should not be called while listing MCP resources")
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/templates/list","params":{}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp: %v\noutput: %s", err, out)
+	}
+	responses := decodeMCPResponses(t, out)
+	if len(responses) != 3 {
+		t.Fatalf("responses = %#v, want initialize, resources/list, and templates/list", responses)
+	}
+
+	resourceResult, ok := responses[1]["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("resources/list result = %#v, want object", responses[1]["result"])
+	}
+	rawResources, ok := resourceResult["resources"].([]any)
+	if !ok {
+		t.Fatalf("resources = %#v, want array", resourceResult["resources"])
+	}
+	resourceURIs := make(map[string]bool)
+	for _, rawResource := range rawResources {
+		resource, ok := rawResource.(map[string]any)
+		if !ok {
+			t.Fatalf("resource = %#v, want object", rawResource)
+		}
+		uri, _ := resource["uri"].(string)
+		resourceURIs[uri] = true
+		if resource["mimeType"] != "application/json" {
+			t.Fatalf("resource %s mimeType = %#v, want application/json", uri, resource["mimeType"])
+		}
+	}
+	for _, expected := range []string{"gateway://status", "gateway://health-report", "gateway://governance/evidence", "gateway://governance/incidents"} {
+		if !resourceURIs[expected] {
+			t.Fatalf("resources missing %s; resources = %#v", expected, resourceURIs)
+		}
+	}
+
+	templateResult, ok := responses[2]["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("resources/templates/list result = %#v, want object", responses[2]["result"])
+	}
+	rawTemplates, ok := templateResult["resourceTemplates"].([]any)
+	if !ok {
+		t.Fatalf("resourceTemplates = %#v, want array", templateResult["resourceTemplates"])
+	}
+	templates := make(map[string]bool)
+	for _, rawTemplate := range rawTemplates {
+		template, ok := rawTemplate.(map[string]any)
+		if !ok {
+			t.Fatalf("template = %#v, want object", rawTemplate)
+		}
+		uriTemplate, _ := template["uriTemplate"].(string)
+		templates[uriTemplate] = true
+	}
+	for _, expected := range []string{"gateway://sessions/{session_id}", "gateway://sessions/{session_id}/spans", "gateway://evidence-bundles/session/{session_id}"} {
+		if !templates[expected] {
+			t.Fatalf("templates missing %s; templates = %#v", expected, templates)
+		}
+	}
+}
+
+func TestGatewayMCPReadResourceFetchesAPIAndRedactsSecrets(t *testing.T) {
+	var called atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/health-report" {
+			t.Errorf("path = %s, want /api/gateway/health-report", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         "healthy",
+			"openai_api_key": "sk-resource-secret",
+			"total_tokens":   123,
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"gateway://health-report"}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp: %v\noutput: %s", err, out)
+	}
+	if !called.Load() {
+		t.Fatal("server was not called")
+	}
+	if strings.Contains(out, "sk-resource-secret") {
+		t.Fatalf("MCP resource output leaked secret: %s", out)
+	}
+	for _, expected := range []string{"gateway://health-report", "application/json", "[redacted]", "total_tokens"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("MCP output = %s, missing %q", out, expected)
+		}
+	}
+}
+
+func TestGatewayMCPEvidenceBundleComposesReadOnlyAPIs(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.RequestURI() {
+		case "/api/gateway/sessions/session-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "session-1", "api_key": "sk-bundle-secret"})
+		case "/api/gateway/sessions/session-1/spans":
+			_ = json.NewEncoder(w).Encode(map[string]any{"spans": []any{map[string]any{"span_id": "root"}}})
+		case "/api/gateway/llm-calls?limit=25":
+			_ = json.NewEncoder(w).Encode(map[string]any{"calls": []any{map[string]any{"session_id": "session-1", "request_model": "gpt-bundle"}}})
+		case "/api/gateway/governance/policy-decisions?limit=25":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "decision-1", "resource_id": "gpt-bundle"}})
+		case "/api/gateway/governance/evidence?limit=25":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "evidence-1", "payload": map[string]any{"session_id": "session-1"}}})
+		case "/api/gateway/governance/incidents?limit=25":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "incident-1", "status": "open"}})
+		case "/api/gateway/governance/provider-risks":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"provider": "openrouter", "risk_level": "medium"}})
+		case "/api/gateway/governance/control-mappings":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"control_id": "GW-1", "status": "covered"}})
+		case "/api/gateway/governance/policies":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "policy-1", "name": "Approved models"}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gateway_evidence_bundle","arguments":{"session_id":"session-1","limit":25}}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp: %v\noutput: %s", err, out)
+	}
+	for _, expectedCall := range []string{
+		"GET /api/gateway/sessions/session-1",
+		"GET /api/gateway/sessions/session-1/spans",
+		"GET /api/gateway/llm-calls?limit=25",
+		"GET /api/gateway/governance/policy-decisions?limit=25",
+		"GET /api/gateway/governance/evidence?limit=25",
+		"GET /api/gateway/governance/incidents?limit=25",
+		"GET /api/gateway/governance/provider-risks",
+		"GET /api/gateway/governance/control-mappings",
+		"GET /api/gateway/governance/policies",
+	} {
+		found := false
+		for _, call := range calls {
+			if call == expectedCall {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("calls = %#v, missing %s", calls, expectedCall)
+		}
+	}
+	if strings.Contains(out, "sk-bundle-secret") {
+		t.Fatalf("MCP evidence bundle leaked secret: %s", out)
+	}
+	for _, expected := range []string{"evidence_bundle", "session_detail", "policy_decisions", "provider_risks", "control_mappings", "gpt-bundle", "[redacted]"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("MCP output = %s, missing %q", out, expected)
 		}
 	}
 }
