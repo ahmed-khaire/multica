@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { createTestApi, loginAsDefault } from "./helpers";
+import { createTestApi, loginWithApi } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
 test.describe("Comments", () => {
@@ -8,11 +8,11 @@ test.describe("Comments", () => {
   test.beforeEach(async ({ page }) => {
     api = await createTestApi();
     await api.createIssue("E2E Comment Test " + Date.now());
-    await loginAsDefault(page);
+    await loginWithApi(page, api);
   });
 
   test.afterEach(async () => {
-    await api.cleanup();
+    await api?.cleanup();
   });
 
   test("can add a comment on an issue", async ({ page }) => {
@@ -27,13 +27,11 @@ test.describe("Comments", () => {
 
     // Type a comment
     const commentText = "E2E comment " + Date.now();
-    const commentInput = page.locator(
-      'input[placeholder="Leave a comment..."]',
-    );
+    const commentInput = page.getByRole("textbox", { name: "Leave a comment..." });
     await commentInput.fill(commentText);
 
     // Submit the comment
-    await page.locator('form button[type="submit"]').last().click();
+    await page.getByRole("button", { name: "Submit comment" }).click();
 
     // Comment should appear in the activity section
     await expect(page.locator(`text=${commentText}`)).toBeVisible({
@@ -50,7 +48,7 @@ test.describe("Comments", () => {
     await expect(page.locator("text=Properties")).toBeVisible();
 
     // Submit button should be disabled when input is empty
-    const submitBtn = page.locator('form button[type="submit"]').last();
+    const submitBtn = page.getByRole("button", { name: "Submit comment" });
     await expect(submitBtn).toBeDisabled();
   });
 });

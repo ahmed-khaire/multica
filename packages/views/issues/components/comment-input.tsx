@@ -61,6 +61,7 @@ function CommentInput({ issueId, onSubmit }: CommentInputProps) {
         />
         <Button
           size="icon-xs"
+          aria-label="Submit comment"
           disabled={isEmpty || submitting}
           onClick={handleSubmit}
         >

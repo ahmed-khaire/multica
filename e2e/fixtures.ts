@@ -137,6 +137,10 @@ export class TestApiClient {
     return this.token;
   }
 
+  getWorkspaceId() {
+    return this.workspaceId;
+  }
+
   private async authedFetch(path: string, init?: RequestInit) {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

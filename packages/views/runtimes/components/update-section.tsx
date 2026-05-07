@@ -17,7 +17,18 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 let cachedLatestVersion: string | null = null;
 let cachedAt = 0;
 
+function releaseCheckEnabled() {
+  const value =
+    process.env.NEXT_PUBLIC_MULTICA_ENABLE_RELEASE_CHECK ??
+    process.env.MULTICA_ENABLE_RELEASE_CHECK;
+  return value === "true" || value === "1";
+}
+
 async function fetchLatestVersion(): Promise<string | null> {
+  // Disabled by default: we are not calling GitHub for release checks unless
+  // an operator explicitly opts in with MULTICA_ENABLE_RELEASE_CHECK=true.
+  if (!releaseCheckEnabled()) return null;
+
   if (cachedLatestVersion && Date.now() - cachedAt < CACHE_TTL_MS) {
     return cachedLatestVersion;
   }
