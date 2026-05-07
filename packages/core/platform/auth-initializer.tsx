@@ -48,7 +48,7 @@ export function AuthInitializer({
         onLogout?.();
         useAuthStore.setState({ user: null, isLoading: false });
       });
-  }, []);
+  }, [onLogin, onLogout, storage]);
 
   return <>{children}</>;
 }

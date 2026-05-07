@@ -138,7 +138,7 @@ export function SearchCommand() {
       setOpen(false);
       push(`/issues/${issueId}`);
     },
-    [push],
+    [push, setOpen],
   );
 
   return (

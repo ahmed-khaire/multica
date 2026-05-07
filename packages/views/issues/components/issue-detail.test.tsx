@@ -88,7 +88,7 @@ vi.mock("../../editor", () => ({
   ReadonlyContent: ({ content }: { content: string }) => (
     <div data-testid="readonly-content">{content}</div>
   ),
-  ContentEditor: forwardRef(({ defaultValue, onUpdate, placeholder }: any, ref: any) => {
+  ContentEditor: forwardRef(function MockContentEditor({ defaultValue, onUpdate, placeholder }: any, ref: any) {
     const valueRef = useRef(defaultValue || "");
     const [value, setValue] = useState(defaultValue || "");
     useImperativeHandle(ref, () => ({
@@ -110,7 +110,7 @@ vi.mock("../../editor", () => ({
       />
     );
   }),
-  TitleEditor: forwardRef(({ defaultValue, placeholder, onBlur, onChange }: any, ref: any) => {
+  TitleEditor: forwardRef(function MockTitleEditor({ defaultValue, placeholder, onBlur, onChange }: any, ref: any) {
     const valueRef = useRef(defaultValue || "");
     const [value, setValue] = useState(defaultValue || "");
     useImperativeHandle(ref, () => ({
@@ -236,11 +236,23 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
+const stripResizableDomProps = ({
+  defaultLayout,
+  defaultSize,
+  minSize,
+  maxSize,
+  groupResizeBehavior,
+  panelRef,
+  collapsible,
+  onLayoutChanged,
+  ...domProps
+}: any) => domProps;
+
 // Mock react-resizable-panels (used by @multica/ui/components/ui/resizable)
 vi.mock("react-resizable-panels", () => ({
-  Group: ({ children, ...props }: any) => <div data-testid="panel-group" {...props}>{children}</div>,
-  Panel: ({ children, ...props }: any) => <div data-testid="panel" {...props}>{children}</div>,
-  Separator: ({ children, ...props }: any) => <div data-testid="panel-handle" {...props}>{children}</div>,
+  Group: ({ children, ...props }: any) => <div data-testid="panel-group" {...stripResizableDomProps(props)}>{children}</div>,
+  Panel: ({ children, ...props }: any) => <div data-testid="panel" {...stripResizableDomProps(props)}>{children}</div>,
+  Separator: ({ children, ...props }: any) => <div data-testid="panel-handle" {...stripResizableDomProps(props)}>{children}</div>,
   useDefaultLayout: () => ({ defaultLayout: undefined, onLayoutChanged: vi.fn() }),
   usePanelRef: () => ({ current: { isCollapsed: () => false, expand: vi.fn(), collapse: vi.fn() } }),
 }));

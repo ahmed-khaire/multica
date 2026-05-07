@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useRef } from "react";
+import { Suspense, useMemo, useState, useCallback, useRef } from "react";
 import { Check, ChevronRight, Link2, ListTodo, MoreHorizontal, Trash2, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -41,7 +41,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@multica/ui/components/ui/popover";
-import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
+import { LazyEmojiPicker } from "@multica/ui/components/common/lazy-emoji-picker";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -335,12 +335,14 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 }
               />
               <PopoverContent align="start" className="w-auto p-0">
-                <EmojiPicker
-                  onSelect={(emoji) => {
-                    handleUpdateField({ icon: emoji });
-                    setIconPickerOpen(false);
-                  }}
-                />
+                <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading...</div>}>
+                  <LazyEmojiPicker
+                    onSelect={(emoji) => {
+                      handleUpdateField({ icon: emoji });
+                      setIconPickerOpen(false);
+                    }}
+                  />
+                </Suspense>
               </PopoverContent>
             </Popover>
 

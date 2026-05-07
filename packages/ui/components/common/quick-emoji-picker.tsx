@@ -1,12 +1,9 @@
 "use client";
 
-import { useState, lazy, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { SmilePlus } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@multica/ui/components/ui/popover";
-
-const EmojiPicker = lazy(() =>
-  import("./emoji-picker").then((m) => ({ default: m.EmojiPicker })),
-);
+import { LazyEmojiPicker } from "./lazy-emoji-picker";
 
 const QUICK_EMOJIS = ["👍", "👌", "❤️", "😄", "🎉", "😕", "🚀", "👀"];
 
@@ -46,7 +43,7 @@ function QuickEmojiPicker({ onSelect, align = "start", className }: QuickEmojiPi
       <PopoverContent align={align} className="w-auto p-0">
         {showFull ? (
           <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading...</div>}>
-            <EmojiPicker onSelect={handleSelect} />
+            <LazyEmojiPicker onSelect={handleSelect} />
           </Suspense>
         ) : (
           <div className="p-2">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { Suspense, useState, useRef } from "react";
 import { Plus, FolderKanban, ChevronRight, Maximize2, Minimize2, X as XIcon, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { projectListOptions } from "@multica/core/projects/queries";
@@ -35,7 +35,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { ContentEditor, type ContentEditorRef } from "../../editor";
 import { TitleEditor } from "../../editor";
-import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
+import { LazyEmojiPicker } from "@multica/ui/components/common/lazy-emoji-picker";
 import type { Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 
@@ -240,12 +240,14 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               }
             />
             <PopoverContent align="start" className="w-auto p-0">
-              <EmojiPicker
-                onSelect={(emoji) => {
-                  setIcon(emoji);
-                  setIconPickerOpen(false);
-                }}
-              />
+              <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading...</div>}>
+                <LazyEmojiPicker
+                  onSelect={(emoji) => {
+                    setIcon(emoji);
+                    setIconPickerOpen(false);
+                  }}
+                />
+              </Suspense>
             </PopoverContent>
           </Popover>
           <TitleEditor

@@ -547,7 +547,7 @@ export interface CreateGatewayGovernancePolicyRequest {
   enforcement_mode: string;
 }
 
-export interface UpdateGatewayGovernancePolicyRequest extends CreateGatewayGovernancePolicyRequest {}
+export type UpdateGatewayGovernancePolicyRequest = CreateGatewayGovernancePolicyRequest;
 
 export interface CreateGatewayPolicyExceptionRequest {
   reason: string;

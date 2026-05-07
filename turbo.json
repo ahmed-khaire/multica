@@ -16,7 +16,7 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["src/**", "app/**", "**/*.ts", "**/*.tsx", "**/*.css"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", "out/**"]
     },
     "dev": {
       "cache": false,
