@@ -447,6 +447,24 @@ const gatewayGovernanceInsights: GatewayGovernanceInsightsResponse = {
       created_at: "2026-05-04T12:48:00Z",
     },
     {
+      kind: "policy_decision",
+      severity: "medium",
+      title: "Policy decision needs review",
+      detail: "model gpt-approval requires review: model_requires_approval",
+      resource_type: "model",
+      resource_id: "decision-approval-1",
+      created_at: "2026-05-04T12:50:00Z",
+    },
+    {
+      kind: "policy_exception",
+      severity: "medium",
+      title: "Policy exception expires soon",
+      detail: "Temporary exception for incident response",
+      resource_type: "policy_exception",
+      resource_id: "exception-1",
+      created_at: "2026-05-04T12:49:00Z",
+    },
+    {
       kind: "provider_risk",
       severity: "high",
       title: "Review provider risk",
@@ -1011,6 +1029,47 @@ describe("GatewayPage", () => {
     expect(screen.getByText("Review open Gateway incident")).toBeInTheDocument();
     expect(screen.getByText("Review provider risk")).toBeInTheDocument();
     expect(mockApi.getGatewayGovernanceInsights).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+  });
+
+  it("runs quick actions from the Gateway governance action queue", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+    expect(await screen.findByText("Action Queue")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Remediate incident/ }));
+    await waitFor(() => {
+      expect(mockApi.updateGatewayIncident).toHaveBeenCalledWith("incident-1", {
+        status: "remediated",
+        remediation_notes: "Remediated from Gateway governance insights.",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /Approve policy decision/ }));
+    await waitFor(() => {
+      expect(mockApi.approveGatewayPolicyDecision).toHaveBeenCalledWith("decision-approval-1", {
+        reason: "Approved from Gateway governance insights",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /Deny policy decision/ }));
+    await waitFor(() => {
+      expect(mockApi.denyGatewayPolicyDecision).toHaveBeenCalledWith("decision-approval-1", {
+        reason: "Denied from Gateway governance insights",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /Revoke policy exception/ }));
+    await waitFor(() => {
+      expect(mockApi.updateGatewayPolicyException).toHaveBeenCalledWith("exception-1", {
+        status: "revoked",
+        expires_at: expect.any(String),
+      });
+    });
+    await waitFor(() => {
+      expect(mockApi.getGatewayGovernanceInsights.mock.calls.length).toBeGreaterThan(1);
+    });
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {

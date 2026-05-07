@@ -301,7 +301,27 @@ function BreakdownRow({
   );
 }
 
-function GovernanceActionQueue({ actions }: { actions: GatewayGovernanceActionItem[] }) {
+function GovernanceActionQueue({
+  actions,
+  deniedDecisionId,
+  onApprovePolicyDecision,
+  onDenyPolicyDecision,
+  onRemediateIncident,
+  onRevokePolicyException,
+  pendingDecisionId,
+  pendingExceptionId,
+  pendingIncidentId,
+}: {
+  actions: GatewayGovernanceActionItem[];
+  deniedDecisionId: string;
+  onApprovePolicyDecision: (id: string) => void;
+  onDenyPolicyDecision: (id: string) => void;
+  onRemediateIncident: (id: string) => void;
+  onRevokePolicyException: (id: string) => void;
+  pendingDecisionId: string;
+  pendingExceptionId: string;
+  pendingIncidentId: string;
+}) {
   if (actions.length === 0) {
     return (
       <div className="flex h-56 flex-col items-center justify-center rounded-md border text-center">
@@ -314,23 +334,88 @@ function GovernanceActionQueue({ actions }: { actions: GatewayGovernanceActionIt
 
   return (
     <div className="space-y-2">
-      {actions.slice(0, 8).map((action) => (
-        <div key={`${action.kind}-${action.resource_id}-${action.created_at}`} className="rounded-md border p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{action.title}</p>
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{action.detail}</p>
+      {actions.slice(0, 8).map((action) => {
+        const incidentPending = action.kind === "incident" && pendingIncidentId === action.resource_id;
+        const decisionPending = action.kind === "policy_decision" && pendingDecisionId === action.resource_id;
+        const denialPending = action.kind === "policy_decision" && deniedDecisionId === action.resource_id;
+        const exceptionPending = action.kind === "policy_exception" && pendingExceptionId === action.resource_id;
+        return (
+          <div key={`${action.kind}-${action.resource_id}-${action.created_at}`} className="rounded-md border p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{action.title}</p>
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{action.detail}</p>
+              </div>
+              <Badge variant={actionSeverityVariant(action.severity)}>{action.severity}</Badge>
             </div>
-            <Badge variant={actionSeverityVariant(action.severity)}>{action.severity}</Badge>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">{action.kind}</Badge>
+              <span>{action.resource_type}</span>
+              <span className="truncate">{action.resource_id}</span>
+              <span className="ml-auto shrink-0">{formatTime(action.created_at)}</span>
+            </div>
+            {action.kind === "incident" ? (
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={incidentPending}
+                  onClick={() => onRemediateIncident(action.resource_id)}
+                  aria-label={`Remediate incident ${action.resource_id}`}
+                >
+                  <ShieldCheck className="size-3.5" />
+                  Remediate
+                </Button>
+              </div>
+            ) : null}
+            {action.kind === "policy_decision" ? (
+              <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={decisionPending || denialPending}
+                  onClick={() => onApprovePolicyDecision(action.resource_id)}
+                  aria-label={`Approve policy decision ${action.resource_id}`}
+                >
+                  <Check className="size-3.5" />
+                  Approve
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={decisionPending || denialPending}
+                  onClick={() => onDenyPolicyDecision(action.resource_id)}
+                  aria-label={`Deny policy decision ${action.resource_id}`}
+                >
+                  <X className="size-3.5" />
+                  Deny
+                </Button>
+              </div>
+            ) : null}
+            {action.kind === "policy_exception" ? (
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={exceptionPending}
+                  onClick={() => onRevokePolicyException(action.resource_id)}
+                  aria-label={`Revoke policy exception ${action.resource_id}`}
+                >
+                  <X className="size-3.5" />
+                  Revoke
+                </Button>
+              </div>
+            ) : null}
+            {action.kind === "provider_risk" || action.kind === "control_gap" ? (
+              <p className="mt-3 text-right text-xs text-muted-foreground">Review in Setup</p>
+            ) : null}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">{action.kind}</Badge>
-            <span>{action.resource_type}</span>
-            <span className="truncate">{action.resource_id}</span>
-            <span className="ml-auto shrink-0">{formatTime(action.created_at)}</span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1600,8 +1685,53 @@ function GatewayGovernanceInsights({
   canManage: boolean;
   wsId: string;
 }) {
+  const qc = useQueryClient();
   const insightsQuery = useQuery(gatewayGovernanceInsightsOptions(wsId, canManage));
   const insights = insightsQuery.data as GatewayGovernanceInsightsResponse | undefined;
+
+  const invalidateGovernance = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.governanceInsights(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.healthReport(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.incidents(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.policyExceptions(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.policyDecisions(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.providerRisks(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+  };
+
+  const remediateIncidentMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.updateGatewayIncident(id, {
+        status: "remediated",
+        remediation_notes: "Remediated from Gateway governance insights.",
+      }),
+    onSuccess: invalidateGovernance,
+  });
+
+  const approveDecisionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.approveGatewayPolicyDecision(id, {
+        reason: "Approved from Gateway governance insights",
+      }),
+    onSuccess: invalidateGovernance,
+  });
+
+  const denyDecisionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.denyGatewayPolicyDecision(id, {
+        reason: "Denied from Gateway governance insights",
+      }),
+    onSuccess: invalidateGovernance,
+  });
+
+  const revokeExceptionMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.updateGatewayPolicyException(id, {
+        status: "revoked",
+        expires_at: new Date().toISOString(),
+      }),
+    onSuccess: invalidateGovernance,
+  });
 
   if (!canManage) {
     return (
@@ -1859,13 +1989,35 @@ function GatewayGovernanceInsights({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <GovernanceActionQueue actions={insights.action_queue} />
+            <GovernanceActionQueue
+              actions={insights.action_queue}
+              deniedDecisionId={denyDecisionMutation.isPending ? denyDecisionMutation.variables ?? "" : ""}
+              onApprovePolicyDecision={(id) => approveDecisionMutation.mutate(id)}
+              onDenyPolicyDecision={(id) => denyDecisionMutation.mutate(id)}
+              onRemediateIncident={(id) => remediateIncidentMutation.mutate(id)}
+              onRevokePolicyException={(id) => revokeExceptionMutation.mutate(id)}
+              pendingDecisionId={approveDecisionMutation.isPending ? approveDecisionMutation.variables ?? "" : ""}
+              pendingExceptionId={revokeExceptionMutation.isPending ? revokeExceptionMutation.variables ?? "" : ""}
+              pendingIncidentId={remediateIncidentMutation.isPending ? remediateIncidentMutation.variables ?? "" : ""}
+            />
           </CardContent>
         </Card>
       </div>
 
       {insightsQuery.error instanceof Error ? (
         <p className="text-xs text-destructive">{insightsQuery.error.message}</p>
+      ) : null}
+      {remediateIncidentMutation.error instanceof Error ? (
+        <p className="text-xs text-destructive">{remediateIncidentMutation.error.message}</p>
+      ) : null}
+      {approveDecisionMutation.error instanceof Error ? (
+        <p className="text-xs text-destructive">{approveDecisionMutation.error.message}</p>
+      ) : null}
+      {denyDecisionMutation.error instanceof Error ? (
+        <p className="text-xs text-destructive">{denyDecisionMutation.error.message}</p>
+      ) : null}
+      {revokeExceptionMutation.error instanceof Error ? (
+        <p className="text-xs text-destructive">{revokeExceptionMutation.error.message}</p>
       ) : null}
     </div>
   );
