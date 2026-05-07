@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -126,6 +127,167 @@ func TestGatewayDoctorHandlerReportsHealthyWithWarnings(t *testing.T) {
 	assertDoctorCheck(t, resp.Checks, "gateway_key", "pass")
 	assertDoctorCheck(t, resp.Checks, "default_backend", "pass")
 	assertDoctorCheck(t, resp.Checks, "open_incidents", "warning")
+}
+
+func TestGatewayHealthReportHandlerSummarizesBackendsCredentialsAndGovernance(t *testing.T) {
+	setGatewaySecret(t)
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE gateway_backend
+		SET enabled = false
+		WHERE workspace_id = $1
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("disable prior test backends: %v", err)
+	}
+
+	upstream := newFakeOpenAIUpstream(t, fakeOpenAIOptions{Model: "gpt-health"})
+	defer upstream.Close()
+
+	backendW := httptest.NewRecorder()
+	backendReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider":    "openai",
+		"slug":        "health-openai",
+		"base_url":    upstream.URL + "/v1",
+		"key":         "sk-health-primary-1234567890abcdef",
+		"set_default": true,
+	})
+	testHandler.CreateGatewayBackend(backendW, backendReq)
+	if backendW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", backendW.Code, backendW.Body.String())
+	}
+	var backend struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(backendW.Body).Decode(&backend); err != nil {
+		t.Fatalf("decode backend: %v", err)
+	}
+
+	credentialW := httptest.NewRecorder()
+	credentialReq := newRequest("POST", "/api/gateway/backends/"+backend.ID+"/credentials", map[string]any{
+		"label":    "probe key",
+		"key":      "sk-health-pool-1234567890abcdef",
+		"priority": 1,
+		"enabled":  true,
+	})
+	credentialReq = withURLParam(credentialReq, "id", backend.ID)
+	testHandler.CreateGatewayBackendCredential(credentialW, credentialReq)
+	if credentialW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackendCredential: expected 201, got %d: %s", credentialW.Code, credentialW.Body.String())
+	}
+
+	disabledCredentialW := httptest.NewRecorder()
+	disabledCredentialReq := newRequest("POST", "/api/gateway/backends/"+backend.ID+"/credentials", map[string]any{
+		"label":    "disabled key",
+		"key":      "sk-health-disabled-1234567890abcdef",
+		"priority": 2,
+		"enabled":  false,
+	})
+	disabledCredentialReq = withURLParam(disabledCredentialReq, "id", backend.ID)
+	testHandler.CreateGatewayBackendCredential(disabledCredentialW, disabledCredentialReq)
+	if disabledCredentialW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackendCredential disabled: expected 201, got %d: %s", disabledCredentialW.Code, disabledCredentialW.Body.String())
+	}
+	var disabledCredential struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(disabledCredentialW.Body).Decode(&disabledCredential); err != nil {
+		t.Fatalf("decode disabled credential: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE gateway_backend_credential
+		SET rate_limited_until = $1, last_error_at = now(), last_error = 'rate limit'
+		WHERE id = $2
+	`, time.Now().UTC().Add(time.Hour), disabledCredential.ID); err != nil {
+		t.Fatalf("mark credential rate limited: %v", err)
+	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_incident (
+			workspace_id, severity, category, summary, status, remediation_notes
+		)
+		VALUES (
+			$1, 'medium', 'gateway_provider_risk_block',
+			'Gateway provider risk needs review',
+			'investigating', 'Review provider contract.'
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert incident: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/health-report", nil)
+	req.Host = "api.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	testHandler.GatewayHealthReport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GatewayHealthReport: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Status   string `json:"status"`
+		Backends []struct {
+			Slug              string `json:"slug"`
+			Enabled           bool   `json:"enabled"`
+			IsDefault         bool   `json:"is_default"`
+			ProbeStatus       string `json:"probe_status"`
+			ProbeLatencyMS    int64  `json:"probe_latency_ms"`
+			ModelCount        int    `json:"model_count"`
+			CredentialSummary struct {
+				Total       int `json:"total"`
+				Enabled     int `json:"enabled"`
+				Disabled    int `json:"disabled"`
+				RateLimited int `json:"rate_limited"`
+				LastErrors  int `json:"last_errors"`
+			} `json:"credential_summary"`
+		} `json:"backends"`
+		Governance struct {
+			CapturePolicy        string `json:"capture_policy"`
+			OpenIncidentCount    int    `json:"open_incident_count"`
+			ProviderRiskWarnings int    `json:"provider_risk_warning_count"`
+		} `json:"governance"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode health report: %v", err)
+	}
+	if resp.Status != "healthy_with_warnings" {
+		t.Fatalf("status = %q, want healthy_with_warnings", resp.Status)
+	}
+	var got *struct {
+		Slug              string `json:"slug"`
+		Enabled           bool   `json:"enabled"`
+		IsDefault         bool   `json:"is_default"`
+		ProbeStatus       string `json:"probe_status"`
+		ProbeLatencyMS    int64  `json:"probe_latency_ms"`
+		ModelCount        int    `json:"model_count"`
+		CredentialSummary struct {
+			Total       int `json:"total"`
+			Enabled     int `json:"enabled"`
+			Disabled    int `json:"disabled"`
+			RateLimited int `json:"rate_limited"`
+			LastErrors  int `json:"last_errors"`
+		} `json:"credential_summary"`
+	}
+	for i := range resp.Backends {
+		if resp.Backends[i].Slug == "health-openai" {
+			got = &resp.Backends[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("health-openai backend not found in %#v", resp.Backends)
+	}
+	if !got.Enabled || !got.IsDefault {
+		t.Fatalf("backend summary = %#v, want enabled default health-openai", got)
+	}
+	if got.ProbeStatus != "pass" || got.ModelCount != 1 || got.ProbeLatencyMS <= 0 {
+		t.Fatalf("probe summary = %#v, want passing model probe", got)
+	}
+	if got.CredentialSummary.Total != 2 || got.CredentialSummary.Enabled != 1 || got.CredentialSummary.Disabled != 1 || got.CredentialSummary.RateLimited != 1 || got.CredentialSummary.LastErrors != 1 {
+		t.Fatalf("credential summary = %#v, want total/enabled/disabled/rate-limited/error counts", got.CredentialSummary)
+	}
+	if resp.Governance.CapturePolicy != "full_content" || resp.Governance.OpenIncidentCount < 1 {
+		t.Fatalf("governance = %#v, want full_content and at least one open incident", resp.Governance)
+	}
 }
 
 func TestGatewayCreateBackendRedactsCredential(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "doctor", "smoke", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "health-report", "smoke", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -24,6 +24,71 @@ func TestGatewayCommandTree(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
 			}
 		})
+	}
+}
+
+func TestGatewayHealthReportCommandShowsBackendAndGovernanceSummary(t *testing.T) {
+	var called bool
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/health-report" {
+			t.Errorf("path = %s, want /api/gateway/health-report", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":             "healthy_with_warnings",
+			"generated_at":       "2026-05-07T10:02:00Z",
+			"openai_base_url":    srv.URL + "/v1",
+			"anthropic_base_url": srv.URL,
+			"backends": []map[string]any{{
+				"id":                 "backend-1",
+				"slug":               "openai",
+				"display_name":       "OpenAI",
+				"backend_type":       "openai_compatible",
+				"base_url":           "https://api.openai.com/v1",
+				"enabled":            true,
+				"is_default":         true,
+				"probe_status":       "pass",
+				"probe_latency_ms":   42,
+				"model_count":        12,
+				"credential_summary": map[string]any{"total": 2, "enabled": 1, "disabled": 1, "rate_limited": 1, "last_errors": 1},
+			}},
+			"governance": map[string]any{
+				"capture_policy":              "full_content",
+				"governance_policy_count":     3,
+				"enabled_policy_count":        2,
+				"pending_approval_count":      1,
+				"provider_risk_warning_count": 0,
+				"open_incident_count":         1,
+				"evidence_count":              4,
+				"control_mapping_count":       2,
+			},
+			"checks": []map[string]any{{
+				"id":     "backend_probe_openai",
+				"status": "pass",
+				"title":  "Backend probe openai",
+				"detail": "Backend model-list probe passed.",
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "health-report", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway health-report: %v\noutput: %s", err, out)
+	}
+	if !called {
+		t.Fatal("server was not called")
+	}
+	for _, expected := range []string{"Observer Gateway Health Report", "healthy_with_warnings", "openai", "pass", "12 models", "credentials 1/2 active", "full_content", "1 open incidents", "1 pending approvals"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("output = %q, missing %q", out, expected)
+		}
 	}
 }
 

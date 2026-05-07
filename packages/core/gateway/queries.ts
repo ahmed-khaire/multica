@@ -42,6 +42,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "status"] as const,
   doctor: (wsId: string) =>
     [...gatewayKeys.all(wsId), "doctor"] as const,
+  healthReport: (wsId: string) =>
+    [...gatewayKeys.all(wsId), "health-report"] as const,
   backends: (wsId: string) =>
     [...gatewayKeys.all(wsId), "backends"] as const,
   backendCredentials: (wsId: string, backendId: string) =>
@@ -136,6 +138,14 @@ export function gatewayDoctorOptions(wsId: string, enabled = true) {
   return queryOptions({
     queryKey: gatewayKeys.doctor(wsId),
     queryFn: ({ signal }) => api.getGatewayDoctor({ signal }),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayHealthReportOptions(wsId: string, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.healthReport(wsId),
+    queryFn: ({ signal }) => api.getGatewayHealthReport({ signal }),
     enabled: !!wsId && enabled,
   });
 }

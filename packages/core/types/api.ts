@@ -179,6 +179,50 @@ export interface GatewayDoctorResponse {
   generated_at: string;
 }
 
+export interface GatewayCredentialHealthSummary {
+  total: number;
+  enabled: number;
+  disabled: number;
+  rate_limited: number;
+  last_errors: number;
+}
+
+export interface GatewayBackendHealthItem {
+  id: string;
+  slug: string;
+  display_name: string;
+  backend_type: string;
+  base_url: string;
+  enabled: boolean;
+  is_default: boolean;
+  probe_status: GatewayDoctorCheckStatus | "skipped" | string;
+  probe_latency_ms: number;
+  model_count: number;
+  last_error: string;
+  credential_summary: GatewayCredentialHealthSummary;
+}
+
+export interface GatewayGovernanceHealthSummary {
+  capture_policy: GatewayCapturePolicy | string;
+  governance_policy_count: number;
+  enabled_policy_count: number;
+  pending_approval_count: number;
+  provider_risk_warning_count: number;
+  open_incident_count: number;
+  evidence_count: number;
+  control_mapping_count: number;
+}
+
+export interface GatewayHealthReportResponse {
+  status: GatewayDoctorStatus | string;
+  generated_at: string;
+  openai_base_url: string;
+  anthropic_base_url: string;
+  backends: GatewayBackendHealthItem[];
+  governance: GatewayGovernanceHealthSummary;
+  checks: GatewayDoctorCheck[];
+}
+
 export interface GatewayUserKeyResponse {
   id: string;
   key: string;

@@ -89,6 +89,50 @@ type DoctorCheck struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
+type HealthReportResponse struct {
+	Status           string                  `json:"status"`
+	GeneratedAt      string                  `json:"generated_at"`
+	OpenAIBaseURL    string                  `json:"openai_base_url"`
+	AnthropicBaseURL string                  `json:"anthropic_base_url"`
+	Backends         []BackendHealthItem     `json:"backends"`
+	Governance       GovernanceHealthSummary `json:"governance"`
+	Checks           []DoctorCheck           `json:"checks"`
+}
+
+type BackendHealthItem struct {
+	ID                string                  `json:"id"`
+	Slug              string                  `json:"slug"`
+	DisplayName       string                  `json:"display_name"`
+	BackendType       string                  `json:"backend_type"`
+	BaseURL           string                  `json:"base_url"`
+	Enabled           bool                    `json:"enabled"`
+	IsDefault         bool                    `json:"is_default"`
+	ProbeStatus       string                  `json:"probe_status"`
+	ProbeLatencyMS    int64                   `json:"probe_latency_ms"`
+	ModelCount        int                     `json:"model_count"`
+	LastError         string                  `json:"last_error"`
+	CredentialSummary CredentialHealthSummary `json:"credential_summary"`
+}
+
+type CredentialHealthSummary struct {
+	Total       int `json:"total"`
+	Enabled     int `json:"enabled"`
+	Disabled    int `json:"disabled"`
+	RateLimited int `json:"rate_limited"`
+	LastErrors  int `json:"last_errors"`
+}
+
+type GovernanceHealthSummary struct {
+	CapturePolicy            string `json:"capture_policy"`
+	GovernancePolicyCount    int    `json:"governance_policy_count"`
+	EnabledPolicyCount       int    `json:"enabled_policy_count"`
+	PendingApprovalCount     int    `json:"pending_approval_count"`
+	ProviderRiskWarningCount int    `json:"provider_risk_warning_count"`
+	OpenIncidentCount        int    `json:"open_incident_count"`
+	EvidenceCount            int    `json:"evidence_count"`
+	ControlMappingCount      int    `json:"control_mapping_count"`
+}
+
 type UserKeyResponse struct {
 	ID               string  `json:"id"`
 	Key              string  `json:"key"`

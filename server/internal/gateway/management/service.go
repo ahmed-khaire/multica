@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -156,16 +158,18 @@ type txStarter interface {
 }
 
 type Service struct {
-	queries   *db.Queries
-	txStarter txStarter
-	loadBox   func() (*secrets.Box, error)
+	queries    *db.Queries
+	txStarter  txStarter
+	loadBox    func() (*secrets.Box, error)
+	httpClient *http.Client
 }
 
 func NewService(queries *db.Queries, txStarter txStarter) *Service {
 	return &Service{
-		queries:   queries,
-		txStarter: txStarter,
-		loadBox:   secrets.FromEnv,
+		queries:    queries,
+		txStarter:  txStarter,
+		loadBox:    secrets.FromEnv,
+		httpClient: http.DefaultClient,
 	}
 }
 
@@ -866,6 +870,412 @@ func (s *Service) Doctor(ctx context.Context, workspaceID, userID, serverBaseURL
 		Checks:      checks,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (s *Service) HealthReport(ctx context.Context, workspaceID, userID, serverBaseURL string) (HealthReportResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return HealthReportResponse{}, err
+	}
+	if _, err := uuidValue(userID, "user_id"); err != nil {
+		return HealthReportResponse{}, err
+	}
+
+	settings, err := getSettingsOrDefaultWithQueries(ctx, s.queries, workspaceUUID)
+	if err != nil {
+		return HealthReportResponse{}, err
+	}
+	backends, err := s.queries.ListGatewayBackends(ctx, workspaceUUID)
+	if err != nil {
+		return HealthReportResponse{}, err
+	}
+
+	checks := make([]DoctorCheck, 0, len(backends)+8)
+	add := func(check DoctorCheck) {
+		checks = append(checks, check)
+	}
+
+	if err := ValidateCapturePolicy(settings.CapturePolicy); err != nil {
+		add(DoctorCheck{
+			ID:          "capture_policy",
+			Category:    "policy",
+			Status:      "fail",
+			Title:       "Capture policy",
+			Detail:      "Workspace capture policy is invalid.",
+			Remediation: "Set capture policy to metadata_only, redacted_content, or full_content.",
+		})
+	} else {
+		add(DoctorCheck{
+			ID:       "capture_policy",
+			Category: "policy",
+			Status:   "pass",
+			Title:    "Capture policy",
+			Detail:   "Workspace capture policy is explicit.",
+			Metadata: map[string]any{"capture_policy": settings.CapturePolicy},
+		})
+	}
+
+	if len(backends) == 0 {
+		add(DoctorCheck{
+			ID:          "backend_count",
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Managed backends",
+			Detail:      "No Gateway backends are configured.",
+			Remediation: "Add at least one enterprise-managed backend.",
+		})
+	}
+	if !settings.DefaultBackendID.Valid {
+		add(DoctorCheck{
+			ID:          "default_backend",
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Default backend",
+			Detail:      "Gateway does not have a default backend.",
+			Remediation: "Set a default backend with multica gateway default <backend-slug>.",
+		})
+	}
+
+	box, secretErr := s.loadBox()
+	if secretErr != nil {
+		add(DoctorCheck{
+			ID:          "gateway_secret",
+			Category:    "gateway",
+			Status:      "fail",
+			Title:       "Gateway secret key",
+			Detail:      "Gateway cannot decrypt backend credentials for health probes.",
+			Remediation: "Set MULTICA_GATEWAY_SECRET_KEY to a base64-encoded 32-byte key and restart the server.",
+		})
+	} else {
+		add(DoctorCheck{
+			ID:       "gateway_secret",
+			Category: "gateway",
+			Status:   "pass",
+			Title:    "Gateway secret key",
+			Detail:   "Gateway credential decryption is configured.",
+		})
+	}
+
+	now := time.Now().UTC()
+	items := make([]BackendHealthItem, 0, len(backends))
+	for _, backend := range backends {
+		item, check := s.backendHealthItem(ctx, workspaceUUID, settings.DefaultBackendID, backend, box, secretErr, now)
+		items = append(items, item)
+		add(check)
+	}
+
+	governance := s.governanceHealthSummary(ctx, workspaceUUID, settings.CapturePolicy, add)
+	urls := BuildGatewayURLs(serverBaseURL)
+	return HealthReportResponse{
+		Status:           doctorOverallStatus(checks),
+		GeneratedAt:      now.Format(time.RFC3339Nano),
+		OpenAIBaseURL:    urls.OpenAIBaseURL,
+		AnthropicBaseURL: urls.AnthropicBaseURL,
+		Backends:         items,
+		Governance:       governance,
+		Checks:           checks,
+	}, nil
+}
+
+func (s *Service) backendHealthItem(ctx context.Context, workspaceID, defaultBackendID pgtype.UUID, backend db.GatewayBackend, box *secrets.Box, secretErr error, now time.Time) (BackendHealthItem, DoctorCheck) {
+	credentials, err := s.queries.ListGatewayBackendCredentialsForBackend(ctx, db.ListGatewayBackendCredentialsForBackendParams{
+		WorkspaceID: workspaceID,
+		BackendID:   backend.ID,
+	})
+	if err != nil {
+		return BackendHealthItem{
+				ID:                uuidString(backend.ID),
+				Slug:              backend.Slug,
+				DisplayName:       backend.DisplayName,
+				BackendType:       backend.BackendType,
+				BaseURL:           backend.BaseUrl,
+				Enabled:           backend.Enabled,
+				IsDefault:         defaultBackendID.Valid && backend.ID == defaultBackendID,
+				ProbeStatus:       "fail",
+				LastError:         err.Error(),
+				CredentialSummary: CredentialHealthSummary{},
+			}, DoctorCheck{
+				ID:          "backend_probe_" + backend.Slug,
+				Category:    "backend",
+				Status:      "fail",
+				Title:       "Backend probe " + backend.Slug,
+				Detail:      "Gateway could not read backend credentials.",
+				Remediation: "Review backend credential storage.",
+			}
+	}
+
+	summary := credentialHealthSummary(credentials, now)
+	item := BackendHealthItem{
+		ID:                uuidString(backend.ID),
+		Slug:              backend.Slug,
+		DisplayName:       backend.DisplayName,
+		BackendType:       backend.BackendType,
+		BaseURL:           backend.BaseUrl,
+		Enabled:           backend.Enabled,
+		IsDefault:         defaultBackendID.Valid && backend.ID == defaultBackendID,
+		ProbeStatus:       "skipped",
+		CredentialSummary: summary,
+	}
+
+	if !backend.Enabled {
+		item.LastError = "backend disabled"
+		return item, DoctorCheck{
+			ID:          "backend_probe_" + backend.Slug,
+			Category:    "backend",
+			Status:      "warning",
+			Title:       "Backend probe " + backend.Slug,
+			Detail:      "Backend is disabled; probe skipped.",
+			Remediation: "Enable the backend before routing traffic to it.",
+		}
+	}
+	if backend.BackendType == BackendTypeClaudeOAuth {
+		item.LastError = "Claude OAuth backends are sidecar-managed"
+		return item, DoctorCheck{
+			ID:          "backend_probe_" + backend.Slug,
+			Category:    "backend",
+			Status:      "warning",
+			Title:       "Backend probe " + backend.Slug,
+			Detail:      "Claude OAuth backend probes require the sidecar runtime.",
+			Remediation: "Use the Dario-compatible sidecar health check when Claude OAuth routing is enabled.",
+		}
+	}
+	if secretErr != nil {
+		item.ProbeStatus = "fail"
+		item.LastError = "gateway secret unavailable"
+		return item, DoctorCheck{
+			ID:          "backend_probe_" + backend.Slug,
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Backend probe " + backend.Slug,
+			Detail:      "Gateway cannot decrypt backend credentials.",
+			Remediation: "Fix MULTICA_GATEWAY_SECRET_KEY and restart the server.",
+		}
+	}
+
+	encryptedCredential := backend.EncryptedCredential
+	for _, credential := range credentials {
+		if credential.Enabled && (!credential.RateLimitedUntil.Valid || !credential.RateLimitedUntil.Time.After(now)) {
+			encryptedCredential = credential.EncryptedCredential
+			break
+		}
+	}
+	secret, err := box.DecryptString(encryptedCredential)
+	if err != nil {
+		item.ProbeStatus = "fail"
+		item.LastError = "credential decrypt failed"
+		return item, DoctorCheck{
+			ID:          "backend_probe_" + backend.Slug,
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Backend probe " + backend.Slug,
+			Detail:      "Gateway could not decrypt a backend credential.",
+			Remediation: "Rotate the backend credential or restore the original Gateway secret key.",
+		}
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	modelCount, latency, err := s.probeBackendModels(probeCtx, backend, secret)
+	item.ProbeLatencyMS = latency
+	item.ModelCount = modelCount
+	if err != nil {
+		item.ProbeStatus = "fail"
+		item.LastError = err.Error()
+		return item, DoctorCheck{
+			ID:          "backend_probe_" + backend.Slug,
+			Category:    "backend",
+			Status:      "fail",
+			Title:       "Backend probe " + backend.Slug,
+			Detail:      "Backend model-list probe failed.",
+			Remediation: "Verify the backend base URL, credential, egress path, and provider account status.",
+			Metadata:    map[string]any{"backend_slug": backend.Slug, "error": err.Error()},
+		}
+	}
+	item.ProbeStatus = "pass"
+	return item, DoctorCheck{
+		ID:       "backend_probe_" + backend.Slug,
+		Category: "backend",
+		Status:   "pass",
+		Title:    "Backend probe " + backend.Slug,
+		Detail:   "Backend model-list probe passed.",
+		Metadata: map[string]any{
+			"backend_slug":     backend.Slug,
+			"model_count":      modelCount,
+			"probe_latency_ms": latency,
+		},
+	}
+}
+
+func credentialHealthSummary(credentials []db.GatewayBackendCredential, now time.Time) CredentialHealthSummary {
+	summary := CredentialHealthSummary{Total: len(credentials)}
+	for _, credential := range credentials {
+		if credential.Enabled {
+			summary.Enabled++
+		} else {
+			summary.Disabled++
+		}
+		if credential.RateLimitedUntil.Valid && credential.RateLimitedUntil.Time.After(now) {
+			summary.RateLimited++
+		}
+		if credential.LastErrorAt.Valid || strings.TrimSpace(credential.LastError) != "" {
+			summary.LastErrors++
+		}
+	}
+	return summary
+}
+
+func (s *Service) probeBackendModels(ctx context.Context, backend db.GatewayBackend, secret string) (int, int64, error) {
+	path := "/models"
+	if backend.BackendType == BackendTypeAnthropic {
+		path = "/v1/models"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinURLPath(backend.BaseUrl, path), nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	switch backend.BackendType {
+	case BackendTypeAnthropic:
+		req.Header.Set("x-api-key", secret)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	default:
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	started := time.Now()
+	client := s.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	latency := time.Since(started).Milliseconds()
+	if latency <= 0 {
+		latency = 1
+	}
+	if err != nil {
+		return 0, latency, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, latency, fmt.Errorf("model-list probe returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, latency, err
+	}
+	var payload struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, latency, err
+	}
+	return len(payload.Data), latency, nil
+}
+
+func joinURLPath(base, path string) string {
+	parsed, err := url.Parse(strings.TrimRight(base, "/"))
+	if err != nil {
+		return strings.TrimRight(base, "/") + path
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
+	return parsed.String()
+}
+
+func (s *Service) governanceHealthSummary(ctx context.Context, workspaceID pgtype.UUID, capturePolicy string, add func(DoctorCheck)) GovernanceHealthSummary {
+	summary := GovernanceHealthSummary{CapturePolicy: capturePolicy}
+
+	policies, policyErr := s.queries.ListGatewayPolicies(ctx, workspaceID)
+	if policyErr == nil {
+		summary.GovernancePolicyCount = len(policies)
+		for _, policy := range policies {
+			if policy.Enabled {
+				summary.EnabledPolicyCount++
+			}
+		}
+	} else {
+		add(DoctorCheck{ID: "governance_policies", Category: "governance", Status: "warning", Title: "Governance policies", Detail: "Gateway policies could not be checked.", Remediation: "Review Gateway policy storage."})
+	}
+
+	decisions, decisionErr := s.queries.ListGatewayPolicyDecisions(ctx, db.ListGatewayPolicyDecisionsParams{
+		WorkspaceID: workspaceID,
+		Limit:       100,
+		Since:       pgtype.Timestamptz{Time: time.Now().Add(-30 * 24 * time.Hour), Valid: true},
+	})
+	if decisionErr == nil {
+		for _, decision := range decisions {
+			approvalStatus := optionalTextString(decision.ApprovalStatus)
+			if approvalStatus == "requested" || approvalStatus == "pending" {
+				summary.PendingApprovalCount++
+			}
+		}
+	} else {
+		add(DoctorCheck{ID: "policy_decisions", Category: "governance", Status: "warning", Title: "Policy decisions", Detail: "Gateway policy decisions could not be checked.", Remediation: "Review Gateway policy decision storage."})
+	}
+
+	risks, riskErr := s.queries.ListAIThirdPartyRisk(ctx, workspaceID)
+	if riskErr == nil {
+		for _, risk := range risks {
+			_, blocked := providerRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
+			if blocked {
+				summary.ProviderRiskWarningCount++
+			}
+		}
+	} else {
+		add(DoctorCheck{ID: "provider_risks", Category: "governance", Status: "warning", Title: "Provider risk register", Detail: "Provider risk records could not be checked.", Remediation: "Review provider risk storage."})
+	}
+
+	incidents, incidentErr := s.queries.ListAIIncidents(ctx, db.ListAIIncidentsParams{WorkspaceID: workspaceID, Limit: 100})
+	if incidentErr == nil {
+		for _, incident := range incidents {
+			if incident.Status != "closed" && incident.Status != "remediated" {
+				summary.OpenIncidentCount++
+			}
+		}
+	} else {
+		add(DoctorCheck{ID: "open_incidents", Category: "governance", Status: "warning", Title: "Open incidents", Detail: "Gateway incidents could not be checked.", Remediation: "Review incident storage."})
+	}
+	if summary.OpenIncidentCount > 0 {
+		add(DoctorCheck{
+			ID:          "open_incidents",
+			Category:    "governance",
+			Status:      "warning",
+			Title:       "Open incidents",
+			Detail:      fmt.Sprintf("%d Gateway incident(s) need review.", summary.OpenIncidentCount),
+			Remediation: "Review and remediate open Gateway incidents.",
+			Metadata:    map[string]any{"open_count": summary.OpenIncidentCount},
+		})
+	} else if incidentErr == nil {
+		add(DoctorCheck{ID: "open_incidents", Category: "governance", Status: "pass", Title: "Open incidents", Detail: "No open Gateway incidents need review."})
+	}
+
+	evidence, evidenceErr := s.queries.ListAIEvidence(ctx, db.ListAIEvidenceParams{WorkspaceID: workspaceID, Limit: 100})
+	if evidenceErr == nil {
+		summary.EvidenceCount = len(evidence)
+	} else {
+		add(DoctorCheck{ID: "evidence", Category: "governance", Status: "warning", Title: "Evidence records", Detail: "Evidence records could not be checked.", Remediation: "Review governance evidence storage."})
+	}
+
+	controls, controlsErr := s.queries.ListAIControlMappingsWithEvidence(ctx, workspaceID)
+	if controlsErr == nil {
+		summary.ControlMappingCount = len(controls)
+	} else {
+		add(DoctorCheck{ID: "control_mappings", Category: "governance", Status: "warning", Title: "Control mappings", Detail: "Compliance controls could not be checked.", Remediation: "Review compliance mapping storage."})
+	}
+
+	if summary.PendingApprovalCount > 0 || summary.ProviderRiskWarningCount > 0 {
+		add(DoctorCheck{
+			ID:          "governance_attention",
+			Category:    "governance",
+			Status:      "warning",
+			Title:       "Governance attention",
+			Detail:      "Gateway governance has pending approvals or provider risk warnings.",
+			Remediation: "Review pending decisions and provider risk records before expanding rollout.",
+			Metadata: map[string]any{
+				"pending_approval_count":      summary.PendingApprovalCount,
+				"provider_risk_warning_count": summary.ProviderRiskWarningCount,
+			},
+		})
+	}
+
+	return summary
 }
 
 func (s *Service) addProviderRiskDoctorCheck(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend, add func(DoctorCheck)) {

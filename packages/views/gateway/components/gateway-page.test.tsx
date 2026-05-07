@@ -8,6 +8,7 @@ import type {
   GatewayBackend,
   GatewayBackendCredential,
   GatewayExportResponse,
+  GatewayHealthReportResponse,
   GatewayAuditLogItem,
   GatewayControlMappingItem,
   GatewayDoctorResponse,
@@ -65,6 +66,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayIncidents: vi.fn(),
     listGatewayPolicyExceptions: vi.fn(),
     getGatewayDoctor: vi.fn(),
+    getGatewayHealthReport: vi.fn(),
     createGatewayPolicyException: vi.fn(),
     updateGatewayPolicyException: vi.fn(),
     updateGatewayIncident: vi.fn(),
@@ -352,6 +354,46 @@ const gatewayDoctor: GatewayDoctorResponse = {
   ],
 };
 
+const gatewayHealthReport: GatewayHealthReportResponse = {
+  status: "healthy_with_warnings",
+  generated_at: "2026-05-04T13:05:00Z",
+  openai_base_url: "http://localhost:18080/v1",
+  anthropic_base_url: "http://localhost:18080",
+  backends: [
+    {
+      id: "backend-openrouter",
+      slug: "openrouter",
+      display_name: "OpenRouter",
+      backend_type: "openai_compatible",
+      base_url: "https://openrouter.ai/api/v1",
+      enabled: true,
+      is_default: true,
+      probe_status: "pass",
+      probe_latency_ms: 42,
+      model_count: 12,
+      last_error: "",
+      credential_summary: {
+        total: 2,
+        enabled: 1,
+        disabled: 1,
+        rate_limited: 1,
+        last_errors: 1,
+      },
+    },
+  ],
+  governance: {
+    capture_policy: "full_content",
+    governance_policy_count: 3,
+    enabled_policy_count: 2,
+    pending_approval_count: 1,
+    provider_risk_warning_count: 0,
+    open_incident_count: 2,
+    evidence_count: 4,
+    control_mapping_count: 2,
+  },
+  checks: gatewayDoctor.checks,
+};
+
 const gatewayUserKey: GatewayUserKeyResponse = {
   id: "gateway-key-1",
   key: "mgw_secret",
@@ -620,6 +662,7 @@ describe("GatewayPage", () => {
     mockApi.listGatewayIncidents.mockResolvedValue(gatewayIncidents);
     mockApi.listGatewayPolicyExceptions.mockResolvedValue(gatewayPolicyExceptions);
     mockApi.getGatewayDoctor.mockResolvedValue(gatewayDoctor);
+    mockApi.getGatewayHealthReport.mockResolvedValue(gatewayHealthReport);
     mockApi.createGatewayPolicyException.mockResolvedValue(gatewayPolicyExceptions[0]);
     mockApi.updateGatewayPolicyException.mockResolvedValue({
       ...gatewayPolicyExceptions[0],
@@ -736,7 +779,7 @@ describe("GatewayPage", () => {
 
     expect(await screen.findByText("http://localhost:18080/v1")).toBeInTheDocument();
     expect(screen.getByText("http://localhost:18080")).toBeInTheDocument();
-    expect(screen.getByText("full_content")).toBeInTheDocument();
+    expect(screen.getByText("Capture: full_content")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Generate Gateway key/ }));
 
@@ -856,6 +899,7 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayIncidents).not.toHaveBeenCalled();
     expect(mockApi.listGatewayPolicyExceptions).not.toHaveBeenCalled();
     expect(mockApi.getGatewayDoctor).not.toHaveBeenCalled();
+    expect(mockApi.getGatewayHealthReport).not.toHaveBeenCalled();
   });
 
   it("shows Gateway health for admins from the Setup tab", async () => {
@@ -866,12 +910,18 @@ describe("GatewayPage", () => {
 
     expect(await screen.findByText("Gateway Health")).toBeInTheDocument();
     expect(screen.getByText("healthy_with_warnings")).toBeInTheDocument();
+    expect(screen.getAllByText("openrouter").length).toBeGreaterThan(0);
+    expect(screen.getByText("12 models")).toBeInTheDocument();
+    expect(screen.getByText("1/2 active")).toBeInTheDocument();
+    expect(screen.getByText("full_content")).toBeInTheDocument();
+    expect(screen.getByText("2 open incidents")).toBeInTheDocument();
+    expect(screen.getByText("1 pending approvals")).toBeInTheDocument();
     const healthTable = await screen.findByRole("table", { name: /Gateway health checks/ });
     expect(within(healthTable).getByText("User Gateway key")).toBeInTheDocument();
     expect(within(healthTable).getByText("Default backend")).toBeInTheDocument();
     expect(within(healthTable).getByText("Open incidents")).toBeInTheDocument();
     expect(within(healthTable).getByText("Review and remediate open Gateway incidents.")).toBeInTheDocument();
-    expect(mockApi.getGatewayDoctor).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    expect(mockApi.getGatewayHealthReport).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {

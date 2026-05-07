@@ -33,6 +33,7 @@ npm install -g @ahmed-khaire/observer
 multica login
 multica gateway status
 multica gateway doctor
+multica gateway health-report
 ```
 
 Configure enterprise-managed backends:
@@ -86,6 +87,15 @@ multica gateway smoke --since=24h --limit=10
 
 This command checks Gateway status, doctor health, generated user key availability, OpenAI-compatible model catalog reachability through `/v1/models`, and export reachability without printing raw Gateway keys.
 
+Run the health report before and after backend changes:
+
+```bash
+multica gateway health-report
+multica gateway health-report --output json
+```
+
+`health-report` is the operator-facing readiness view. It probes each enabled managed backend through a metadata-only model-list request, reports model count and latency, summarizes credential pool state, and shows governance signals such as capture policy, enabled policies, open incidents, pending approvals, provider risk warnings, evidence records, and control mappings. It never sends prompts or completions and never prints raw provider credentials.
+
 ## Manual Request Checks
 
 OpenAI-compatible non-streaming:
@@ -131,7 +141,7 @@ curl "$OPENAI_BASE_URL/chat/completions" \
 In Settings -> Gateway:
 
 - Confirm Gateway URLs and user key instructions are visible.
-- Confirm Gateway Health reports a passing user key and default backend.
+- Confirm Gateway Health shows backend probe status, credential pool state, capture policy, open incidents, pending approvals, and health checks.
 - Confirm Managed Backends lists the configured backends.
 - Open a backend credential pool and verify credentials show redacted hints only.
 - Confirm capture policy is `full_content` unless the workspace requires a stricter policy.
@@ -144,6 +154,7 @@ Before announcing Gateway as ready for an enterprise pilot, verify:
 
 - The automated smoke test passes against the target database version.
 - `multica gateway doctor` is healthy or only reports understood warnings.
+- `multica gateway health-report` shows passing backend probes or only understood warnings.
 - Default backend is enabled.
 - At least one active Gateway key exists for the test user.
 - Streaming works for OpenAI-compatible and Anthropic-compatible clients.

@@ -135,6 +135,16 @@ func (h *Handler) GatewayDoctor(w http.ResponseWriter, r *http.Request) {
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) GatewayHealthReport(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.HealthReport(r.Context(), workspaceID, userID, gatewayServerBaseURL(r))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) GetGatewaySettings(w http.ResponseWriter, r *http.Request) {
 	workspaceID, _, ok := h.gatewayRequestScope(w, r)
 	if !ok {

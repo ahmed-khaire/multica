@@ -57,6 +57,7 @@ import type {
   GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayExportResponse,
+  GatewayHealthReportResponse,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -662,6 +663,10 @@ export class ApiClient {
 
   async getGatewayDoctor(params?: { signal?: AbortSignal }): Promise<GatewayDoctorResponse> {
     return this.fetch("/api/gateway/doctor", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async getGatewayHealthReport(params?: { signal?: AbortSignal }): Promise<GatewayHealthReportResponse> {
+    return this.fetch("/api/gateway/health-report", params?.signal ? { signal: params.signal } : undefined);
   }
 
   async listGatewayBackends(params?: { signal?: AbortSignal }): Promise<GatewayBackend[]> {

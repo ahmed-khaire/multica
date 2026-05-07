@@ -167,6 +167,7 @@ Gateway lets an enterprise route OpenAI-compatible and Anthropic-compatible agen
 ```bash
 multica gateway status
 multica gateway doctor
+multica gateway health-report
 multica gateway key
 multica gateway smoke --since=24h --limit=10
 ```
@@ -180,6 +181,8 @@ multica gateway credential add <backend-id> --label='primary key' --key=sk-... -
 multica gateway credentials <backend-id>
 multica gateway policy full_content
 ```
+
+`multica gateway health-report` gives admins the readiness view for enterprise rollout: enabled backend model-list probes, probe latency, model counts, credential pool health, capture policy, open incidents, pending approvals, provider risk warnings, evidence counts, and control mapping counts. Use `--output json` when feeding the report into deployment checks.
 
 `multica gateway smoke` checks status, doctor health, generated user key availability, `/v1/models` reachability through the Gateway key, and export reachability. See [Gateway Acceptance Checklist](docs/gateway-acceptance.md) for the full rollout checklist.
 

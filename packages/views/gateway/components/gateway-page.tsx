@@ -38,9 +38,9 @@ import type {
   GatewayBackendCredential,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
-  GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayExportResponse,
+  GatewayHealthReportResponse,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
@@ -72,8 +72,8 @@ import {
   gatewayBackendCredentialsOptions,
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
-  gatewayDoctorOptions,
   gatewayEvidenceOptions,
+  gatewayHealthReportOptions,
   gatewayIncidentsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
@@ -1522,14 +1522,16 @@ function GatewayHealthPanel({
   wsId: string;
 }) {
   const qc = useQueryClient();
-  const doctorQuery = useQuery(gatewayDoctorOptions(wsId, canManage));
-  const doctor = doctorQuery.data as GatewayDoctorResponse | undefined;
-  const checks = doctor?.checks ?? [];
+  const reportQuery = useQuery(gatewayHealthReportOptions(wsId, canManage));
+  const report = reportQuery.data as GatewayHealthReportResponse | undefined;
+  const checks = report?.checks ?? [];
+  const backends = report?.backends ?? [];
+  const governance = report?.governance;
 
   if (!canManage) return null;
 
-  const refreshDoctor = () => {
-    void qc.invalidateQueries({ queryKey: gatewayKeys.doctor(wsId) });
+  const refreshReport = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.healthReport(wsId) });
   };
 
   return (
@@ -1541,14 +1543,14 @@ function GatewayHealthPanel({
             Gateway Health
           </span>
           <span className="flex items-center gap-2">
-            <Badge variant={doctorStatusVariant(doctor?.status ?? "unknown")}>
-              {doctor?.status ?? "checking"}
+            <Badge variant={doctorStatusVariant(report?.status ?? "unknown")}>
+              {report?.status ?? "checking"}
             </Badge>
             <Button
               type="button"
               size="icon-xs"
               variant="ghost"
-              onClick={refreshDoctor}
+              onClick={refreshReport}
               aria-label="Refresh Gateway health"
               title="Refresh Gateway health"
             >
@@ -1557,53 +1559,115 @@ function GatewayHealthPanel({
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
-        {doctorQuery.isLoading ? (
+      <CardContent className="space-y-3 p-3">
+        {reportQuery.isLoading ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 4 }).map((_, index) => (
               <Skeleton key={index} className="h-12 rounded-md" />
             ))}
           </div>
-        ) : checks.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+        ) : !report ? (
+          <div className="flex h-32 flex-col items-center justify-center text-center">
             <Gauge className="size-8 text-muted-foreground/40" />
-            <p className="mt-3 text-sm font-medium">No health checks returned</p>
-            <p className="mt-1 text-xs text-muted-foreground">Run the doctor again after Gateway is configured.</p>
+            <p className="mt-3 text-sm font-medium">No health report returned</p>
+            <p className="mt-1 text-xs text-muted-foreground">Refresh after Gateway is configured.</p>
           </div>
         ) : (
-          <Table aria-label="Gateway health checks">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Status</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Check</TableHead>
-                <TableHead>Detail</TableHead>
-                <TableHead>Remediation</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {checks.map((check) => (
-                <TableRow key={check.id}>
-                  <TableCell>
-                    <Badge variant={doctorStatusVariant(check.status)}>{check.status}</Badge>
-                  </TableCell>
-                  <TableCell>{check.category}</TableCell>
-                  <TableCell>
-                    <span className="font-medium">{check.title}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="line-clamp-2 max-w-md text-sm">{check.detail}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="line-clamp-2 max-w-md text-sm text-muted-foreground">{check.remediation || "None"}</span>
-                  </TableCell>
+          <>
+            <div className="grid gap-2 md:grid-cols-4">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Capture Policy</p>
+                <p className="mt-1 truncate text-sm font-medium">Capture: {governance?.capture_policy ?? "unknown"}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Backends</p>
+                <p className="mt-1 text-sm font-medium">{backends.length} configured</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Open Incidents</p>
+                <p className="mt-1 text-sm font-medium">{formatCount(governance?.open_incident_count ?? 0)} open incidents</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Approvals</p>
+                <p className="mt-1 text-sm font-medium">{formatCount(governance?.pending_approval_count ?? 0)} pending approvals</p>
+              </div>
+            </div>
+
+            {backends.length > 0 ? (
+              <Table aria-label="Gateway backend health">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Backend</TableHead>
+                    <TableHead>Probe</TableHead>
+                    <TableHead>Models</TableHead>
+                    <TableHead>Credentials</TableHead>
+                    <TableHead>Latency</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {backends.map((backend) => (
+                    <TableRow key={backend.id}>
+                      <TableCell>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{backend.slug}</p>
+                          <p className="truncate text-xs text-muted-foreground">{backend.backend_type}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={doctorStatusVariant(backend.probe_status)}>{backend.probe_status}</Badge>
+                      </TableCell>
+                      <TableCell>{formatCount(backend.model_count)} models</TableCell>
+                      <TableCell>
+                        <span className="text-sm">
+                          {formatCount(backend.credential_summary.enabled)}/{formatCount(backend.credential_summary.total)} active
+                        </span>
+                        {(backend.credential_summary.rate_limited > 0 || backend.credential_summary.last_errors > 0) && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {formatCount(backend.credential_summary.rate_limited)} limited · {formatCount(backend.credential_summary.last_errors)} errors
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>{formatMS(backend.probe_latency_ms)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+
+            <Table aria-label="Gateway health checks">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Check</TableHead>
+                  <TableHead>Detail</TableHead>
+                  <TableHead>Remediation</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {checks.map((check) => (
+                  <TableRow key={check.id}>
+                    <TableCell>
+                      <Badge variant={doctorStatusVariant(check.status)}>{check.status}</Badge>
+                    </TableCell>
+                    <TableCell>{check.category}</TableCell>
+                    <TableCell>
+                      <span className="font-medium">{check.title}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="line-clamp-2 max-w-md text-sm">{check.detail}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="line-clamp-2 max-w-md text-sm text-muted-foreground">{check.remediation || "None"}</span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
         )}
-        {doctorQuery.error instanceof Error ? (
-          <p className="border-t p-3 text-xs text-destructive">{doctorQuery.error.message}</p>
+        {reportQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{reportQuery.error.message}</p>
         ) : null}
       </CardContent>
     </Card>

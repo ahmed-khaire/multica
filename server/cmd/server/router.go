@@ -175,6 +175,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 			r.Route("/api/gateway", func(r chi.Router) {
 				r.Get("/status", h.GatewayStatus)
 				r.Get("/doctor", h.GatewayDoctor)
+				r.Get("/health-report", h.GatewayHealthReport)
 				r.Get("/settings", h.GetGatewaySettings)
 				r.Get("/backends", h.ListGatewayBackends)
 				r.Get("/key", h.GetGatewayUserKey)

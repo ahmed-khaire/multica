@@ -35,6 +35,12 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewayDoctor,
 	}
 
+	healthReportCmd := &cobra.Command{
+		Use:   "health-report",
+		Short: "Show Observer Gateway backend, credential, and governance health",
+		RunE:  runGatewayHealthReport,
+	}
+
 	smokeCmd := &cobra.Command{
 		Use:   "smoke",
 		Short: "Run an Observer Gateway operator smoke check",
@@ -140,6 +146,7 @@ func newGatewayCommand() *cobra.Command {
 
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(doctorCmd)
+	cmd.AddCommand(healthReportCmd)
 	cmd.AddCommand(smokeCmd)
 	cmd.AddCommand(keyCmd)
 	cmd.AddCommand(keysCmd)
@@ -159,6 +166,7 @@ func newGatewayCommand() *cobra.Command {
 
 	statusCmd.Flags().String("output", "table", "Output format: table or json")
 	doctorCmd.Flags().String("output", "table", "Output format: table or json")
+	healthReportCmd.Flags().String("output", "table", "Output format: table or json")
 	smokeCmd.Flags().String("since", "24h", "Export lookback window, such as 24h, 7d, or an RFC3339 timestamp")
 	smokeCmd.Flags().Int32("limit", 10, "Maximum rows per exported section")
 	keyCmd.Flags().String("output", "env", "Output format: env or json")
@@ -246,6 +254,50 @@ type gatewayDoctorCheckDTO struct {
 	Detail      string         `json:"detail"`
 	Remediation string         `json:"remediation"`
 	Metadata    map[string]any `json:"metadata"`
+}
+
+type gatewayHealthReportDTO struct {
+	Status           string                     `json:"status"`
+	GeneratedAt      string                     `json:"generated_at"`
+	OpenAIBaseURL    string                     `json:"openai_base_url"`
+	AnthropicBaseURL string                     `json:"anthropic_base_url"`
+	Backends         []gatewayBackendHealthDTO  `json:"backends"`
+	Governance       gatewayGovernanceHealthDTO `json:"governance"`
+	Checks           []gatewayDoctorCheckDTO    `json:"checks"`
+}
+
+type gatewayBackendHealthDTO struct {
+	ID                string                     `json:"id"`
+	Slug              string                     `json:"slug"`
+	DisplayName       string                     `json:"display_name"`
+	BackendType       string                     `json:"backend_type"`
+	BaseURL           string                     `json:"base_url"`
+	Enabled           bool                       `json:"enabled"`
+	IsDefault         bool                       `json:"is_default"`
+	ProbeStatus       string                     `json:"probe_status"`
+	ProbeLatencyMS    int64                      `json:"probe_latency_ms"`
+	ModelCount        int                        `json:"model_count"`
+	LastError         string                     `json:"last_error"`
+	CredentialSummary gatewayCredentialHealthDTO `json:"credential_summary"`
+}
+
+type gatewayCredentialHealthDTO struct {
+	Total       int `json:"total"`
+	Enabled     int `json:"enabled"`
+	Disabled    int `json:"disabled"`
+	RateLimited int `json:"rate_limited"`
+	LastErrors  int `json:"last_errors"`
+}
+
+type gatewayGovernanceHealthDTO struct {
+	CapturePolicy            string `json:"capture_policy"`
+	GovernancePolicyCount    int    `json:"governance_policy_count"`
+	EnabledPolicyCount       int    `json:"enabled_policy_count"`
+	PendingApprovalCount     int    `json:"pending_approval_count"`
+	ProviderRiskWarningCount int    `json:"provider_risk_warning_count"`
+	OpenIncidentCount        int    `json:"open_incident_count"`
+	EvidenceCount            int    `json:"evidence_count"`
+	ControlMappingCount      int    `json:"control_mapping_count"`
 }
 
 type gatewayKeyDTO struct {
@@ -435,6 +487,77 @@ func runGatewayDoctor(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	cli.PrintTable(w, []string{"STATUS", "CATEGORY", "CHECK", "DETAIL", "REMEDIATION"}, rows)
+	return nil
+}
+
+func runGatewayHealthReport(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	var resp gatewayHealthReportDTO
+	if err := client.GetJSON(ctx, "/api/gateway/health-report", &resp); err != nil {
+		return fmt.Errorf("show gateway health report: %w", err)
+	}
+
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), resp)
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintln(w, "Observer Gateway Health Report")
+	fmt.Fprintf(w, "Result: %s\n", resp.Status)
+	if resp.GeneratedAt != "" {
+		fmt.Fprintf(w, "Generated: %s\n", resp.GeneratedAt)
+	}
+	fmt.Fprintln(w)
+
+	backendRows := make([][]string, 0, len(resp.Backends))
+	for _, backend := range resp.Backends {
+		defaultMarker := ""
+		if backend.IsDefault {
+			defaultMarker = "yes"
+		}
+		credentialDetail := fmt.Sprintf("credentials %d/%d active", backend.CredentialSummary.Enabled, backend.CredentialSummary.Total)
+		if backend.CredentialSummary.RateLimited > 0 {
+			credentialDetail += fmt.Sprintf(", %d rate-limited", backend.CredentialSummary.RateLimited)
+		}
+		if backend.CredentialSummary.LastErrors > 0 {
+			credentialDetail += fmt.Sprintf(", %d errors", backend.CredentialSummary.LastErrors)
+		}
+		modelDetail := fmt.Sprintf("%d models", backend.ModelCount)
+		if backend.LastError != "" {
+			modelDetail = backend.LastError
+		}
+		backendRows = append(backendRows, []string{
+			backend.Slug,
+			backend.BackendType,
+			yesNo(backend.Enabled),
+			defaultMarker,
+			backend.ProbeStatus,
+			formatLatencyMS(backend.ProbeLatencyMS),
+			modelDetail,
+			credentialDetail,
+		})
+	}
+	cli.PrintTable(w, []string{"BACKEND", "TYPE", "ENABLED", "DEFAULT", "PROBE", "LATENCY", "MODELS", "CREDENTIALS"}, backendRows)
+	fmt.Fprintln(w)
+	fmt.Fprintf(
+		w,
+		"Governance: %s, %d/%d policies enabled, %d open incidents, %d pending approvals, %d provider warnings, %d evidence records, %d controls\n",
+		resp.Governance.CapturePolicy,
+		resp.Governance.EnabledPolicyCount,
+		resp.Governance.GovernancePolicyCount,
+		resp.Governance.OpenIncidentCount,
+		resp.Governance.PendingApprovalCount,
+		resp.Governance.ProviderRiskWarningCount,
+		resp.Governance.EvidenceCount,
+		resp.Governance.ControlMappingCount,
+	)
 	return nil
 }
 
@@ -992,6 +1115,16 @@ func nullableString(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func formatLatencyMS(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	if value >= 1000 {
+		return fmt.Sprintf("%.1fs", float64(value)/1000)
+	}
+	return fmt.Sprintf("%dms", value)
 }
 
 func yesNo(v bool) string {
