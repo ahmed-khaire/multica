@@ -44,6 +44,8 @@ import type {
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
+  GatewayGovernanceActionItem,
+  GatewayGovernanceInsightsResponse,
   GatewayGovernancePolicyItem,
   GatewayStatusResponse,
   GatewayUserKeyResponse,
@@ -74,6 +76,7 @@ import {
   gatewayControlMappingsOptions,
   gatewayEvidenceOptions,
   gatewayHealthReportOptions,
+  gatewayGovernanceInsightsOptions,
   gatewayIncidentsOptions,
   gatewayIngestKeysOptions,
   gatewayLLMCallsOptions,
@@ -204,6 +207,12 @@ function doctorStatusVariant(status: string): "secondary" | "destructive" | "out
   return "outline";
 }
 
+function actionSeverityVariant(severity: string): "secondary" | "destructive" | "outline" {
+  if (severity === "critical" || severity === "high") return "destructive";
+  if (severity === "medium" || severity === "warning") return "secondary";
+  return "outline";
+}
+
 function StatCard({
   label,
   value,
@@ -222,6 +231,42 @@ function StatCard({
           <p className="text-xs text-muted-foreground">{label}</p>
           <p className="mt-1 text-2xl font-semibold tracking-normal tabular-nums">{value}</p>
           <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
+        </div>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <Icon className="size-4" />
+        </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GovernanceInsightMetric({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  variant = "outline",
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  icon: React.ComponentType<{ className?: string }>;
+  variant?: "destructive" | "outline" | "secondary";
+}) {
+  return (
+    <Card
+      size="sm"
+      className={cn(
+        "rounded-lg",
+        variant === "destructive" && "border-destructive/30 bg-destructive/5",
+        variant === "secondary" && "bg-muted/30",
+      )}
+    >
+      <CardContent className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="mt-1 text-2xl font-semibold tracking-normal tabular-nums">{value}</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
         </div>
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <Icon className="size-4" />
@@ -252,6 +297,40 @@ function BreakdownRow({
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div className="h-full rounded-full bg-foreground/70" style={{ width: `${width}%` }} />
       </div>
+    </div>
+  );
+}
+
+function GovernanceActionQueue({ actions }: { actions: GatewayGovernanceActionItem[] }) {
+  if (actions.length === 0) {
+    return (
+      <div className="flex h-56 flex-col items-center justify-center rounded-md border text-center">
+        <ShieldCheck className="size-8 text-muted-foreground/40" />
+        <p className="mt-3 text-sm font-medium">No governance actions queued</p>
+        <p className="mt-1 text-xs text-muted-foreground">Incidents, provider reviews, control gaps, and expiring exceptions appear here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {actions.slice(0, 8).map((action) => (
+        <div key={`${action.kind}-${action.resource_id}-${action.created_at}`} className="rounded-md border p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{action.title}</p>
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{action.detail}</p>
+            </div>
+            <Badge variant={actionSeverityVariant(action.severity)}>{action.severity}</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{action.kind}</Badge>
+            <span>{action.resource_type}</span>
+            <span className="truncate">{action.resource_id}</span>
+            <span className="ml-auto shrink-0">{formatTime(action.created_at)}</span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1510,6 +1589,284 @@ function GatewayConfigurationSetup({
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function GatewayGovernanceInsights({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const insightsQuery = useQuery(gatewayGovernanceInsightsOptions(wsId, canManage));
+  const insights = insightsQuery.data as GatewayGovernanceInsightsResponse | undefined;
+
+  if (!canManage) {
+    return (
+      <Card size="sm" className="rounded-lg">
+        <CardContent className="flex items-start gap-3">
+          <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Governance insights require owner or admin access.</p>
+            <p className="text-xs text-muted-foreground">
+              Workspace admins can review risk, behavior trends, compliance coverage, and action queue items.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (insightsQuery.isLoading && !insights) {
+    return (
+      <div className="space-y-3">
+        <div className="grid gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-28 rounded-lg" />
+          ))}
+        </div>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <Skeleton className="h-80 rounded-lg" />
+          <Skeleton className="h-80 rounded-lg" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!insights) {
+    return (
+      <Card size="sm" className="rounded-lg">
+        <CardContent className="flex h-44 flex-col items-center justify-center text-center">
+          <Gauge className="size-8 text-muted-foreground/40" />
+          <p className="mt-3 text-sm font-medium">No governance insights returned</p>
+          <p className="mt-1 text-xs text-muted-foreground">Refresh after Gateway traffic and governance records are available.</p>
+          {insightsQuery.error instanceof Error ? (
+            <p className="mt-3 text-xs text-destructive">{insightsQuery.error.message}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const risk = insights.risk_overview;
+  const behavior = insights.behavior_trends;
+  const coverage = insights.compliance_coverage;
+  const maxModelCalls = Math.max(...behavior.top_models.map((model) => model.call_count), 1);
+  const maxBackendCalls = Math.max(...behavior.top_backends.map((backend) => backend.call_count), 1);
+  const maxReasonCount = Math.max(...behavior.policy_reason_counts.map((reason) => reason.count), 1);
+  const maxBlockedCount = Math.max(...behavior.blocked_resources.map((resource) => resource.count), 1);
+
+  return (
+    <div className="space-y-3">
+      <Card size="sm" className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between gap-3 text-sm">
+            <span className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-muted-foreground" />
+              Governance Insights
+            </span>
+            <span className="text-xs font-normal text-muted-foreground">
+              Generated {formatTime(insights.generated_at)}
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-4">
+          <GovernanceInsightMetric
+            label="Open Incidents"
+            value={formatCount(risk.open_incident_count)}
+            detail={`${formatCount(risk.high_severity_open_incident_count)} high severity`}
+            icon={AlertTriangle}
+            variant={risk.high_severity_open_incident_count > 0 ? "destructive" : "outline"}
+          />
+          <GovernanceInsightMetric
+            label="Approvals"
+            value={formatCount(risk.pending_approval_count)}
+            detail={`${formatCount(risk.pending_approval_count)} pending approvals`}
+            icon={Check}
+          />
+          <GovernanceInsightMetric
+            label="Policy Decisions"
+            value={formatCount(risk.blocked_decision_count + risk.warn_decision_count)}
+            detail={`${formatCount(risk.blocked_decision_count)} blocked decisions`}
+            icon={ShieldCheck}
+          />
+          <GovernanceInsightMetric
+            label="Provider Risk"
+            value={formatCount(risk.high_risk_provider_count)}
+            detail={`${formatCount(risk.high_risk_provider_count)} high-risk providers`}
+            icon={Server}
+            variant={risk.high_risk_provider_count > 0 ? "destructive" : "outline"}
+          />
+          <GovernanceInsightMetric
+            label="Review Warnings"
+            value={formatCount(risk.provider_review_warning_count)}
+            detail={`${formatCount(risk.provider_review_warning_count)} provider warnings`}
+            icon={Gauge}
+          />
+          <GovernanceInsightMetric
+            label="Control Gaps"
+            value={formatCount(risk.control_gap_count)}
+            detail={`${formatCount(coverage.gap_control_count)} gaps`}
+            icon={Boxes}
+            variant={risk.control_gap_count > 0 ? "destructive" : "outline"}
+          />
+          <GovernanceInsightMetric
+            label="Policy Exceptions"
+            value={formatCount(risk.active_policy_exception_count)}
+            detail={`${formatCount(risk.active_policy_exception_count)} active exceptions`}
+            icon={Route}
+          />
+          <GovernanceInsightMetric
+            label="Evidence"
+            value={formatCount(coverage.evidence_count)}
+            detail={`${formatCount(coverage.evidence_count)} evidence records`}
+            icon={DatabaseZap}
+          />
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-3">
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Card size="sm" className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <MessageSquareText className="size-4 text-muted-foreground" />
+                  Model Usage
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {behavior.top_models.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No model usage recorded in the governance window.</p>
+                ) : (
+                  behavior.top_models.slice(0, 6).map((model) => (
+                    <BreakdownRow
+                      key={model.model}
+                      label={model.model}
+                      value={model.call_count}
+                      max={maxModelCalls}
+                      detail={`${formatCount(model.total_tokens)} tokens · ${formatMoney(model.total_cost)}`}
+                    />
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card size="sm" className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Server className="size-4 text-muted-foreground" />
+                  Backend Usage
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {behavior.top_backends.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No backend usage recorded in the governance window.</p>
+                ) : (
+                  behavior.top_backends.slice(0, 6).map((backend) => (
+                    <BreakdownRow
+                      key={backend.backend}
+                      label={backend.backend}
+                      value={backend.call_count}
+                      max={maxBackendCalls}
+                      detail={`${formatMS(backend.avg_latency_ms)} avg · ${formatCount(backend.error_count)} errors`}
+                    />
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Card size="sm" className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <ShieldCheck className="size-4 text-muted-foreground" />
+                  Policy Reasons
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {behavior.policy_reason_counts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No policy reason counts recorded.</p>
+                ) : (
+                  behavior.policy_reason_counts.slice(0, 6).map((reason) => (
+                    <BreakdownRow
+                      key={reason.reason_code}
+                      label={reason.reason_code}
+                      value={reason.count}
+                      max={maxReasonCount}
+                      detail={`${formatCount(reason.count)} decisions`}
+                    />
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card size="sm" className="rounded-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <AlertTriangle className="size-4 text-muted-foreground" />
+                  Blocked Resources
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {behavior.blocked_resources.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No blocked resources recorded.</p>
+                ) : (
+                  behavior.blocked_resources.slice(0, 6).map((resource) => (
+                    <BreakdownRow
+                      key={`${resource.resource_type}-${resource.resource_id}`}
+                      label={resource.resource_label || resource.resource_id || resource.resource_type}
+                      value={resource.count}
+                      max={maxBlockedCount}
+                      detail={`${formatCount(resource.count)} blocks · ${resource.resource_type}`}
+                    />
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card size="sm" className="rounded-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Boxes className="size-4 text-muted-foreground" />
+                Compliance Coverage
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 md:grid-cols-5">
+                <GatewayValue label="Controls" value={`${formatCount(coverage.control_count)} mapped`} />
+                <GatewayValue label="Covered" value={`${formatCount(coverage.covered_control_count)} covered`} />
+                <GatewayValue label="Partial" value={`${formatCount(coverage.partial_control_count)} partial`} />
+                <GatewayValue label="Gaps" value={`${formatCount(coverage.gap_control_count)} gaps`} />
+                <GatewayValue label="Stale" value={`${formatCount(coverage.stale_control_count)} stale`} />
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {formatCount(coverage.evidence_count)} evidence records · latest evidence {formatNullableTime(coverage.last_evidence_generated_at)}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="size-4 text-muted-foreground" />
+              Action Queue
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GovernanceActionQueue actions={insights.action_queue} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {insightsQuery.error instanceof Error ? (
+        <p className="text-xs text-destructive">{insightsQuery.error.message}</p>
+      ) : null}
     </div>
   );
 }
@@ -3273,6 +3630,7 @@ export function GatewayPage() {
               <TabsList>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
                 <TabsTrigger value="llm-calls">LLM Calls</TabsTrigger>
+                <TabsTrigger value="governance">Governance</TabsTrigger>
                 <TabsTrigger value="setup">Setup</TabsTrigger>
               </TabsList>
               <p className="text-xs text-muted-foreground">
@@ -3307,6 +3665,9 @@ export function GatewayPage() {
                   onSelectSession={setSelectedSessionId}
                 />
               )}
+            </TabsContent>
+            <TabsContent value="governance" className="mt-3">
+              <GatewayGovernanceInsights canManage={canManage} wsId={wsId} />
             </TabsContent>
             <TabsContent value="setup" className="mt-3">
               <div className="space-y-4">

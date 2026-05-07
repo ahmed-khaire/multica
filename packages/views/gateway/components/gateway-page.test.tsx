@@ -16,6 +16,7 @@ import type {
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
   GatewayIngestKeyResponse,
+  GatewayGovernanceInsightsResponse,
   GatewayOverviewResponse,
   GatewayGovernancePolicyItem,
   GatewayPolicyDecisionItem,
@@ -67,6 +68,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayPolicyExceptions: vi.fn(),
     getGatewayDoctor: vi.fn(),
     getGatewayHealthReport: vi.fn(),
+    getGatewayGovernanceInsights: vi.fn(),
     createGatewayPolicyException: vi.fn(),
     updateGatewayPolicyException: vi.fn(),
     updateGatewayIncident: vi.fn(),
@@ -394,6 +396,68 @@ const gatewayHealthReport: GatewayHealthReportResponse = {
   checks: gatewayDoctor.checks,
 };
 
+const gatewayGovernanceInsights: GatewayGovernanceInsightsResponse = {
+  generated_at: "2026-05-04T13:10:00Z",
+  since: "2026-04-04T13:10:00Z",
+  risk_overview: {
+    open_incident_count: 2,
+    high_severity_open_incident_count: 1,
+    pending_approval_count: 1,
+    blocked_decision_count: 4,
+    warn_decision_count: 3,
+    high_risk_provider_count: 1,
+    provider_review_warning_count: 2,
+    control_gap_count: 1,
+    active_policy_exception_count: 1,
+  },
+  behavior_trends: {
+    top_models: [
+      { model: "gpt-observe", call_count: 14, total_tokens: 2400, total_cost: 1.25 },
+      { model: "claude-sonnet", call_count: 6, total_tokens: 900, total_cost: 0.92 },
+    ],
+    top_backends: [
+      { backend: "openrouter", call_count: 14, error_count: 2, avg_latency_ms: 840, total_tokens: 2400, total_cost: 1.25 },
+      { backend: "local", call_count: 4, error_count: 0, avg_latency_ms: 110, total_tokens: 600, total_cost: 0 },
+    ],
+    policy_reason_counts: [
+      { reason_code: "provider_risk_rejected", count: 4 },
+      { reason_code: "source_code_routes_local", count: 2 },
+    ],
+    blocked_resources: [
+      { resource_type: "provider", resource_id: "backend-openrouter", resource_label: "OpenRouter", count: 4 },
+    ],
+  },
+  compliance_coverage: {
+    control_count: 5,
+    covered_control_count: 3,
+    partial_control_count: 1,
+    gap_control_count: 1,
+    evidence_count: 7,
+    stale_control_count: 2,
+    last_evidence_generated_at: "2026-05-04T12:46:00Z",
+  },
+  action_queue: [
+    {
+      kind: "incident",
+      severity: "high",
+      title: "Review open Gateway incident",
+      detail: "Gateway blocked provider openrouter: provider_risk_rejected",
+      resource_type: "incident",
+      resource_id: "incident-1",
+      created_at: "2026-05-04T12:48:00Z",
+    },
+    {
+      kind: "provider_risk",
+      severity: "high",
+      title: "Review provider risk",
+      detail: "OpenRouter has rejected governance review.",
+      resource_type: "provider",
+      resource_id: "backend-openrouter",
+      created_at: "2026-05-04T12:40:00Z",
+    },
+  ],
+};
+
 const gatewayUserKey: GatewayUserKeyResponse = {
   id: "gateway-key-1",
   key: "mgw_secret",
@@ -663,6 +727,7 @@ describe("GatewayPage", () => {
     mockApi.listGatewayPolicyExceptions.mockResolvedValue(gatewayPolicyExceptions);
     mockApi.getGatewayDoctor.mockResolvedValue(gatewayDoctor);
     mockApi.getGatewayHealthReport.mockResolvedValue(gatewayHealthReport);
+    mockApi.getGatewayGovernanceInsights.mockResolvedValue(gatewayGovernanceInsights);
     mockApi.createGatewayPolicyException.mockResolvedValue(gatewayPolicyExceptions[0]);
     mockApi.updateGatewayPolicyException.mockResolvedValue({
       ...gatewayPolicyExceptions[0],
@@ -922,6 +987,30 @@ describe("GatewayPage", () => {
     expect(within(healthTable).getByText("Open incidents")).toBeInTheDocument();
     expect(within(healthTable).getByText("Review and remediate open Gateway incidents.")).toBeInTheDocument();
     expect(mockApi.getGatewayHealthReport).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+  });
+
+  it("shows Gateway governance insights for admins", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+
+    expect(await screen.findByText("Governance Insights")).toBeInTheDocument();
+    expect(screen.getByText("1 high severity")).toBeInTheDocument();
+    expect(screen.getByText("1 pending approvals")).toBeInTheDocument();
+    expect(screen.getByText("4 blocked decisions")).toBeInTheDocument();
+    expect(screen.getByText("1 high-risk providers")).toBeInTheDocument();
+    expect(screen.getAllByText("gpt-observe").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("claude-sonnet")).toBeInTheDocument();
+    expect(screen.getAllByText("openrouter").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("provider_risk_rejected")).toBeInTheDocument();
+    expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    expect(screen.getByText("3 covered")).toBeInTheDocument();
+    expect(screen.getAllByText("1 gaps").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("7 evidence records").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Review open Gateway incident")).toBeInTheDocument();
+    expect(screen.getByText("Review provider risk")).toBeInTheDocument();
+    expect(mockApi.getGatewayGovernanceInsights).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
   it("shows Gateway audit history for admins from the Setup tab", async () => {
