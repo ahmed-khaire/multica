@@ -1116,6 +1116,73 @@ describe("GatewayPage", () => {
     });
   });
 
+  it("exports evidence bundle JSON and Markdown reports", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const createObjectURL = vi.fn().mockReturnValue("blob:gateway-report");
+    const revokeObjectURL = vi.fn();
+    const clickedDownloads: { download: string; href: string }[] = [];
+    const originalClipboard = navigator.clipboard;
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) {
+      clickedDownloads.push({ download: this.download, href: this.href });
+    });
+
+    try {
+      renderGatewayPage();
+
+      await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+      await user.click(await screen.findByRole("button", { name: /View evidence bundle for incident-1/ }));
+      expect(await screen.findByText("Evidence Bundle")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /Copy evidence bundle JSON/ }));
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"incident_id": "incident-1"'));
+      });
+
+      await user.click(screen.getByRole("button", { name: /Download evidence bundle JSON/ }));
+      await user.click(screen.getByRole("button", { name: /Download evidence bundle Markdown report/ }));
+
+      expect(createObjectURL).toHaveBeenCalledTimes(2);
+      const markdownBlob = createObjectURL.mock.calls[1]?.[0] as Blob;
+      expect(clickedDownloads.map((item) => item.download)).toEqual([
+        "gateway-evidence-bundle-incident-1.json",
+        "gateway-evidence-bundle-incident-1.md",
+      ]);
+      await expect(markdownBlob.text()).resolves.toContain("# Gateway Evidence Bundle Report");
+      await expect(markdownBlob.text()).resolves.toContain("Gateway blocked provider openrouter: provider_risk_rejected");
+      await expect(markdownBlob.text()).resolves.toContain("provider_risk_rejected");
+      await expect(markdownBlob.text()).resolves.toContain("content visibility follows the workspace Gateway capture policy");
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreateObjectURL,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      });
+      clickSpy.mockRestore();
+    }
+  });
+
   it("shows Gateway audit history for admins from the Setup tab", async () => {
     const user = userEvent.setup();
     renderGatewayPage();
