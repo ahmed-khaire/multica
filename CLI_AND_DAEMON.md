@@ -160,6 +160,29 @@ Agent-specific overrides:
 | `MULTICA_CODEX_PATH` | Custom path to the `codex` binary |
 | `MULTICA_CODEX_MODEL` | Override the Codex model used |
 
+## Observer Gateway
+
+Gateway lets an enterprise route OpenAI-compatible and Anthropic-compatible agent traffic through Multica for managed backends, policy, observability, exports, and audit.
+
+```bash
+multica gateway status
+multica gateway doctor
+multica gateway key
+multica gateway smoke --since=24h --limit=10
+```
+
+Admins can configure provider backends and credential pools:
+
+```bash
+multica gateway add openai --key=sk-proj-... --base-url=https://api.openai.com/v1 --set-default
+multica gateway add openrouter --key=sk-or-... --base-url=https://openrouter.ai/api/v1
+multica gateway credential add <backend-id> --label='primary key' --key=sk-... --priority=10
+multica gateway credentials <backend-id>
+multica gateway policy full_content
+```
+
+`multica gateway smoke` checks status, doctor health, generated user key availability, `/v1/models` reachability through the Gateway key, and export reachability. See [Gateway Acceptance Checklist](docs/gateway-acceptance.md) for the full rollout checklist.
+
 ### Self-Hosted Server
 
 When connecting to a self-hosted Multica instance, point the CLI to your server before logging in:

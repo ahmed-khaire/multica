@@ -78,6 +78,14 @@ export ANTHROPIC_API_KEY='mgw_...'
 
 Normal Claude, Codex, OpenAI, Anthropic, Groq, and OpenRouter endpoints are unaffected unless a user explicitly configures that tool to use the Multica Gateway base URL and key.
 
+Run the operator smoke check:
+
+```bash
+multica gateway smoke --since=24h --limit=10
+```
+
+This command checks Gateway status, doctor health, generated user key availability, OpenAI-compatible model catalog reachability through `/v1/models`, and export reachability without printing raw Gateway keys.
+
 ## Manual Request Checks
 
 OpenAI-compatible non-streaming:

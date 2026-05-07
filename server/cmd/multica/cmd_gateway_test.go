@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "doctor", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "smoke", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {
@@ -24,6 +24,119 @@ func TestGatewayCommandTree(t *testing.T) {
 				t.Fatalf("command name = %q, want %q", cmd.Name(), name)
 			}
 		})
+	}
+}
+
+func TestGatewaySmokeCommandChecksGatewayFlow(t *testing.T) {
+	var calls []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if got := r.Header.Get("X-Workspace-ID"); strings.HasPrefix(r.URL.Path, "/api/") && got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1 for %s", got, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/gateway/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"openai_base_url":       srv.URL + "/v1",
+				"anthropic_base_url":    srv.URL,
+				"capture_policy":        "full_content",
+				"default_backend":       map[string]any{"slug": "openai"},
+				"backend_count":         1,
+				"enabled_backend_count": 1,
+				"has_active_key":        true,
+			})
+		case "/api/gateway/doctor":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":       "healthy",
+				"generated_at": "2026-05-07T10:00:00Z",
+				"checks": []map[string]any{{
+					"id":     "gateway_key",
+					"status": "pass",
+					"title":  "User Gateway key",
+				}},
+			})
+		case "/api/gateway/key":
+			if r.Method != http.MethodPost {
+				t.Errorf("gateway key method = %s, want POST", r.Method)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":                 "key-1",
+				"key":                "mgw_smoke_secret",
+				"key_prefix":         "mgw_smoke",
+				"openai_base_url":    srv.URL + "/v1",
+				"openai_api_key":     "mgw_smoke_secret",
+				"anthropic_base_url": srv.URL,
+				"anthropic_api_key":  "mgw_smoke_secret",
+			})
+		case "/v1/models":
+			if got := r.Header.Get("Authorization"); got != "Bearer mgw_smoke_secret" {
+				t.Errorf("Authorization = %q, want gateway key", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data": []map[string]any{{
+					"id": "gpt-smoke",
+				}},
+			})
+		case "/api/gateway/export":
+			if r.URL.Query().Get("since") != "24h" || r.URL.Query().Get("limit") != "5" {
+				t.Errorf("export query = %s, want since=24h&limit=5", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"generated_at": "2026-05-07T10:01:00Z",
+				"workspace_id": "workspace-1",
+				"overview": map[string]any{"summary": map[string]any{
+					"session_count":  2,
+					"request_count":  2,
+					"llm_call_count": 2,
+				}},
+				"sessions":         map[string]any{"total": 2, "sessions": []any{}},
+				"llm_calls":        map[string]any{"total": 2, "calls": []any{}},
+				"policy_decisions": []any{},
+				"evidence":         []any{},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(root, "gateway", "smoke", "--workspace-id", "workspace-1", "--since", "24h", "--limit", "5")
+	if err != nil {
+		t.Fatalf("execute gateway smoke: %v\noutput: %s", err, out)
+	}
+	for _, expected := range []string{
+		"GET /api/gateway/status",
+		"GET /api/gateway/doctor",
+		"POST /api/gateway/key",
+		"GET /v1/models",
+		"GET /api/gateway/export?limit=5&since=24h",
+	} {
+		found := false
+		for _, call := range calls {
+			if call == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("calls = %#v, missing %s", calls, expected)
+		}
+	}
+	if !strings.Contains(out, "Observer Gateway Smoke") {
+		t.Fatalf("output = %q, want smoke heading", out)
+	}
+	if !strings.Contains(out, "status") || !strings.Contains(out, "doctor") || !strings.Contains(out, "models") || !strings.Contains(out, "export") {
+		t.Fatalf("output = %q, want smoke check rows", out)
+	}
+	if !strings.Contains(out, "gpt-smoke") || !strings.Contains(out, "2 sessions") || !strings.Contains(out, "2 LLM calls") {
+		t.Fatalf("output = %q, want model and export summary", out)
+	}
+	if strings.Contains(out, "mgw_smoke_secret") {
+		t.Fatalf("output leaked gateway key: %q", out)
 	}
 }
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -31,6 +33,12 @@ func newGatewayCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Diagnose Observer Gateway setup and health",
 		RunE:  runGatewayDoctor,
+	}
+
+	smokeCmd := &cobra.Command{
+		Use:   "smoke",
+		Short: "Run an Observer Gateway operator smoke check",
+		RunE:  runGatewaySmoke,
 	}
 
 	keyCmd := &cobra.Command{
@@ -132,6 +140,7 @@ func newGatewayCommand() *cobra.Command {
 
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(doctorCmd)
+	cmd.AddCommand(smokeCmd)
 	cmd.AddCommand(keyCmd)
 	cmd.AddCommand(keysCmd)
 	cmd.AddCommand(revokeCmd)
@@ -150,6 +159,8 @@ func newGatewayCommand() *cobra.Command {
 
 	statusCmd.Flags().String("output", "table", "Output format: table or json")
 	doctorCmd.Flags().String("output", "table", "Output format: table or json")
+	smokeCmd.Flags().String("since", "24h", "Export lookback window, such as 24h, 7d, or an RFC3339 timestamp")
+	smokeCmd.Flags().Int32("limit", 10, "Maximum rows per exported section")
 	keyCmd.Flags().String("output", "env", "Output format: env or json")
 	keysCmd.Flags().String("output", "table", "Output format: table or json")
 	ingestKeyCmd.Flags().String("app-id", "", "Application identifier attached to ingested traces")
@@ -284,6 +295,34 @@ type gatewaySettingsDTO struct {
 	DefaultBackend *gatewayBackendDTO `json:"default_backend"`
 }
 
+type gatewayModelListDTO struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+type gatewayExportSmokeDTO struct {
+	Overview struct {
+		Summary struct {
+			SessionCount int64 `json:"session_count"`
+			RequestCount int64 `json:"request_count"`
+			LLMCallCount int64 `json:"llm_call_count"`
+		} `json:"summary"`
+	} `json:"overview"`
+	Sessions struct {
+		Total int64 `json:"total"`
+	} `json:"sessions"`
+	LLMCalls struct {
+		Total int64 `json:"total"`
+	} `json:"llm_calls"`
+}
+
+type gatewaySmokeCheck struct {
+	Name   string
+	Status string
+	Detail string
+}
+
 func gatewayClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -396,6 +435,144 @@ func runGatewayDoctor(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	cli.PrintTable(w, []string{"STATUS", "CATEGORY", "CHECK", "DETAIL", "REMEDIATION"}, rows)
+	return nil
+}
+
+func runGatewaySmoke(cmd *cobra.Command, _ []string) error {
+	client, err := gatewayClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	checks := []gatewaySmokeCheck{}
+	addCheck := func(name string, ok bool, detail string) {
+		status := "pass"
+		if !ok {
+			status = "fail"
+		}
+		checks = append(checks, gatewaySmokeCheck{Name: name, Status: status, Detail: detail})
+	}
+
+	var status gatewayStatusDTO
+	if err := client.GetJSON(ctx, "/api/gateway/status", &status); err != nil {
+		addCheck("status", false, err.Error())
+		return printGatewaySmoke(cmd, checks)
+	}
+	defaultBackend := "none"
+	if status.DefaultBackend != nil && status.DefaultBackend.Slug != "" {
+		defaultBackend = status.DefaultBackend.Slug
+	}
+	statusOK := status.EnabledBackendCount > 0 && defaultBackend != "none"
+	addCheck("status", statusOK, fmt.Sprintf("%d/%d backends enabled, default %s, capture %s", status.EnabledBackendCount, status.BackendCount, defaultBackend, status.CapturePolicy))
+
+	var doctor gatewayDoctorDTO
+	if err := client.GetJSON(ctx, "/api/gateway/doctor", &doctor); err != nil {
+		addCheck("doctor", false, err.Error())
+		return printGatewaySmoke(cmd, checks)
+	}
+	doctorOK := doctor.Status != "" && doctor.Status != "unhealthy"
+	addCheck("doctor", doctorOK, doctor.Status)
+
+	var key gatewayKeyDTO
+	if err := client.PostJSON(ctx, "/api/gateway/key", map[string]any{}, &key); err != nil {
+		addCheck("key", false, err.Error())
+		return printGatewaySmoke(cmd, checks)
+	}
+	keyOK := key.OpenAIBaseURL != "" && key.OpenAIAPIKey != ""
+	addCheck("key", keyOK, "gateway key available")
+
+	modelCount, firstModel, err := fetchGatewayModels(ctx, client.HTTPClient, key.OpenAIBaseURL, key.OpenAIAPIKey)
+	if err != nil {
+		addCheck("models", false, err.Error())
+		return printGatewaySmoke(cmd, checks)
+	}
+	modelDetail := fmt.Sprintf("%d models", modelCount)
+	if firstModel != "" {
+		modelDetail += ", first " + firstModel
+	}
+	addCheck("models", modelCount > 0, modelDetail)
+
+	exportPath := gatewayExportPath(cmd)
+	var exported gatewayExportSmokeDTO
+	if err := client.GetJSON(ctx, exportPath, &exported); err != nil {
+		addCheck("export", false, err.Error())
+		return printGatewaySmoke(cmd, checks)
+	}
+	sessions := exported.Sessions.Total
+	if sessions == 0 {
+		sessions = exported.Overview.Summary.SessionCount
+	}
+	llmCalls := exported.LLMCalls.Total
+	if llmCalls == 0 {
+		llmCalls = exported.Overview.Summary.LLMCallCount
+	}
+	addCheck("export", true, fmt.Sprintf("%d sessions, %d LLM calls", sessions, llmCalls))
+
+	return printGatewaySmoke(cmd, checks)
+}
+
+func gatewayExportPath(cmd *cobra.Command) string {
+	params := url.Values{}
+	if since, _ := cmd.Flags().GetString("since"); strings.TrimSpace(since) != "" {
+		params.Set("since", strings.TrimSpace(since))
+	}
+	if limit, _ := cmd.Flags().GetInt32("limit"); limit > 0 {
+		params.Set("limit", strconv.Itoa(int(limit)))
+	}
+	path := "/api/gateway/export"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return path
+}
+
+func fetchGatewayModels(ctx context.Context, httpClient *http.Client, openAIBaseURL, gatewayKey string) (int, string, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	modelsURL := strings.TrimRight(openAIBaseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return 0, "", fmt.Errorf("GET %s returned %d", modelsURL, resp.StatusCode)
+	}
+	var models gatewayModelListDTO
+	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
+		return 0, "", err
+	}
+	first := ""
+	if len(models.Data) > 0 {
+		first = models.Data[0].ID
+	}
+	return len(models.Data), first, nil
+}
+
+func printGatewaySmoke(cmd *cobra.Command, checks []gatewaySmokeCheck) error {
+	w := cmd.OutOrStdout()
+	fmt.Fprintln(w, "Observer Gateway Smoke")
+	rows := make([][]string, 0, len(checks))
+	failed := []string{}
+	for _, check := range checks {
+		rows = append(rows, []string{check.Status, check.Name, check.Detail})
+		if check.Status != "pass" {
+			failed = append(failed, check.Name)
+		}
+	}
+	cli.PrintTable(w, []string{"STATUS", "CHECK", "DETAIL"}, rows)
+	if len(failed) > 0 {
+		return fmt.Errorf("gateway smoke failed: %s", strings.Join(failed, ", "))
+	}
 	return nil
 }
 
