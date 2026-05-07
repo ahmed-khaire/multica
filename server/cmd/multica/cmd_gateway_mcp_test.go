@@ -79,6 +79,7 @@ func TestGatewayMCPListsReadOnlyTools(t *testing.T) {
 		"gateway_session_drilldown",
 		"gateway_policy_decisions",
 		"gateway_evidence_bundle",
+		"gateway_governance_insights",
 		"gateway_governance_policies",
 		"gateway_policy_exceptions",
 		"gateway_incidents",
@@ -134,7 +135,7 @@ func TestGatewayMCPListsResourcesAndTemplates(t *testing.T) {
 			t.Fatalf("resource %s mimeType = %#v, want application/json", uri, resource["mimeType"])
 		}
 	}
-	for _, expected := range []string{"gateway://status", "gateway://health-report", "gateway://governance/evidence", "gateway://governance/incidents"} {
+	for _, expected := range []string{"gateway://status", "gateway://health-report", "gateway://governance/insights", "gateway://governance/evidence", "gateway://governance/incidents"} {
 		if !resourceURIs[expected] {
 			t.Fatalf("resources missing %s; resources = %#v", expected, resourceURIs)
 		}
@@ -203,6 +204,54 @@ func TestGatewayMCPReadResourceFetchesAPIAndRedactsSecrets(t *testing.T) {
 		t.Fatalf("MCP resource output leaked secret: %s", out)
 	}
 	for _, expected := range []string{"gateway://health-report", "application/json", "[redacted]", "total_tokens"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("MCP output = %s, missing %q", out, expected)
+		}
+	}
+}
+
+func TestGatewayMCPGovernanceInsightsToolAndResource(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/governance/insights" {
+			t.Errorf("path = %s, want /api/gateway/governance/insights", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"risk_overview": map[string]any{
+				"open_incident_count": 1,
+				"api_key":             "sk-insights-secret",
+			},
+			"action_queue": []map[string]any{{
+				"kind":  "incident",
+				"title": "Review provider risk",
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gateway_governance_insights","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"gateway://governance/insights"}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp: %v\noutput: %s", err, out)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls = %#v, want tool and resource reads", calls)
+	}
+	if strings.Contains(out, "sk-insights-secret") {
+		t.Fatalf("MCP governance insights leaked secret: %s", out)
+	}
+	for _, expected := range []string{"gateway://governance/insights", "open_incident_count", "Review provider risk", "[redacted]"} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("MCP output = %s, missing %q", out, expected)
 		}

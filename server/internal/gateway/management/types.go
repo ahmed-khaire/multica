@@ -133,6 +133,82 @@ type GovernanceHealthSummary struct {
 	ControlMappingCount      int    `json:"control_mapping_count"`
 }
 
+type GovernanceInsightsResponse struct {
+	GeneratedAt        string                       `json:"generated_at"`
+	Since              string                       `json:"since"`
+	RiskOverview       GovernanceRiskOverview       `json:"risk_overview"`
+	BehaviorTrends     GovernanceBehaviorTrends     `json:"behavior_trends"`
+	ComplianceCoverage GovernanceComplianceCoverage `json:"compliance_coverage"`
+	ActionQueue        []GovernanceActionItem       `json:"action_queue"`
+}
+
+type GovernanceRiskOverview struct {
+	OpenIncidentCount             int `json:"open_incident_count"`
+	HighSeverityOpenIncidentCount int `json:"high_severity_open_incident_count"`
+	PendingApprovalCount          int `json:"pending_approval_count"`
+	BlockedDecisionCount          int `json:"blocked_decision_count"`
+	WarnDecisionCount             int `json:"warn_decision_count"`
+	HighRiskProviderCount         int `json:"high_risk_provider_count"`
+	ProviderReviewWarningCount    int `json:"provider_review_warning_count"`
+	ControlGapCount               int `json:"control_gap_count"`
+	ActivePolicyExceptionCount    int `json:"active_policy_exception_count"`
+}
+
+type GovernanceBehaviorTrends struct {
+	TopModels          []GovernanceModelUsage    `json:"top_models"`
+	TopBackends        []GovernanceBackendUsage  `json:"top_backends"`
+	PolicyReasonCounts []GovernanceReasonCount   `json:"policy_reason_counts"`
+	BlockedResources   []GovernanceResourceCount `json:"blocked_resources"`
+}
+
+type GovernanceModelUsage struct {
+	Model       string   `json:"model"`
+	CallCount   int64    `json:"call_count"`
+	TotalTokens int64    `json:"total_tokens"`
+	TotalCost   *float64 `json:"total_cost"`
+}
+
+type GovernanceBackendUsage struct {
+	Backend      string   `json:"backend"`
+	CallCount    int64    `json:"call_count"`
+	ErrorCount   int64    `json:"error_count"`
+	AvgLatencyMS int64    `json:"avg_latency_ms"`
+	TotalTokens  int64    `json:"total_tokens"`
+	TotalCost    *float64 `json:"total_cost"`
+}
+
+type GovernanceReasonCount struct {
+	ReasonCode string `json:"reason_code"`
+	Count      int    `json:"count"`
+}
+
+type GovernanceResourceCount struct {
+	ResourceType  string `json:"resource_type"`
+	ResourceID    string `json:"resource_id"`
+	ResourceLabel string `json:"resource_label"`
+	Count         int    `json:"count"`
+}
+
+type GovernanceComplianceCoverage struct {
+	ControlCount            int    `json:"control_count"`
+	CoveredControlCount     int    `json:"covered_control_count"`
+	PartialControlCount     int    `json:"partial_control_count"`
+	GapControlCount         int    `json:"gap_control_count"`
+	EvidenceCount           int    `json:"evidence_count"`
+	StaleControlCount       int    `json:"stale_control_count"`
+	LastEvidenceGeneratedAt string `json:"last_evidence_generated_at"`
+}
+
+type GovernanceActionItem struct {
+	Kind         string `json:"kind"`
+	Severity     string `json:"severity"`
+	Title        string `json:"title"`
+	Detail       string `json:"detail"`
+	ResourceType string `json:"resource_type"`
+	ResourceID   string `json:"resource_id"`
+	CreatedAt    string `json:"created_at"`
+}
+
 type UserKeyResponse struct {
 	ID               string  `json:"id"`
 	Key              string  `json:"key"`

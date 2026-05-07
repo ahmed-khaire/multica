@@ -206,11 +206,13 @@ The session drilldown tools let an MCP-capable agent inspect a recorded session 
 - `gateway_session_spans` returns the session span tree.
 - `gateway_session_drilldown` returns both detail and spans in one read-only bundle.
 - `gateway_evidence_bundle` assembles session, model-call, policy decision, evidence, incident, provider risk, control mapping, and governance policy context for a session, incident, or policy decision.
+- `gateway_governance_insights` returns the enterprise governance summary: risk overview, behavior trends, compliance coverage, and action queue.
 
 The MCP server also exposes JSON resources for clients that prefer attachable context over tool calls:
 
 - `gateway://status`
 - `gateway://health-report`
+- `gateway://governance/insights`
 - `gateway://sessions`
 - `gateway://sessions/{session_id}`
 - `gateway://sessions/{session_id}/spans`

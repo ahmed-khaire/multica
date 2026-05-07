@@ -52,6 +52,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "audit", limit] as const,
   providerRisks: (wsId: string) =>
     [...gatewayKeys.all(wsId), "provider-risks"] as const,
+  governanceInsights: (wsId: string) =>
+    [...gatewayKeys.all(wsId), "governance-insights"] as const,
   policyDecisions: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "policy-decisions", limit] as const,
   governancePolicies: (wsId: string) =>
@@ -183,6 +185,14 @@ export function gatewayProviderRisksOptions(wsId: string, enabled = true) {
     queryKey: gatewayKeys.providerRisks(wsId),
     queryFn: ({ signal }) =>
       signal ? api.listGatewayProviderRisks({ signal }) : api.listGatewayProviderRisks(),
+    enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayGovernanceInsightsOptions(wsId: string, enabled = true) {
+  return queryOptions({
+    queryKey: gatewayKeys.governanceInsights(wsId),
+    queryFn: ({ signal }) => api.getGatewayGovernanceInsights({ signal }),
     enabled: !!wsId && enabled,
   });
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -918,6 +919,197 @@ func TestGatewayControlMappingHandlerListsEvidenceCoverage(t *testing.T) {
 	}
 	if found.LastEvidenceGeneratedAt == "" {
 		t.Fatal("ListGatewayControlMappings: expected last_evidence_generated_at")
+	}
+}
+
+func TestGatewayGovernanceInsightsSummarizesRiskBehaviorAndCompliance(t *testing.T) {
+	seedGatewayObservabilityTelemetry(t, "insights")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO gateway_policy_decision (
+			workspace_id, subject_user_id, resource_type, resource_id, resource_label,
+			decision, reason_code, matched_rules, approval_status, evidence_references
+		)
+		VALUES
+			($1, $2, 'provider', 'insights-provider', 'Insights Provider',
+			 'block', 'insights_provider_blocked', '[{"id":"insights-provider-blocked"}]'::jsonb, '', '[]'::jsonb),
+			($1, $2, 'model', 'gpt-insights', 'gpt-insights',
+			 'require_approval', 'insights_model_requires_approval', '[{"id":"insights-approval"}]'::jsonb, 'requested', '[]'::jsonb)
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("insert policy decisions: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_incident (
+			workspace_id, severity, category, summary, status, remediation_notes
+		)
+		VALUES (
+			$1, 'high', 'gateway_insights_test',
+			'Insights open incident needs review',
+			'open', 'Review this insights test incident.'
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert incident: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_evidence (
+			workspace_id, evidence_type, framework_refs, summary, payload, attachment_ref
+		)
+		VALUES (
+			$1, 'gateway_policy_decision', '["internal_gateway_governance"]'::jsonb,
+			'Insights evidence record',
+			'{"reason_code":"insights_provider_blocked"}'::jsonb, ''
+		)
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("insert evidence: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_control_mapping (
+			workspace_id, framework, control_id, control_title,
+			mapped_policy_ids, mapped_evidence_queries, status, owner_user_id
+		)
+		VALUES (
+			$1, 'internal_gateway_governance', 'GW-INSIGHTS-GAP', 'Insights control gap',
+			'[]'::jsonb, '[]'::jsonb, 'gap', $2
+		)
+		ON CONFLICT (workspace_id, framework, control_id)
+		DO UPDATE SET
+			control_title = EXCLUDED.control_title,
+			status = EXCLUDED.status,
+			owner_user_id = EXCLUDED.owner_user_id,
+			updated_at = now()
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("upsert control mapping: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_policy_exception (
+			workspace_id, requester_user_id, approver_user_id, reason, scope, status, expires_at, evidence_references
+		)
+		VALUES (
+			$1, $2, $2, 'Insights approved exception',
+			'{"resource_type":"model","resource_id":"gpt-insights","resource_label":"gpt-insights"}'::jsonb,
+			'approved', now() + interval '7 days', '[]'::jsonb
+		)
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("insert policy exception: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO ai_third_party_risk (
+			workspace_id, provider_name, owner_user_id, approved_use_cases, data_categories,
+			contract_status, security_review_status, risk_score, review_cadence_days, next_review_at
+		)
+		VALUES (
+			$1, 'insights-provider', $2, '[]'::jsonb, '[]'::jsonb,
+			'rejected', 'approved', 88, 90, now() + interval '30 days'
+		)
+		ON CONFLICT (workspace_id, provider_name)
+		DO UPDATE SET
+			contract_status = EXCLUDED.contract_status,
+			security_review_status = EXCLUDED.security_review_status,
+			risk_score = EXCLUDED.risk_score,
+			updated_at = now()
+	`, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("upsert provider risk: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/governance/insights", nil)
+	testHandler.GatewayGovernanceInsights(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GatewayGovernanceInsights: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		GeneratedAt  string `json:"generated_at"`
+		RiskOverview struct {
+			OpenIncidentCount          int `json:"open_incident_count"`
+			HighSeverityOpenCount      int `json:"high_severity_open_incident_count"`
+			PendingApprovalCount       int `json:"pending_approval_count"`
+			BlockedDecisionCount       int `json:"blocked_decision_count"`
+			HighRiskProviderCount      int `json:"high_risk_provider_count"`
+			ProviderReviewWarningCount int `json:"provider_review_warning_count"`
+			ControlGapCount            int `json:"control_gap_count"`
+			ActivePolicyExceptionCount int `json:"active_policy_exception_count"`
+		} `json:"risk_overview"`
+		BehaviorTrends struct {
+			TopModels []struct {
+				Model       string `json:"model"`
+				CallCount   int64  `json:"call_count"`
+				TotalTokens int64  `json:"total_tokens"`
+			} `json:"top_models"`
+			PolicyReasonCounts []struct {
+				ReasonCode string `json:"reason_code"`
+				Count      int    `json:"count"`
+			} `json:"policy_reason_counts"`
+			BlockedResources []struct {
+				ResourceLabel string `json:"resource_label"`
+				Count         int    `json:"count"`
+			} `json:"blocked_resources"`
+		} `json:"behavior_trends"`
+		ComplianceCoverage struct {
+			ControlCount            int    `json:"control_count"`
+			GapControlCount         int    `json:"gap_control_count"`
+			EvidenceCount           int    `json:"evidence_count"`
+			LastEvidenceGeneratedAt string `json:"last_evidence_generated_at"`
+		} `json:"compliance_coverage"`
+		ActionQueue []struct {
+			Kind     string `json:"kind"`
+			Severity string `json:"severity"`
+			Title    string `json:"title"`
+			Detail   string `json:"detail"`
+		} `json:"action_queue"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("GatewayGovernanceInsights: decode response: %v", err)
+	}
+	if resp.GeneratedAt == "" {
+		t.Fatal("GatewayGovernanceInsights: expected generated_at")
+	}
+	if resp.RiskOverview.OpenIncidentCount == 0 || resp.RiskOverview.HighSeverityOpenCount == 0 {
+		t.Fatalf("GatewayGovernanceInsights: incident counts = %#v, want open high severity incident", resp.RiskOverview)
+	}
+	if resp.RiskOverview.PendingApprovalCount == 0 || resp.RiskOverview.BlockedDecisionCount == 0 {
+		t.Fatalf("GatewayGovernanceInsights: decision counts = %#v, want pending approval and blocked decision", resp.RiskOverview)
+	}
+	if resp.RiskOverview.HighRiskProviderCount == 0 || resp.RiskOverview.ProviderReviewWarningCount == 0 {
+		t.Fatalf("GatewayGovernanceInsights: provider counts = %#v, want high risk provider warning", resp.RiskOverview)
+	}
+	if resp.RiskOverview.ControlGapCount == 0 || resp.RiskOverview.ActivePolicyExceptionCount == 0 {
+		t.Fatalf("GatewayGovernanceInsights: control/exception counts = %#v, want gap and active exception", resp.RiskOverview)
+	}
+	if len(resp.BehaviorTrends.TopModels) == 0 {
+		t.Fatal("GatewayGovernanceInsights: expected top model rows")
+	}
+	foundReason := false
+	for _, reason := range resp.BehaviorTrends.PolicyReasonCounts {
+		if reason.ReasonCode == "insights_provider_blocked" && reason.Count > 0 {
+			foundReason = true
+			break
+		}
+	}
+	if !foundReason {
+		t.Fatalf("GatewayGovernanceInsights: missing insights_provider_blocked in %#v", resp.BehaviorTrends.PolicyReasonCounts)
+	}
+	foundBlockedResource := false
+	for _, resource := range resp.BehaviorTrends.BlockedResources {
+		if resource.ResourceLabel == "Insights Provider" && resource.Count > 0 {
+			foundBlockedResource = true
+			break
+		}
+	}
+	if !foundBlockedResource {
+		t.Fatalf("GatewayGovernanceInsights: missing blocked Insights Provider in %#v", resp.BehaviorTrends.BlockedResources)
+	}
+	if resp.ComplianceCoverage.ControlCount == 0 || resp.ComplianceCoverage.GapControlCount == 0 || resp.ComplianceCoverage.EvidenceCount == 0 || resp.ComplianceCoverage.LastEvidenceGeneratedAt == "" {
+		t.Fatalf("GatewayGovernanceInsights: compliance coverage = %#v, want controls, gap, and evidence", resp.ComplianceCoverage)
+	}
+	foundAction := false
+	for _, action := range resp.ActionQueue {
+		if strings.Contains(action.Detail, "Insights open incident") || strings.Contains(action.Title, "Insights open incident") {
+			foundAction = true
+			break
+		}
+	}
+	if !foundAction {
+		t.Fatalf("GatewayGovernanceInsights: missing incident action in %#v", resp.ActionQueue)
 	}
 }
 

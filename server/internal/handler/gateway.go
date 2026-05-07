@@ -416,6 +416,16 @@ func (h *Handler) ListGatewayPolicyDecisions(w http.ResponseWriter, r *http.Requ
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) GatewayGovernanceInsights(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.GovernanceInsights(r.Context(), workspaceID)
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) ApproveGatewayPolicyDecision(w http.ResponseWriter, r *http.Request) {
 	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
 	if !ok {

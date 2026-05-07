@@ -223,6 +223,82 @@ export interface GatewayHealthReportResponse {
   checks: GatewayDoctorCheck[];
 }
 
+export interface GatewayGovernanceInsightsResponse {
+  generated_at: string;
+  since: string;
+  risk_overview: GatewayGovernanceRiskOverview;
+  behavior_trends: GatewayGovernanceBehaviorTrends;
+  compliance_coverage: GatewayGovernanceComplianceCoverage;
+  action_queue: GatewayGovernanceActionItem[];
+}
+
+export interface GatewayGovernanceRiskOverview {
+  open_incident_count: number;
+  high_severity_open_incident_count: number;
+  pending_approval_count: number;
+  blocked_decision_count: number;
+  warn_decision_count: number;
+  high_risk_provider_count: number;
+  provider_review_warning_count: number;
+  control_gap_count: number;
+  active_policy_exception_count: number;
+}
+
+export interface GatewayGovernanceBehaviorTrends {
+  top_models: GatewayGovernanceModelUsage[];
+  top_backends: GatewayGovernanceBackendUsage[];
+  policy_reason_counts: GatewayGovernanceReasonCount[];
+  blocked_resources: GatewayGovernanceResourceCount[];
+}
+
+export interface GatewayGovernanceModelUsage {
+  model: string;
+  call_count: number;
+  total_tokens: number;
+  total_cost: number | null;
+}
+
+export interface GatewayGovernanceBackendUsage {
+  backend: string;
+  call_count: number;
+  error_count: number;
+  avg_latency_ms: number;
+  total_tokens: number;
+  total_cost: number | null;
+}
+
+export interface GatewayGovernanceReasonCount {
+  reason_code: string;
+  count: number;
+}
+
+export interface GatewayGovernanceResourceCount {
+  resource_type: string;
+  resource_id: string;
+  resource_label: string;
+  count: number;
+}
+
+export interface GatewayGovernanceComplianceCoverage {
+  control_count: number;
+  covered_control_count: number;
+  partial_control_count: number;
+  gap_control_count: number;
+  evidence_count: number;
+  stale_control_count: number;
+  last_evidence_generated_at: string;
+}
+
+export interface GatewayGovernanceActionItem {
+  kind: string;
+  severity: string;
+  title: string;
+  detail: string;
+  resource_type: string;
+  resource_id: string;
+  created_at: string;
+}
+
 export interface GatewayUserKeyResponse {
   id: string;
   key: string;

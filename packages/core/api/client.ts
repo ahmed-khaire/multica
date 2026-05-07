@@ -63,6 +63,7 @@ import type {
   GatewayIngestKeyResponse,
   GatewayObservabilityParams,
   GatewayOverviewResponse,
+  GatewayGovernanceInsightsResponse,
   GatewayGovernancePolicyItem,
   GatewayPolicyDecisionApprovalRequest,
   GatewayPolicyDecisionApprovalResponse,
@@ -727,6 +728,10 @@ export class ApiClient {
 
   async listGatewayProviderRisks(params?: { signal?: AbortSignal }): Promise<GatewayProviderRisk[]> {
     return this.fetch("/api/gateway/governance/provider-risks", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async getGatewayGovernanceInsights(params?: { signal?: AbortSignal }): Promise<GatewayGovernanceInsightsResponse> {
+    return this.fetch("/api/gateway/governance/insights", params?.signal ? { signal: params.signal } : undefined);
   }
 
   async listGatewayPolicyDecisions(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayPolicyDecisionItem[]> {

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -2094,6 +2096,288 @@ func (s *Service) ListPolicyDecisions(ctx context.Context, workspaceID string, l
 		items = append(items, policyDecisionItem(row))
 	}
 	return items, nil
+}
+
+func (s *Service) GovernanceInsights(ctx context.Context, workspaceID string) (GovernanceInsightsResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	now := time.Now()
+	since := now.Add(-30 * 24 * time.Hour)
+	sinceParam := pgtype.Timestamptz{Time: since, Valid: true}
+
+	decisions, err := s.queries.ListGatewayPolicyDecisions(ctx, db.ListGatewayPolicyDecisionsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       100,
+		Since:       sinceParam,
+	})
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	incidents, err := s.ListIncidents(ctx, workspaceID, 100)
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	evidence, err := s.ListEvidence(ctx, workspaceID, 100)
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	controls, err := s.ListControlMappings(ctx, workspaceID)
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	exceptions, err := s.ListPolicyExceptions(ctx, workspaceID, 100)
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	risks, err := s.ListProviderRisks(ctx, workspaceID)
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	topModels, err := s.queries.ListGatewayTopModels(ctx, db.ListGatewayTopModelsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       10,
+		Since:       sinceParam,
+	})
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+	topBackends, err := s.queries.ListGatewayTopBackends(ctx, db.ListGatewayTopBackendsParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       10,
+		Since:       sinceParam,
+	})
+	if err != nil {
+		return GovernanceInsightsResponse{}, err
+	}
+
+	resp := GovernanceInsightsResponse{
+		GeneratedAt: now.UTC().Format(time.RFC3339),
+		Since:       since.UTC().Format(time.RFC3339),
+	}
+	reasonCounts := map[string]int{}
+	blockedResources := map[string]GovernanceResourceCount{}
+	for _, decision := range decisions {
+		item := policyDecisionItem(decision)
+		switch item.Decision {
+		case "block":
+			resp.RiskOverview.BlockedDecisionCount++
+			key := item.ResourceType + "\x00" + item.ResourceID + "\x00" + item.ResourceLabel
+			blocked := blockedResources[key]
+			if blocked.Count == 0 {
+				blocked = GovernanceResourceCount{ResourceType: item.ResourceType, ResourceID: item.ResourceID, ResourceLabel: item.ResourceLabel}
+			}
+			blocked.Count++
+			blockedResources[key] = blocked
+		case "warn":
+			resp.RiskOverview.WarnDecisionCount++
+		}
+		if item.ApprovalStatus == "requested" || item.ApprovalStatus == "pending" || item.Decision == "require_approval" {
+			resp.RiskOverview.PendingApprovalCount++
+		}
+		if item.ReasonCode != "" {
+			reasonCounts[item.ReasonCode]++
+		}
+		if item.ApprovalStatus == "requested" || item.Decision == "require_approval" {
+			resp.ActionQueue = append(resp.ActionQueue, GovernanceActionItem{
+				Kind:         "policy_decision",
+				Severity:     "medium",
+				Title:        "Policy decision needs review",
+				Detail:       fmt.Sprintf("%s %s requires review: %s", item.ResourceType, item.ResourceLabel, item.ReasonCode),
+				ResourceType: item.ResourceType,
+				ResourceID:   item.ID,
+				CreatedAt:    item.CreatedAt,
+			})
+		}
+	}
+	resp.BehaviorTrends.PolicyReasonCounts = governanceReasonCounts(reasonCounts)
+	resp.BehaviorTrends.BlockedResources = governanceResourceCounts(blockedResources)
+
+	for _, incident := range incidents {
+		open := incident.Status != "closed" && incident.Status != "remediated"
+		if !open {
+			continue
+		}
+		resp.RiskOverview.OpenIncidentCount++
+		if incident.Severity == "high" || incident.Severity == "critical" {
+			resp.RiskOverview.HighSeverityOpenIncidentCount++
+		}
+		resp.ActionQueue = append(resp.ActionQueue, GovernanceActionItem{
+			Kind:         "incident",
+			Severity:     incident.Severity,
+			Title:        incident.Summary,
+			Detail:       incident.RemediationNotes,
+			ResourceType: "incident",
+			ResourceID:   incident.ID,
+			CreatedAt:    incident.OpenedAt,
+		})
+	}
+
+	resp.ComplianceCoverage.EvidenceCount = len(evidence)
+	for _, item := range evidence {
+		if item.GeneratedAt > resp.ComplianceCoverage.LastEvidenceGeneratedAt {
+			resp.ComplianceCoverage.LastEvidenceGeneratedAt = item.GeneratedAt
+		}
+	}
+	for _, control := range controls {
+		resp.ComplianceCoverage.ControlCount++
+		switch strings.ToLower(strings.TrimSpace(control.Status)) {
+		case "covered":
+			resp.ComplianceCoverage.CoveredControlCount++
+		case "gap", "not_started":
+			resp.ComplianceCoverage.GapControlCount++
+			resp.RiskOverview.ControlGapCount++
+			resp.ActionQueue = append(resp.ActionQueue, GovernanceActionItem{
+				Kind:         "control_gap",
+				Severity:     "medium",
+				Title:        "Compliance control needs evidence",
+				Detail:       control.ControlTitle,
+				ResourceType: "control",
+				ResourceID:   control.ControlID,
+				CreatedAt:    control.UpdatedAt,
+			})
+		default:
+			resp.ComplianceCoverage.PartialControlCount++
+		}
+		if control.LastEvidenceGeneratedAt == "" {
+			resp.ComplianceCoverage.StaleControlCount++
+		}
+	}
+
+	for _, exception := range exceptions {
+		active := exception.Status == "approved"
+		if active && exception.ExpiresAt != nil && *exception.ExpiresAt != "" {
+			if parsed, err := time.Parse(time.RFC3339, *exception.ExpiresAt); err == nil {
+				active = parsed.After(now)
+				if active && parsed.Before(now.Add(14*24*time.Hour)) {
+					resp.ActionQueue = append(resp.ActionQueue, GovernanceActionItem{
+						Kind:         "policy_exception",
+						Severity:     "medium",
+						Title:        "Policy exception expires soon",
+						Detail:       exception.Reason,
+						ResourceType: "policy_exception",
+						ResourceID:   exception.ID,
+						CreatedAt:    exception.CreatedAt,
+					})
+				}
+			}
+		}
+		if active {
+			resp.RiskOverview.ActivePolicyExceptionCount++
+		}
+	}
+
+	for _, risk := range risks {
+		if risk.RiskScore >= 70 {
+			resp.RiskOverview.HighRiskProviderCount++
+		}
+		reason, blocked := providerRiskBlockReason(risk.ContractStatus, risk.SecurityReviewStatus)
+		if blocked {
+			resp.RiskOverview.ProviderReviewWarningCount++
+			resp.ActionQueue = append(resp.ActionQueue, GovernanceActionItem{
+				Kind:         "provider_risk",
+				Severity:     "high",
+				Title:        "Provider risk review blocks routing",
+				Detail:       fmt.Sprintf("%s is blocked by %s", risk.ProviderName, reason),
+				ResourceType: "provider",
+				ResourceID:   risk.ID,
+				CreatedAt:    risk.UpdatedAt,
+			})
+		}
+	}
+
+	resp.BehaviorTrends.TopModels = governanceTopModels(topModels)
+	resp.BehaviorTrends.TopBackends = governanceTopBackends(topBackends)
+	if len(resp.ActionQueue) > 20 {
+		resp.ActionQueue = resp.ActionQueue[:20]
+	}
+	return resp, nil
+}
+
+func governanceTopModels(rows []db.ListGatewayTopModelsRow) []GovernanceModelUsage {
+	items := make([]GovernanceModelUsage, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, GovernanceModelUsage{
+			Model:       row.Model,
+			CallCount:   row.CallCount,
+			TotalTokens: row.TotalTokens,
+			TotalCost:   managementNumericFloat(row.TotalCost),
+		})
+	}
+	return items
+}
+
+func governanceTopBackends(rows []db.ListGatewayTopBackendsRow) []GovernanceBackendUsage {
+	items := make([]GovernanceBackendUsage, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, GovernanceBackendUsage{
+			Backend:      row.Backend,
+			CallCount:    row.CallCount,
+			ErrorCount:   row.ErrorCount,
+			AvgLatencyMS: row.AvgLatencyMs,
+			TotalTokens:  row.TotalTokens,
+			TotalCost:    managementNumericFloat(row.TotalCost),
+		})
+	}
+	return items
+}
+
+func governanceReasonCounts(counts map[string]int) []GovernanceReasonCount {
+	items := make([]GovernanceReasonCount, 0, len(counts))
+	for reason, count := range counts {
+		items = append(items, GovernanceReasonCount{ReasonCode: reason, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].ReasonCode < items[j].ReasonCode
+		}
+		return items[i].Count > items[j].Count
+	})
+	if len(items) > 10 {
+		return items[:10]
+	}
+	return items
+}
+
+func governanceResourceCounts(counts map[string]GovernanceResourceCount) []GovernanceResourceCount {
+	items := make([]GovernanceResourceCount, 0, len(counts))
+	for _, item := range counts {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].ResourceLabel < items[j].ResourceLabel
+		}
+		return items[i].Count > items[j].Count
+	})
+	if len(items) > 10 {
+		return items[:10]
+	}
+	return items
+}
+
+func managementNumericFloat(value pgtype.Numeric) *float64 {
+	if !value.Valid || value.Int == nil || value.NaN {
+		return nil
+	}
+	rat := new(big.Rat).SetInt(value.Int)
+	if value.Exp < 0 {
+		rat.Quo(rat, new(big.Rat).SetInt(managementPow10(-value.Exp)))
+	} else if value.Exp > 0 {
+		rat.Mul(rat, new(big.Rat).SetInt(managementPow10(value.Exp)))
+	}
+	f, _ := rat.Float64()
+	return &f
+}
+
+func managementPow10(exp int32) *big.Int {
+	out := big.NewInt(1)
+	ten := big.NewInt(10)
+	for i := int32(0); i < exp; i++ {
+		out.Mul(out, ten)
+	}
+	return out
 }
 
 func (s *Service) ApprovePolicyDecision(ctx context.Context, input ApprovePolicyDecisionInput) (PolicyDecisionApprovalResponse, error) {
