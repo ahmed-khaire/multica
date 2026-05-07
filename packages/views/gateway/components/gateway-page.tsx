@@ -39,6 +39,8 @@ import type {
   GatewayCapturePolicy,
   GatewayControlMappingItem,
   GatewayEvidenceItem,
+  GatewayEvidenceBundleParams,
+  GatewayEvidenceBundleResponse,
   GatewayExportResponse,
   GatewayHealthReportResponse,
   GatewayIncidentItem,
@@ -75,6 +77,7 @@ import {
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
   gatewayEvidenceOptions,
+  gatewayEvidenceBundleOptions,
   gatewayHealthReportOptions,
   gatewayGovernanceInsightsOptions,
   gatewayIncidentsOptions,
@@ -306,6 +309,7 @@ function GovernanceActionQueue({
   deniedDecisionId,
   onApprovePolicyDecision,
   onDenyPolicyDecision,
+  onViewEvidenceBundle,
   onRemediateIncident,
   onRevokePolicyException,
   pendingDecisionId,
@@ -316,6 +320,7 @@ function GovernanceActionQueue({
   deniedDecisionId: string;
   onApprovePolicyDecision: (id: string) => void;
   onDenyPolicyDecision: (id: string) => void;
+  onViewEvidenceBundle: (params: GatewayEvidenceBundleParams) => void;
   onRemediateIncident: (id: string) => void;
   onRevokePolicyException: (id: string) => void;
   pendingDecisionId: string;
@@ -355,7 +360,17 @@ function GovernanceActionQueue({
               <span className="ml-auto shrink-0">{formatTime(action.created_at)}</span>
             </div>
             {action.kind === "incident" ? (
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => onViewEvidenceBundle({ incident_id: action.resource_id, limit: 25 })}
+                  aria-label={`View evidence bundle for ${action.resource_id}`}
+                >
+                  <DatabaseZap className="size-3.5" />
+                  Evidence
+                </Button>
                 <Button
                   type="button"
                   size="xs"
@@ -371,6 +386,16 @@ function GovernanceActionQueue({
             ) : null}
             {action.kind === "policy_decision" ? (
               <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => onViewEvidenceBundle({ policy_decision_id: action.resource_id, limit: 25 })}
+                  aria-label={`View evidence bundle for ${action.resource_id}`}
+                >
+                  <DatabaseZap className="size-3.5" />
+                  Evidence
+                </Button>
                 <Button
                   type="button"
                   size="xs"
@@ -417,6 +442,101 @@ function GovernanceActionQueue({
         );
       })}
     </div>
+  );
+}
+
+function EvidenceBundlePanel({
+  bundle,
+  loading,
+  error,
+  onClose,
+}: {
+  bundle: GatewayEvidenceBundleResponse | undefined;
+  loading: boolean;
+  error: unknown;
+  onClose: () => void;
+}) {
+  if (loading && !bundle) {
+    return (
+      <Card size="sm" className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <DatabaseZap className="size-4 text-muted-foreground" />
+            Evidence Bundle
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-12 rounded-md" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!bundle) {
+    return (
+      <Card size="sm" className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between gap-3 text-sm">
+            <span className="flex items-center gap-2">
+              <DatabaseZap className="size-4 text-muted-foreground" />
+              Evidence Bundle
+            </span>
+            <Button type="button" size="icon-xs" variant="ghost" onClick={onClose} aria-label="Close evidence bundle">
+              <X className="size-3.5" />
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No evidence bundle returned.</p>
+          {error instanceof Error ? <p className="mt-2 text-xs text-destructive">{error.message}</p> : null}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const subject = bundle.evidence_bundle.subject;
+  const incident = bundle.incidents.find((item) => item.id === subject.incident_id) ?? bundle.incidents[0];
+  const decision = bundle.policy_decisions.find((item) => item.id === subject.policy_decision_id) ?? bundle.policy_decisions[0];
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-3 text-sm">
+          <span className="flex items-center gap-2">
+            <DatabaseZap className="size-4 text-muted-foreground" />
+            Evidence Bundle
+          </span>
+          <Button type="button" size="icon-xs" variant="ghost" onClick={onClose} aria-label="Close evidence bundle">
+            <X className="size-3.5" />
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-2 md:grid-cols-4">
+          <GatewayValue label="Subject" value={subject.session_id || subject.incident_id || subject.policy_decision_id} />
+          <GatewayValue label="LLM calls" value={`${formatCount(bundle.llm_calls.calls.length)} LLM calls`} />
+          <GatewayValue label="Policy decisions" value={`${formatCount(bundle.policy_decisions.length)} policy decisions`} />
+          <GatewayValue label="Evidence" value={`${formatCount(bundle.evidence.length)} evidence records`} />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-md border p-3">
+            <p className="text-xs font-medium text-muted-foreground">Highlighted Incident</p>
+            <p className="mt-1 line-clamp-2 text-sm font-medium">{incident?.summary ?? "No incident in bundle"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{incident?.status ?? "unknown"} · {incident?.severity ?? "unknown"}</p>
+          </div>
+          <div className="rounded-md border p-3">
+            <p className="text-xs font-medium text-muted-foreground">Highlighted Policy Decision</p>
+            <p className="mt-1 truncate text-sm font-medium">{decision?.reason_code ?? "No policy decision in bundle"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{decision?.decision ?? "unknown"} · {decision?.resource_label || decision?.resource_id || "unknown"}</p>
+          </div>
+        </div>
+        <pre className="max-h-72 overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+          {JSON.stringify(bundle, null, 2)}
+        </pre>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1688,6 +1808,12 @@ function GatewayGovernanceInsights({
   const qc = useQueryClient();
   const insightsQuery = useQuery(gatewayGovernanceInsightsOptions(wsId, canManage));
   const insights = insightsQuery.data as GatewayGovernanceInsightsResponse | undefined;
+  const [selectedEvidenceBundle, setSelectedEvidenceBundle] = useState<GatewayEvidenceBundleParams | null>(null);
+  const bundleQuery = useQuery(gatewayEvidenceBundleOptions(
+    wsId,
+    selectedEvidenceBundle ?? {},
+    canManage && Boolean(selectedEvidenceBundle),
+  ));
 
   const invalidateGovernance = () => {
     void qc.invalidateQueries({ queryKey: gatewayKeys.governanceInsights(wsId) });
@@ -1996,6 +2122,7 @@ function GatewayGovernanceInsights({
               onDenyPolicyDecision={(id) => denyDecisionMutation.mutate(id)}
               onRemediateIncident={(id) => remediateIncidentMutation.mutate(id)}
               onRevokePolicyException={(id) => revokeExceptionMutation.mutate(id)}
+              onViewEvidenceBundle={setSelectedEvidenceBundle}
               pendingDecisionId={approveDecisionMutation.isPending ? approveDecisionMutation.variables ?? "" : ""}
               pendingExceptionId={revokeExceptionMutation.isPending ? revokeExceptionMutation.variables ?? "" : ""}
               pendingIncidentId={remediateIncidentMutation.isPending ? remediateIncidentMutation.variables ?? "" : ""}
@@ -2003,6 +2130,15 @@ function GatewayGovernanceInsights({
           </CardContent>
         </Card>
       </div>
+
+      {selectedEvidenceBundle ? (
+        <EvidenceBundlePanel
+          bundle={bundleQuery.data ?? undefined}
+          loading={bundleQuery.isLoading}
+          error={bundleQuery.error}
+          onClose={() => setSelectedEvidenceBundle(null)}
+        />
+      ) : null}
 
       {insightsQuery.error instanceof Error ? (
         <p className="text-xs text-destructive">{insightsQuery.error.message}</p>

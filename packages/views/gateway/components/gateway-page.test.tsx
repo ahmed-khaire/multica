@@ -12,6 +12,7 @@ import type {
   GatewayAuditLogItem,
   GatewayControlMappingItem,
   GatewayDoctorResponse,
+  GatewayEvidenceBundleResponse,
   GatewayEvidenceItem,
   GatewayIncidentItem,
   GatewayIngestKeyListItem,
@@ -69,6 +70,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     getGatewayDoctor: vi.fn(),
     getGatewayHealthReport: vi.fn(),
     getGatewayGovernanceInsights: vi.fn(),
+    getGatewayEvidenceBundle: vi.fn(),
     createGatewayPolicyException: vi.fn(),
     updateGatewayPolicyException: vi.fn(),
     updateGatewayIncident: vi.fn(),
@@ -671,6 +673,26 @@ const gatewayPolicyExceptions: GatewayPolicyExceptionItem[] = [
   },
 ];
 
+const gatewayEvidenceBundle: GatewayEvidenceBundleResponse = {
+  evidence_bundle: {
+    subject: {
+      session_id: "",
+      incident_id: "incident-1",
+      policy_decision_id: "",
+      list_limit: 25,
+      generated_by: "multica web ui",
+      capture_policy_note: "content visibility follows the workspace Gateway capture policy",
+    },
+  },
+  llm_calls: llmCalls,
+  policy_decisions: gatewayPolicyDecisions,
+  evidence: gatewayEvidence,
+  incidents: gatewayIncidents,
+  provider_risks: gatewayProviderRisks,
+  control_mappings: gatewayControlMappings,
+  governance_policies: gatewayGovernancePolicies,
+};
+
 const gatewayExport: GatewayExportResponse = {
   generated_at: "2026-05-04T14:00:00Z",
   workspace_id: "ws-1",
@@ -746,6 +768,7 @@ describe("GatewayPage", () => {
     mockApi.getGatewayDoctor.mockResolvedValue(gatewayDoctor);
     mockApi.getGatewayHealthReport.mockResolvedValue(gatewayHealthReport);
     mockApi.getGatewayGovernanceInsights.mockResolvedValue(gatewayGovernanceInsights);
+    mockApi.getGatewayEvidenceBundle.mockResolvedValue(gatewayEvidenceBundle);
     mockApi.createGatewayPolicyException.mockResolvedValue(gatewayPolicyExceptions[0]);
     mockApi.updateGatewayPolicyException.mockResolvedValue({
       ...gatewayPolicyExceptions[0],
@@ -1069,6 +1092,27 @@ describe("GatewayPage", () => {
     });
     await waitFor(() => {
       expect(mockApi.getGatewayGovernanceInsights.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it("opens an evidence bundle from a Gateway governance action", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+    await user.click(await screen.findByRole("button", { name: /View evidence bundle for incident-1/ }));
+
+    expect(await screen.findByText("Evidence Bundle")).toBeInTheDocument();
+    expect(screen.getAllByText("incident-1").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Gateway blocked provider openrouter: provider_risk_rejected").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("provider_risk_rejected").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("1 LLM calls")).toBeInTheDocument();
+    expect(screen.getByText("2 policy decisions")).toBeInTheDocument();
+    expect(screen.getByText("1 evidence records")).toBeInTheDocument();
+    expect(mockApi.getGatewayEvidenceBundle).toHaveBeenCalledWith({
+      incident_id: "incident-1",
+      limit: 25,
+      signal: expect.any(AbortSignal),
     });
   });
 

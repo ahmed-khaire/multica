@@ -1,8 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { GatewayObservabilityParams } from "../types";
+import type { GatewayEvidenceBundleParams, GatewayObservabilityParams } from "../types";
 
 type GatewayFilterKey = Omit<GatewayObservabilityParams, "signal">;
+type GatewayEvidenceBundleKey = Omit<GatewayEvidenceBundleParams, "signal">;
 
 function withSignal(
   params: GatewayObservabilityParams | undefined,
@@ -19,6 +20,15 @@ function filterKey(params?: GatewayObservabilityParams): GatewayFilterKey {
   if (params?.status) key.status = params.status;
   if (params?.backend) key.backend = params.backend;
   if (params?.model) key.model = params.model;
+  return key;
+}
+
+function evidenceBundleKey(params: GatewayEvidenceBundleParams): GatewayEvidenceBundleKey {
+  const key: GatewayEvidenceBundleKey = {};
+  if (params.session_id) key.session_id = params.session_id;
+  if (params.incident_id) key.incident_id = params.incident_id;
+  if (params.policy_decision_id) key.policy_decision_id = params.policy_decision_id;
+  if (params.limit !== undefined) key.limit = params.limit;
   return key;
 }
 
@@ -54,6 +64,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "provider-risks"] as const,
   governanceInsights: (wsId: string) =>
     [...gatewayKeys.all(wsId), "governance-insights"] as const,
+  evidenceBundle: (wsId: string, params: GatewayEvidenceBundleParams) =>
+    [...gatewayKeys.all(wsId), "evidence-bundle", evidenceBundleKey(params)] as const,
   policyDecisions: (wsId: string, limit = 20) =>
     [...gatewayKeys.all(wsId), "policy-decisions", limit] as const,
   governancePolicies: (wsId: string) =>
@@ -194,6 +206,18 @@ export function gatewayGovernanceInsightsOptions(wsId: string, enabled = true) {
     queryKey: gatewayKeys.governanceInsights(wsId),
     queryFn: ({ signal }) => api.getGatewayGovernanceInsights({ signal }),
     enabled: !!wsId && enabled,
+  });
+}
+
+export function gatewayEvidenceBundleOptions(
+  wsId: string,
+  params: GatewayEvidenceBundleParams,
+  enabled = true,
+) {
+  return queryOptions({
+    queryKey: gatewayKeys.evidenceBundle(wsId, params),
+    queryFn: ({ signal }) => api.getGatewayEvidenceBundle({ ...params, signal }),
+    enabled: !!wsId && enabled && Boolean(params.session_id || params.incident_id || params.policy_decision_id),
   });
 }
 

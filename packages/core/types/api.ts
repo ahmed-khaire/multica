@@ -299,6 +299,38 @@ export interface GatewayGovernanceActionItem {
   created_at: string;
 }
 
+export interface GatewayEvidenceBundleParams {
+  session_id?: string;
+  incident_id?: string;
+  policy_decision_id?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export interface GatewayEvidenceBundleSubject {
+  session_id: string;
+  incident_id: string;
+  policy_decision_id: string;
+  list_limit: number;
+  generated_by: string;
+  capture_policy_note: string;
+}
+
+export interface GatewayEvidenceBundleResponse {
+  evidence_bundle: {
+    subject: GatewayEvidenceBundleSubject;
+  };
+  session_detail?: GatewaySessionDetail;
+  session_spans?: GatewaySessionSpansResponse;
+  llm_calls: GatewayLLMCallListResponse;
+  policy_decisions: GatewayPolicyDecisionItem[];
+  evidence: GatewayEvidenceItem[];
+  incidents: GatewayIncidentItem[];
+  provider_risks: GatewayProviderRisk[];
+  control_mappings: GatewayControlMappingItem[];
+  governance_policies: GatewayGovernancePolicyItem[];
+}
+
 export interface GatewayUserKeyResponse {
   id: string;
   key: string;
