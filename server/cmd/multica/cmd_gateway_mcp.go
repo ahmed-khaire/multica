@@ -25,7 +25,10 @@ type gatewayMCPTool struct {
 	InputSchema map[string]any                       `json:"inputSchema"`
 	Annotations map[string]any                       `json:"annotations"`
 	Path        func(map[string]any) (string, error) `json:"-"`
+	Call        gatewayMCPToolHandler                `json:"-"`
 }
+
+type gatewayMCPToolHandler func(context.Context, *cli.APIClient, map[string]any) (any, error)
 
 type gatewayMCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -128,17 +131,24 @@ func callGatewayMCPTool(ctx context.Context, client *cli.APIClient, toolByName m
 	if !ok {
 		return nil, fmt.Errorf("unknown read-only Gateway MCP tool: %s", call.Name)
 	}
-	path, err := tool.Path(call.Arguments)
-	if err != nil {
-		return nil, err
-	}
-
 	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	var data any
-	if err := client.GetJSON(callCtx, path, &data); err != nil {
-		return nil, err
+	if tool.Call != nil {
+		var err error
+		data, err = tool.Call(callCtx, client, call.Arguments)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		path, err := tool.Path(call.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.GetJSON(callCtx, path, &data); err != nil {
+			return nil, err
+		}
 	}
 	data = redactGatewayMCPSecrets(data)
 	text, err := json.MarshalIndent(data, "", "  ")
@@ -170,6 +180,10 @@ func gatewayMCPTools() []gatewayMCPTool {
 	limitArgs := gatewayMCPObjectSchema(map[string]any{
 		"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum rows to return."},
 	})
+	sessionIDArgs := gatewayMCPObjectSchema(map[string]any{
+		"session_id": map[string]any{"type": "string", "description": "Gateway session ID to inspect."},
+	})
+	sessionIDArgs["required"] = []string{"session_id"}
 
 	return []gatewayMCPTool{
 		gatewayMCPReadTool("gateway_status", "Show Observer Gateway base URLs, capture policy, backend counts, and user key readiness.", noArgs, staticGatewayMCPPath("/api/gateway/status")),
@@ -179,7 +193,12 @@ func gatewayMCPTools() []gatewayMCPTool {
 		gatewayMCPReadTool("gateway_overview", "Read aggregate Gateway observability dashboard metrics.", filterArgs, observabilityGatewayMCPPath("/api/gateway/overview")),
 		gatewayMCPReadTool("gateway_sessions", "List observed Gateway sessions and traces.", filterArgs, observabilityGatewayMCPPath("/api/gateway/sessions")),
 		gatewayMCPReadTool("gateway_llm_calls", "List observed model calls, token usage, latency, and cost telemetry.", filterArgs, observabilityGatewayMCPPath("/api/gateway/llm-calls")),
+		gatewayMCPReadTool("gateway_session", "Get one observed Gateway session with requests, model calls, events, logs, agents, and tools.", sessionIDArgs, sessionGatewayMCPPath("/api/gateway/sessions")),
+		gatewayMCPReadTool("gateway_session_spans", "Get the span tree for one observed Gateway session.", sessionIDArgs, sessionGatewayMCPPath("/api/gateway/sessions", "spans")),
+		gatewayMCPReadWorkflowTool("gateway_session_drilldown", "Get one observed Gateway session and its span tree in a single read-only bundle.", sessionIDArgs, callGatewayMCPSessionDrilldown),
 		gatewayMCPReadTool("gateway_policy_decisions", "List Gateway governance policy decisions waiting for review or audit.", limitArgs, limitedGatewayMCPPath("/api/gateway/governance/policy-decisions")),
+		gatewayMCPReadTool("gateway_governance_policies", "List configured Gateway governance policies.", noArgs, staticGatewayMCPPath("/api/gateway/governance/policies")),
+		gatewayMCPReadTool("gateway_policy_exceptions", "List Gateway governance policy exceptions.", limitArgs, limitedGatewayMCPPath("/api/gateway/governance/exceptions")),
 		gatewayMCPReadTool("gateway_incidents", "List Gateway governance incidents.", limitArgs, limitedGatewayMCPPath("/api/gateway/governance/incidents")),
 		gatewayMCPReadTool("gateway_evidence", "List generated compliance evidence for Gateway activity.", limitArgs, limitedGatewayMCPPath("/api/gateway/governance/evidence")),
 		gatewayMCPReadTool("gateway_provider_risks", "List third-party AI provider risk records.", noArgs, staticGatewayMCPPath("/api/gateway/governance/provider-risks")),
@@ -200,6 +219,12 @@ func gatewayMCPReadTool(name string, description string, inputSchema map[string]
 		},
 		Path: path,
 	}
+}
+
+func gatewayMCPReadWorkflowTool(name string, description string, inputSchema map[string]any, call gatewayMCPToolHandler) gatewayMCPTool {
+	tool := gatewayMCPReadTool(name, description, inputSchema, nil)
+	tool.Call = call
+	return tool
 }
 
 func gatewayMCPObjectSchema(properties map[string]any) map[string]any {
@@ -234,6 +259,44 @@ func observabilityGatewayMCPPath(path string) func(map[string]any) (string, erro
 		}
 		return gatewayMCPPathWithQuery(path, values), nil
 	}
+}
+
+func sessionGatewayMCPPath(path string, child ...string) func(map[string]any) (string, error) {
+	return func(args map[string]any) (string, error) {
+		sessionID := gatewayMCPStringArg(args, "session_id")
+		if sessionID == "" {
+			return "", fmt.Errorf("session_id is required")
+		}
+		result := path + "/" + url.PathEscape(sessionID)
+		if len(child) > 0 && child[0] != "" {
+			result += "/" + url.PathEscape(child[0])
+		}
+		return result, nil
+	}
+}
+
+func callGatewayMCPSessionDrilldown(ctx context.Context, client *cli.APIClient, args map[string]any) (any, error) {
+	detailPath, err := sessionGatewayMCPPath("/api/gateway/sessions")(args)
+	if err != nil {
+		return nil, err
+	}
+	spansPath, err := sessionGatewayMCPPath("/api/gateway/sessions", "spans")(args)
+	if err != nil {
+		return nil, err
+	}
+
+	var detail any
+	if err := client.GetJSON(ctx, detailPath, &detail); err != nil {
+		return nil, err
+	}
+	var spans any
+	if err := client.GetJSON(ctx, spansPath, &spans); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"session_detail": detail,
+		"session_spans":  spans,
+	}, nil
 }
 
 func limitedGatewayMCPPath(path string) func(map[string]any) (string, error) {

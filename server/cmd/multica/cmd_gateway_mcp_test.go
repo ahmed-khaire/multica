@@ -74,7 +74,12 @@ func TestGatewayMCPListsReadOnlyTools(t *testing.T) {
 		"gateway_overview",
 		"gateway_sessions",
 		"gateway_llm_calls",
+		"gateway_session",
+		"gateway_session_spans",
+		"gateway_session_drilldown",
 		"gateway_policy_decisions",
+		"gateway_governance_policies",
+		"gateway_policy_exceptions",
 		"gateway_incidents",
 		"gateway_evidence",
 		"gateway_provider_risks",
@@ -83,6 +88,103 @@ func TestGatewayMCPListsReadOnlyTools(t *testing.T) {
 		if !names[expected] {
 			t.Fatalf("MCP tools missing %s; names = %#v", expected, names)
 		}
+	}
+}
+
+func TestGatewayMCPSessionDrilldownFetchesDetailAndSpans(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if got := r.Header.Get("X-Workspace-ID"); got != "workspace-1" {
+			t.Errorf("X-Workspace-ID = %q, want workspace-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.RequestURI() {
+		case "/api/gateway/sessions/session%20with%20space":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "session with space",
+				"model_calls": []map[string]any{{
+					"request_model":   "gpt-drill",
+					"prompt_tokens":   12,
+					"completion_text": "visible according to workspace capture policy",
+					"api_key":         "sk-session-secret",
+				}},
+			})
+		case "/api/gateway/sessions/session%20with%20space/spans":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_id": "session with space",
+				"spans": []map[string]any{{
+					"span_id":      "root",
+					"span_name":    "agent.run",
+					"access_token": "token-session-secret",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gateway_session_drilldown","arguments":{"session_id":"session with space"}}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp: %v\noutput: %s", err, out)
+	}
+	for _, expectedCall := range []string{
+		"GET /api/gateway/sessions/session%20with%20space",
+		"GET /api/gateway/sessions/session%20with%20space/spans",
+	} {
+		found := false
+		for _, call := range calls {
+			if call == expectedCall {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("calls = %#v, missing %s", calls, expectedCall)
+		}
+	}
+	for _, leaked := range []string{"sk-session-secret", "token-session-secret"} {
+		if strings.Contains(out, leaked) {
+			t.Fatalf("MCP output leaked secret %q: %s", leaked, out)
+		}
+	}
+	for _, expected := range []string{"session_detail", "session_spans", "gpt-drill", `"prompt_tokens":12`, "[redacted]"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("MCP output = %s, missing %q", out, expected)
+		}
+	}
+}
+
+func TestGatewayMCPSessionToolRequiresSessionIDWithoutHTTPCall(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		t.Fatalf("server should not be called when session_id is missing")
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	root.SetIn(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gateway_session","arguments":{}}}`,
+	}, "\n") + "\n"))
+
+	out, err := executeGatewayTestCommand(root, "gateway", "mcp", "--workspace-id", "workspace-1")
+	if err != nil {
+		t.Fatalf("execute gateway mcp should return JSON-RPC error without command failure: %v\noutput: %s", err, out)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("server calls = %d, want 0", calls.Load())
+	}
+	if !strings.Contains(out, "session_id is required") {
+		t.Fatalf("output = %s, want session_id required error", out)
 	}
 }
 

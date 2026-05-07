@@ -109,7 +109,7 @@ Expose read-only Gateway context to MCP-capable clients when developers or opera
 }
 ```
 
-The MCP server is read-only by design. It exposes Gateway status, doctor, health report, backend list, observability, policy decision, incident, evidence, provider risk, and control mapping tools. It does not expose backend creation, key generation, credential rotation, approvals, denials, or other mutation tools, and it redacts raw keys, tokens, authorization values, secrets, and encrypted credential material from tool results.
+The MCP server is read-only by design. It exposes Gateway status, doctor, health report, backend list, observability, session drilldown, policy, policy exception, incident, evidence, provider risk, and control mapping tools. `gateway_session`, `gateway_session_spans`, and `gateway_session_drilldown` let an MCP-capable agent inspect a recorded session by ID without opening the web UI. The MCP server does not expose backend creation, key generation, credential rotation, approvals, denials, or other mutation tools, and it redacts raw keys, tokens, authorization values, secrets, and encrypted credential material from tool results.
 
 ## Manual Request Checks
 
