@@ -168,6 +168,7 @@ Gateway lets an enterprise route OpenAI-compatible and Anthropic-compatible agen
 multica gateway status
 multica gateway doctor
 multica gateway health-report
+multica gateway mcp
 multica gateway key
 multica gateway smoke --since=24h --limit=10
 ```
@@ -183,6 +184,21 @@ multica gateway policy full_content
 ```
 
 `multica gateway health-report` gives admins the readiness view for enterprise rollout: enabled backend model-list probes, probe latency, model counts, credential pool health, capture policy, open incidents, pending approvals, provider risk warnings, evidence counts, and control mapping counts. Use `--output json` when feeding the report into deployment checks.
+
+`multica gateway mcp` starts a local stdio MCP server for read-only Gateway and governance introspection. It uses the same authenticated CLI profile and workspace selection as the rest of the CLI, exposes status, doctor, health report, backend list, observability, policy decision, incident, evidence, provider risk, and control mapping tools, and redacts raw keys, tokens, secrets, authorization headers, and encrypted credentials from responses.
+
+Example MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "multica-gateway": {
+      "command": "multica",
+      "args": ["gateway", "mcp", "--workspace-id", "<workspace-id>"]
+    }
+  }
+}
+```
 
 `multica gateway smoke` checks status, doctor health, generated user key availability, `/v1/models` reachability through the Gateway key, and export reachability. See [Gateway Acceptance Checklist](docs/gateway-acceptance.md) for the full rollout checklist.
 

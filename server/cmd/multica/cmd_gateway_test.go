@@ -11,7 +11,7 @@ import (
 )
 
 func TestGatewayCommandTree(t *testing.T) {
-	for _, name := range []string{"status", "doctor", "health-report", "smoke", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
+	for _, name := range []string{"status", "doctor", "health-report", "smoke", "mcp", "key", "keys", "revoke", "ingest-key", "ingest-keys", "revoke-ingest-key", "add", "backends", "credentials", "credential", "export", "default", "policy"} {
 		t.Run(name, func(t *testing.T) {
 			cmd, _, err := gatewayCmd.Find([]string{name})
 			if err != nil {

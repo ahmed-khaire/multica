@@ -96,6 +96,21 @@ multica gateway health-report --output json
 
 `health-report` is the operator-facing readiness view. It probes each enabled managed backend through a metadata-only model-list request, reports model count and latency, summarizes credential pool state, and shows governance signals such as capture policy, enabled policies, open incidents, pending approvals, provider risk warnings, evidence records, and control mappings. It never sends prompts or completions and never prints raw provider credentials.
 
+Expose read-only Gateway context to MCP-capable clients when developers or operators need local introspection from Claude, Codex, or an IDE:
+
+```json
+{
+  "mcpServers": {
+    "multica-gateway": {
+      "command": "multica",
+      "args": ["gateway", "mcp", "--workspace-id", "<workspace-id>"]
+    }
+  }
+}
+```
+
+The MCP server is read-only by design. It exposes Gateway status, doctor, health report, backend list, observability, policy decision, incident, evidence, provider risk, and control mapping tools. It does not expose backend creation, key generation, credential rotation, approvals, denials, or other mutation tools, and it redacts raw keys, tokens, authorization values, secrets, and encrypted credential material from tool results.
+
 ## Manual Request Checks
 
 OpenAI-compatible non-streaming:

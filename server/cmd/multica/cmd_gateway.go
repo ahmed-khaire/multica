@@ -47,6 +47,12 @@ func newGatewayCommand() *cobra.Command {
 		RunE:  runGatewaySmoke,
 	}
 
+	mcpCmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Run a read-only Observer Gateway MCP server",
+		RunE:  runGatewayMCP,
+	}
+
 	keyCmd := &cobra.Command{
 		Use:   "key",
 		Short: "Create or print your Observer Gateway key",
@@ -148,6 +154,7 @@ func newGatewayCommand() *cobra.Command {
 	cmd.AddCommand(doctorCmd)
 	cmd.AddCommand(healthReportCmd)
 	cmd.AddCommand(smokeCmd)
+	cmd.AddCommand(mcpCmd)
 	cmd.AddCommand(keyCmd)
 	cmd.AddCommand(keysCmd)
 	cmd.AddCommand(revokeCmd)
