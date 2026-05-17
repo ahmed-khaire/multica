@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -112,6 +113,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp = append(resp, runtimeToResponse(registered))
+		h.schedulePendingGatewaySubscriptionValidations(r.Context(), registered)
 	}
 
 	slog.Info("daemon registered", "workspace_id", req.WorkspaceID, "daemon_id", req.DaemonID, "runtimes_count", len(resp))
@@ -193,11 +195,12 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.Queries.UpdateAgentRuntimeHeartbeat(r.Context(), parseUUID(req.RuntimeID))
+	runtime, err := h.Queries.UpdateAgentRuntimeHeartbeat(r.Context(), parseUUID(req.RuntimeID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "heartbeat failed")
 		return
 	}
+	h.schedulePendingGatewaySubscriptionValidations(r.Context(), runtime)
 
 	slog.Debug("daemon heartbeat", "runtime_id", req.RuntimeID)
 
@@ -217,6 +220,23 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) schedulePendingGatewaySubscriptionValidations(ctx context.Context, runtime db.AgentRuntime) {
+	if runtime.Status != "online" {
+		return
+	}
+	validations, err := h.Queries.CreatePendingGatewaySubscriptionValidationsForRuntime(ctx, db.CreatePendingGatewaySubscriptionValidationsForRuntimeParams{
+		WorkspaceID: runtime.WorkspaceID,
+		RuntimeID:   runtime.ID,
+	})
+	if err != nil {
+		slog.Warn("failed to schedule pending gateway subscription validations", "runtime_id", uuidToString(runtime.ID), "error", err)
+		return
+	}
+	if len(validations) > 0 {
+		slog.Info("scheduled pending gateway subscription validations", "runtime_id", uuidToString(runtime.ID), "count", len(validations))
+	}
 }
 
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.

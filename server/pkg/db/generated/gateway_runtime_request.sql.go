@@ -372,6 +372,86 @@ func (q *Queries) CreateGatewaySubscriptionValidation(ctx context.Context, arg C
 	return i, err
 }
 
+const createPendingGatewaySubscriptionValidationsForRuntime = `-- name: CreatePendingGatewaySubscriptionValidationsForRuntime :many
+INSERT INTO gateway_subscription_runtime_validation (
+    workspace_id, backend_id, credential_id, runtime_id, status, provider
+)
+SELECT b.workspace_id, b.id, c.id, ar.id, 'pending', b.subscription_provider
+FROM agent_runtime ar
+JOIN gateway_backend b
+  ON b.workspace_id = ar.workspace_id
+JOIN gateway_backend_credential c
+  ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
+JOIN member m
+  ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
+WHERE ar.workspace_id = $1
+  AND ar.id = $2
+  AND ar.status = 'online'
+  AND b.enabled = TRUE
+  AND b.transport = 'daemon_dispatch'
+  AND b.subscription_provider != ''
+  AND b.validation_status IN ('pending_runtime_validation', 'degraded_no_runtime')
+  AND c.enabled = TRUE
+  AND c.credential_type = 'subscription_bundle'
+  AND c.subscription_provider = b.subscription_provider
+  AND c.validation_status IN ('pending_runtime_validation', 'degraded_no_runtime')
+  AND ar.provider = CASE WHEN b.subscription_provider = 'claude_code' THEN 'claude' ELSE b.subscription_provider END
+ON CONFLICT (credential_id, runtime_id)
+DO UPDATE SET
+    backend_id = EXCLUDED.backend_id,
+    provider = EXCLUDED.provider,
+    status = 'pending',
+    account_hint = '',
+    account_fingerprint = '',
+    error_code = '',
+    error_message = '',
+    started_at = NULL,
+    completed_at = NULL,
+    updated_at = now()
+RETURNING id, workspace_id, backend_id, credential_id, runtime_id, status, provider, account_hint, account_fingerprint, error_code, error_message, started_at, completed_at, created_at, updated_at
+`
+
+type CreatePendingGatewaySubscriptionValidationsForRuntimeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+}
+
+func (q *Queries) CreatePendingGatewaySubscriptionValidationsForRuntime(ctx context.Context, arg CreatePendingGatewaySubscriptionValidationsForRuntimeParams) ([]GatewaySubscriptionRuntimeValidation, error) {
+	rows, err := q.db.Query(ctx, createPendingGatewaySubscriptionValidationsForRuntime, arg.WorkspaceID, arg.RuntimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewaySubscriptionRuntimeValidation{}
+	for rows.Next() {
+		var i GatewaySubscriptionRuntimeValidation
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.BackendID,
+			&i.CredentialID,
+			&i.RuntimeID,
+			&i.Status,
+			&i.Provider,
+			&i.AccountHint,
+			&i.AccountFingerprint,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const failGatewayRuntimeRequest = `-- name: FailGatewayRuntimeRequest :one
 UPDATE gateway_runtime_request
 SET

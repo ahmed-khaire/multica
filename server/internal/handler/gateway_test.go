@@ -375,6 +375,80 @@ func TestGatewayCreateSubscriptionBackendNormalizesRuntimeFields(t *testing.T) {
 	}
 }
 
+func TestDaemonRegisterSchedulesPendingSubscriptionValidation(t *testing.T) {
+	setGatewaySecret(t)
+
+	slug := "codex-subscription-register"
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider":              "codex-subscription",
+		"slug":                  slug,
+		"display_name":          "Codex Subscription Register",
+		"backend_type":          "subscription_runtime",
+		"base_url":              "daemon://codex",
+		"key":                   `{"kind":"codex-auth-bundle","test":true}`,
+		"transport":             "daemon_dispatch",
+		"credential_type":       "subscription_bundle",
+		"subscription_provider": "codex",
+		"dispatch_scope":        "workspace_authenticated_daemons",
+	})
+	testHandler.CreateGatewayBackend(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var before int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM gateway_subscription_runtime_validation v
+		JOIN gateway_backend b ON b.id = v.backend_id
+		WHERE b.workspace_id = $1 AND b.slug = $2
+	`, testWorkspaceID, slug).Scan(&before); err != nil {
+		t.Fatalf("count validations before register: %v", err)
+	}
+	if before != 0 {
+		t.Fatalf("validations before register = %d, want 0", before)
+	}
+
+	registerW := httptest.NewRecorder()
+	registerReq := newRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    "subscription-register-daemon",
+		"device_name":  "Subscription Register Test",
+		"runtimes": []map[string]any{
+			{
+				"name":    "Local Codex",
+				"type":    "codex",
+				"version": "test",
+				"status":  "online",
+			},
+		},
+	})
+	testHandler.DaemonRegister(registerW, registerReq)
+	if registerW.Code != http.StatusOK {
+		t.Fatalf("DaemonRegister: expected 200, got %d: %s", registerW.Code, registerW.Body.String())
+	}
+
+	var after int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM gateway_subscription_runtime_validation v
+		JOIN gateway_backend b ON b.id = v.backend_id
+		JOIN agent_runtime ar ON ar.id = v.runtime_id
+		WHERE b.workspace_id = $1
+		  AND b.slug = $2
+		  AND v.status = 'pending'
+		  AND v.provider = 'codex'
+		  AND ar.provider = 'codex'
+		  AND ar.status = 'online'
+	`, testWorkspaceID, slug).Scan(&after); err != nil {
+		t.Fatalf("count validations after register: %v", err)
+	}
+	if after != 1 {
+		t.Fatalf("validations after register = %d, want 1", after)
+	}
+}
+
 func TestGatewayBackendCredentialHandlersCreateListAndUpdate(t *testing.T) {
 	setGatewaySecret(t)
 
