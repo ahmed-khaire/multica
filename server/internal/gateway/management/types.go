@@ -17,6 +17,10 @@ const (
 	SubscriptionProviderClaudeCode = "claude_code"
 	SubscriptionProviderCodex      = "codex"
 
+	PayloadFormatCodexAuthBundle      = "codex_auth_bundle_v1"
+	PayloadFormatClaudeCodeAuthBundle = "claude_code_auth_bundle_v1"
+	PayloadFormatRawToken             = "raw_token"
+
 	DispatchScopeWorkspaceAuthenticatedDaemons = "workspace_authenticated_daemons"
 
 	CaptureMetadataOnly    = "metadata_only"

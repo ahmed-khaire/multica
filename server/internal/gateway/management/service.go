@@ -313,6 +313,17 @@ func runtimeProviderForSubscriptionProvider(provider string) string {
 	}
 }
 
+func payloadFormatForSubscriptionProvider(provider string) string {
+	switch provider {
+	case SubscriptionProviderCodex:
+		return PayloadFormatCodexAuthBundle
+	case SubscriptionProviderClaudeCode:
+		return PayloadFormatClaudeCodeAuthBundle
+	default:
+		return ""
+	}
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -3614,6 +3625,12 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 		if normalized.SubscriptionProvider == "" {
 			return CreateBackendInput{}, "", fmt.Errorf("%w: subscription_provider is required", ErrInvalidGatewayBackend)
 		}
+		if normalized.PayloadFormat == "" {
+			normalized.PayloadFormat = payloadFormatForSubscriptionProvider(normalized.SubscriptionProvider)
+		}
+		if err := validateSubscriptionCredentialPayload(normalized.SubscriptionProvider, normalized.PayloadFormat, normalized.Key); err != nil {
+			return CreateBackendInput{}, "", err
+		}
 	} else {
 		normalized.Transport = transportOrDefault(normalized.Transport)
 		normalized.CredentialType = CredentialTypeAPIKey
@@ -3632,6 +3649,46 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 	}
 
 	return normalized, credential, nil
+}
+
+func validateSubscriptionCredentialPayload(provider, payloadFormat, credential string) error {
+	credential = strings.TrimSpace(credential)
+	switch payloadFormat {
+	case PayloadFormatRawToken:
+		if credential == "" {
+			return fmt.Errorf("%w: subscription credential is required", ErrInvalidGatewayBackend)
+		}
+		return nil
+	case PayloadFormatCodexAuthBundle:
+		if provider != SubscriptionProviderCodex {
+			return fmt.Errorf("%w: payload_format %s requires codex subscription_provider", ErrInvalidGatewayBackend, payloadFormat)
+		}
+	case PayloadFormatClaudeCodeAuthBundle:
+		if provider != SubscriptionProviderClaudeCode {
+			return fmt.Errorf("%w: payload_format %s requires claude_code subscription_provider", ErrInvalidGatewayBackend, payloadFormat)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported subscription payload_format", ErrInvalidGatewayBackend)
+	}
+
+	var bundle struct {
+		Files map[string]string `json:"files"`
+		Env   map[string]string `json:"env"`
+		Token string            `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(credential), &bundle); err != nil {
+		return fmt.Errorf("%w: invalid subscription credential bundle", ErrInvalidGatewayBackend)
+	}
+	if len(bundle.Files) == 0 && len(bundle.Env) == 0 && strings.TrimSpace(bundle.Token) == "" {
+		return fmt.Errorf("%w: subscription credential bundle must include files, env, or token", ErrInvalidGatewayBackend)
+	}
+	for name := range bundle.Files {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+			return fmt.Errorf("%w: invalid subscription credential file path", ErrInvalidGatewayBackend)
+		}
+	}
+	return nil
 }
 
 func getSettingsOrDefaultWithQueries(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID) (db.GatewayWorkspaceSetting, error) {

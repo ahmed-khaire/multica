@@ -147,6 +147,60 @@ func TestRuntimeProviderForSubscriptionProvider(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreateBackendInputDefaultsSubscriptionPayloadFormat(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     string
+		wantProvider string
+		wantFormat   string
+		key          string
+	}{
+		{
+			name:         "codex",
+			provider:     "codex-subscription",
+			wantProvider: SubscriptionProviderCodex,
+			wantFormat:   "codex_auth_bundle_v1",
+			key:          `{"files":{"auth.json":"{}"}}`,
+		},
+		{
+			name:         "claude code",
+			provider:     "claude-code-subscription",
+			wantProvider: SubscriptionProviderClaudeCode,
+			wantFormat:   "claude_code_auth_bundle_v1",
+			key:          `{"files":{"config.json":"{}"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalized, _, err := normalizeCreateBackendInput(CreateBackendInput{
+				Provider: tt.provider,
+				Key:      tt.key,
+				Enabled:  true,
+			})
+			if err != nil {
+				t.Fatalf("normalizeCreateBackendInput returned error: %v", err)
+			}
+			if normalized.SubscriptionProvider != tt.wantProvider {
+				t.Fatalf("SubscriptionProvider = %q, want %q", normalized.SubscriptionProvider, tt.wantProvider)
+			}
+			if normalized.PayloadFormat != tt.wantFormat {
+				t.Fatalf("PayloadFormat = %q, want %q", normalized.PayloadFormat, tt.wantFormat)
+			}
+		})
+	}
+}
+
+func TestNormalizeCreateBackendInputRejectsInvalidSubscriptionBundle(t *testing.T) {
+	_, _, err := normalizeCreateBackendInput(CreateBackendInput{
+		Provider: "codex-subscription",
+		Key:      `not-json`,
+		Enabled:  true,
+	})
+	if !errors.Is(err, ErrInvalidGatewayBackend) {
+		t.Fatalf("normalizeCreateBackendInput error = %v, want ErrInvalidGatewayBackend", err)
+	}
+}
+
 func TestValidateCapturePolicy(t *testing.T) {
 	valid := []string{
 		CaptureMetadataOnly,
