@@ -62,8 +62,7 @@ export async function createTestApi(): Promise<TestApiClient> {
 }
 
 export async function openWorkspaceMenu(page: Page) {
-  // Click the workspace switcher button (has ChevronDown icon)
-  await page.getByRole("button").first().click();
+  await page.getByRole("button", { name: /Workspace/ }).first().click();
   // Wait for dropdown to appear
   await page.getByRole("menuitem", { name: "Log out" }).waitFor({
     state: "visible",

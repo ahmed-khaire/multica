@@ -34,7 +34,10 @@ test.describe("Settings", () => {
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    const saveButton = page.getByRole("button", { name: "Save" });
+    if (await saveButton.isEnabled()) {
+      await saveButton.click();
+      await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    }
   });
 });
