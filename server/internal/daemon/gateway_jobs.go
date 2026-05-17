@@ -59,7 +59,17 @@ func (d *Daemon) handleGatewayValidationJob(ctx context.Context, runtimeID strin
 }
 
 func (d *Daemon) handleGatewayRuntimeRequestJob(ctx context.Context, runtimeID string, job *GatewayJob) {
-	_ = d.client.FailGatewayRuntimeRequest(ctx, runtimeID, job.ID, "unsupported_gateway_job", fmt.Sprintf("gateway runtime requests are not implemented for %s", job.SubscriptionProvider))
+	switch job.SubscriptionProvider {
+	case "codex":
+		response, err := d.executeCodexGatewayRuntimeRequest(ctx, job)
+		if err != nil {
+			_ = d.client.FailGatewayRuntimeRequest(ctx, runtimeID, job.ID, "runtime_error", err.Error())
+			return
+		}
+		_ = d.client.CompleteGatewayRuntimeRequest(ctx, runtimeID, job.ID, response)
+	default:
+		_ = d.client.FailGatewayRuntimeRequest(ctx, runtimeID, job.ID, "unsupported_gateway_job", fmt.Sprintf("gateway runtime requests are not implemented for %s", job.SubscriptionProvider))
+	}
 }
 
 func (d *Daemon) validateGatewaySubscription(runtimeID string, job *GatewayJob) error {
