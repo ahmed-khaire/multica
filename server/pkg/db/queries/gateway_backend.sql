@@ -15,9 +15,11 @@ RETURNING *;
 -- name: CreateGatewayBackend :one
 INSERT INTO gateway_backend (
     workspace_id, slug, display_name, backend_type, base_url,
-    encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by
+    encrypted_credential, credential_hint, enabled, metadata,
+    transport, subscription_provider, dispatch_scope, validation_status,
+    created_by, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
 RETURNING *;
 
 -- name: ListGatewayBackends :many
@@ -48,7 +50,11 @@ SET
     credential_hint = $7,
     enabled = $8,
     metadata = $9,
-    updated_by = $10,
+    transport = $10,
+    subscription_provider = $11,
+    dispatch_scope = $12,
+    validation_status = $13,
+    updated_by = $14,
     updated_at = now()
 WHERE workspace_id = $1 AND id = $2
 RETURNING *;
@@ -72,9 +78,11 @@ RETURNING *;
 -- name: CreateGatewayBackendCredential :one
 INSERT INTO gateway_backend_credential (
     workspace_id, backend_id, label, encrypted_credential,
-    credential_hint, enabled, priority, created_by, updated_by
+    credential_hint, enabled, priority,
+    credential_type, subscription_provider, encrypted_payload, payload_format,
+    dispatch_scope, validation_status, created_by, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
 RETURNING *;
 
 -- name: ListGatewayBackendCredentialsForBackend :many
@@ -109,7 +117,13 @@ SET
     credential_hint = $6,
     enabled = $7,
     priority = $8,
-    updated_by = $9,
+    credential_type = $9,
+    subscription_provider = $10,
+    encrypted_payload = $11,
+    payload_format = $12,
+    dispatch_scope = $13,
+    validation_status = $14,
+    updated_by = $15,
     updated_at = now()
 WHERE workspace_id = $1
   AND backend_id = $2
@@ -139,8 +153,13 @@ SET
     last_validation_at = now(),
     last_validation_error = $5,
     updated_at = now()
-WHERE workspace_id = $1 AND id = $2
-RETURNING *;
+FROM agent_runtime ar
+WHERE gateway_backend.workspace_id = $1
+  AND gateway_backend.id = $2
+  AND ar.id = $4
+  AND ar.workspace_id = gateway_backend.workspace_id
+  AND ar.provider = CASE WHEN gateway_backend.subscription_provider = 'claude_code' THEN 'claude' ELSE gateway_backend.subscription_provider END
+RETURNING gateway_backend.*;
 
 -- name: UpdateGatewayBackendCredentialValidationStatus :one
 UPDATE gateway_backend_credential
@@ -152,7 +171,13 @@ SET
     last_validation_at = now(),
     last_validation_error = $8,
     updated_at = now()
-WHERE workspace_id = $1
-  AND backend_id = $2
-  AND id = $3
-RETURNING *;
+FROM gateway_backend b, agent_runtime ar
+WHERE gateway_backend_credential.workspace_id = $1
+  AND gateway_backend_credential.backend_id = $2
+  AND gateway_backend_credential.id = $3
+  AND b.workspace_id = gateway_backend_credential.workspace_id
+  AND b.id = gateway_backend_credential.backend_id
+  AND ar.id = $5
+  AND ar.workspace_id = gateway_backend_credential.workspace_id
+  AND ar.provider = CASE WHEN gateway_backend_credential.subscription_provider = 'claude_code' THEN 'claude' ELSE gateway_backend_credential.subscription_provider END
+RETURNING gateway_backend_credential.*;

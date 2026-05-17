@@ -262,10 +262,44 @@ func validateBackendURL(raw, backendType string) error {
 	if backendType == BackendTypeClaudeOAuth && parsed.Scheme == "claude-oauth" {
 		return nil
 	}
+	if backendType == BackendTypeSubscriptionRuntime && parsed.Scheme == "daemon" {
+		return nil
+	}
 	if parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("%w: base URL must be http(s) with host", ErrInvalidGatewayBackend)
 	}
 	return nil
+}
+
+func transportOrDefault(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return TransportDirectHTTP
+	}
+	return value
+}
+
+func credentialTypeOrDefault(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return CredentialTypeAPIKey
+	}
+	return value
+}
+
+func dispatchScopeOrDefault(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return DispatchScopeWorkspaceAuthenticatedDaemons
+	}
+	return value
+}
+
+func encryptedPayloadForCredential(credentialType string, encryptedCredential []byte) []byte {
+	if credentialType != CredentialTypeSubscriptionBundle {
+		return nil
+	}
+	return encryptedCredential
 }
 
 func isUniqueViolation(err error) bool {
@@ -1616,14 +1650,20 @@ func (s *Service) CreateBackendCredential(ctx context.Context, input CreateBacke
 			return err
 		}
 		row, err := q.CreateGatewayBackendCredential(ctx, db.CreateGatewayBackendCredentialParams{
-			WorkspaceID:         workspaceUUID,
-			BackendID:           backendUUID,
-			Label:               label,
-			EncryptedCredential: encryptedCredential,
-			CredentialHint:      CredentialHint(credential),
-			Enabled:             input.Enabled,
-			Priority:            priority,
-			CreatedBy:           actorUUID,
+			WorkspaceID:          workspaceUUID,
+			BackendID:            backendUUID,
+			Label:                label,
+			EncryptedCredential:  encryptedCredential,
+			CredentialHint:       CredentialHint(credential),
+			Enabled:              input.Enabled,
+			Priority:             priority,
+			CredentialType:       credentialTypeOrDefault(input.CredentialType),
+			SubscriptionProvider: strings.TrimSpace(input.SubscriptionProvider),
+			EncryptedPayload:     encryptedPayloadForCredential(credentialTypeOrDefault(input.CredentialType), encryptedCredential),
+			PayloadFormat:        strings.TrimSpace(input.PayloadFormat),
+			DispatchScope:        dispatchScopeOrDefault(input.DispatchScope),
+			ValidationStatus:     strings.TrimSpace(input.ValidationStatus),
+			CreatedBy:            actorUUID,
 		})
 		if err != nil {
 			return err
@@ -1703,17 +1743,47 @@ func (s *Service) UpdateBackendCredential(ctx context.Context, input UpdateBacke
 				priority = 100
 			}
 		}
+		credentialType := current.CredentialType
+		if input.CredentialType != nil {
+			credentialType = credentialTypeOrDefault(*input.CredentialType)
+		}
+		subscriptionProvider := current.SubscriptionProvider
+		if input.SubscriptionProvider != nil {
+			subscriptionProvider = strings.TrimSpace(*input.SubscriptionProvider)
+		}
+		encryptedPayload := current.EncryptedPayload
+		if credentialType == CredentialTypeSubscriptionBundle && input.Key != nil {
+			encryptedPayload = encryptedCredential
+		}
+		payloadFormat := current.PayloadFormat
+		if input.PayloadFormat != nil {
+			payloadFormat = strings.TrimSpace(*input.PayloadFormat)
+		}
+		dispatchScope := current.DispatchScope
+		if input.DispatchScope != nil {
+			dispatchScope = dispatchScopeOrDefault(*input.DispatchScope)
+		}
+		validationStatus := current.ValidationStatus
+		if input.ValidationStatus != nil {
+			validationStatus = strings.TrimSpace(*input.ValidationStatus)
+		}
 
 		row, err := q.UpdateGatewayBackendCredential(ctx, db.UpdateGatewayBackendCredentialParams{
-			WorkspaceID:         workspaceUUID,
-			BackendID:           backendUUID,
-			ID:                  credentialUUID,
-			Label:               label,
-			EncryptedCredential: encryptedCredential,
-			CredentialHint:      credentialHint,
-			Enabled:             enabled,
-			Priority:            priority,
-			UpdatedBy:           actorUUID,
+			WorkspaceID:          workspaceUUID,
+			BackendID:            backendUUID,
+			ID:                   credentialUUID,
+			Label:                label,
+			EncryptedCredential:  encryptedCredential,
+			CredentialHint:       credentialHint,
+			Enabled:              enabled,
+			Priority:             priority,
+			CredentialType:       credentialType,
+			SubscriptionProvider: subscriptionProvider,
+			EncryptedPayload:     encryptedPayload,
+			PayloadFormat:        payloadFormat,
+			DispatchScope:        dispatchScope,
+			ValidationStatus:     validationStatus,
+			UpdatedBy:            actorUUID,
 		})
 		if err != nil {
 			return err
@@ -1762,16 +1832,20 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 		}
 
 		row, err := q.CreateGatewayBackend(ctx, db.CreateGatewayBackendParams{
-			WorkspaceID:         workspaceUUID,
-			Slug:                normalized.Slug,
-			DisplayName:         normalized.DisplayName,
-			BackendType:         normalized.BackendType,
-			BaseUrl:             normalized.BaseURL,
-			EncryptedCredential: encryptedCredential,
-			CredentialHint:      CredentialHint(credential),
-			Enabled:             normalized.Enabled,
-			Metadata:            metadata,
-			CreatedBy:           actorUUID,
+			WorkspaceID:          workspaceUUID,
+			Slug:                 normalized.Slug,
+			DisplayName:          normalized.DisplayName,
+			BackendType:          normalized.BackendType,
+			BaseUrl:              normalized.BaseURL,
+			EncryptedCredential:  encryptedCredential,
+			CredentialHint:       CredentialHint(credential),
+			Enabled:              normalized.Enabled,
+			Metadata:             metadata,
+			Transport:            normalized.Transport,
+			SubscriptionProvider: normalized.SubscriptionProvider,
+			DispatchScope:        normalized.DispatchScope,
+			ValidationStatus:     normalized.ValidationStatus,
+			CreatedBy:            actorUUID,
 		})
 		if err != nil {
 			return err
@@ -1924,6 +1998,22 @@ func (s *Service) UpdateBackend(ctx context.Context, input UpdateBackendInput) (
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
+		transport := current.Transport
+		if input.Transport != nil {
+			transport = transportOrDefault(*input.Transport)
+		}
+		subscriptionProvider := current.SubscriptionProvider
+		if input.SubscriptionProvider != nil {
+			subscriptionProvider = strings.TrimSpace(*input.SubscriptionProvider)
+		}
+		dispatchScope := current.DispatchScope
+		if input.DispatchScope != nil {
+			dispatchScope = dispatchScopeOrDefault(*input.DispatchScope)
+		}
+		validationStatus := current.ValidationStatus
+		if input.ValidationStatus != nil {
+			validationStatus = strings.TrimSpace(*input.ValidationStatus)
+		}
 		metadata := current.Metadata
 		if input.Metadata != nil {
 			metadata, err = metadataJSON(input.Metadata)
@@ -1953,16 +2043,20 @@ func (s *Service) UpdateBackend(ctx context.Context, input UpdateBackendInput) (
 		}
 
 		updated, err = q.UpdateGatewayBackend(ctx, db.UpdateGatewayBackendParams{
-			WorkspaceID:         workspaceUUID,
-			ID:                  backendUUID,
-			DisplayName:         displayName,
-			BackendType:         current.BackendType,
-			BaseUrl:             baseURL,
-			EncryptedCredential: encryptedCredential,
-			CredentialHint:      credentialHint,
-			Enabled:             enabled,
-			Metadata:            metadata,
-			UpdatedBy:           actorUUID,
+			WorkspaceID:          workspaceUUID,
+			ID:                   backendUUID,
+			DisplayName:          displayName,
+			BackendType:          current.BackendType,
+			BaseUrl:              baseURL,
+			EncryptedCredential:  encryptedCredential,
+			CredentialHint:       credentialHint,
+			Enabled:              enabled,
+			Metadata:             metadata,
+			Transport:            transport,
+			SubscriptionProvider: subscriptionProvider,
+			DispatchScope:        dispatchScope,
+			ValidationStatus:     validationStatus,
+			UpdatedBy:            actorUUID,
 		})
 		if err != nil {
 			return err
@@ -3403,6 +3497,12 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 	normalized.DisplayName = strings.TrimSpace(normalized.DisplayName)
 	normalized.BackendType = strings.TrimSpace(normalized.BackendType)
 	normalized.BaseURL = strings.TrimSpace(normalized.BaseURL)
+	normalized.Transport = strings.TrimSpace(normalized.Transport)
+	normalized.CredentialType = strings.TrimSpace(normalized.CredentialType)
+	normalized.SubscriptionProvider = strings.TrimSpace(normalized.SubscriptionProvider)
+	normalized.DispatchScope = strings.TrimSpace(normalized.DispatchScope)
+	normalized.PayloadFormat = strings.TrimSpace(normalized.PayloadFormat)
+	normalized.ValidationStatus = strings.TrimSpace(normalized.ValidationStatus)
 
 	if preset, ok := ProviderPresetFor(normalized.Provider); ok {
 		if normalized.Slug == "" {
@@ -3430,6 +3530,29 @@ func normalizeCreateBackendInput(input CreateBackendInput) (CreateBackendInput, 
 	}
 	if normalized.BackendType == "" {
 		return CreateBackendInput{}, "", fmt.Errorf("%w: backend type is required", ErrInvalidGatewayBackend)
+	}
+	if normalized.BackendType == BackendTypeSubscriptionRuntime {
+		normalized.Transport = TransportDaemonDispatch
+		normalized.CredentialType = CredentialTypeSubscriptionBundle
+		normalized.DispatchScope = dispatchScopeOrDefault(normalized.DispatchScope)
+		if normalized.ValidationStatus == "" {
+			normalized.ValidationStatus = "pending_runtime_validation"
+		}
+		if normalized.SubscriptionProvider == "" {
+			switch normalized.Provider {
+			case "claude-code-subscription":
+				normalized.SubscriptionProvider = SubscriptionProviderClaudeCode
+			case "codex-subscription":
+				normalized.SubscriptionProvider = SubscriptionProviderCodex
+			}
+		}
+		if normalized.SubscriptionProvider == "" {
+			return CreateBackendInput{}, "", fmt.Errorf("%w: subscription_provider is required", ErrInvalidGatewayBackend)
+		}
+	} else {
+		normalized.Transport = transportOrDefault(normalized.Transport)
+		normalized.CredentialType = CredentialTypeAPIKey
+		normalized.DispatchScope = dispatchScopeOrDefault(normalized.DispatchScope)
 	}
 	if normalized.BaseURL == "" {
 		return CreateBackendInput{}, "", fmt.Errorf("%w: base URL is required", ErrInvalidGatewayBackend)
@@ -3489,36 +3612,51 @@ func backendResponse(row db.GatewayBackend, defaultID pgtype.UUID) BackendRespon
 	}
 
 	return BackendResponse{
-		ID:             uuidString(row.ID),
-		Slug:           row.Slug,
-		DisplayName:    row.DisplayName,
-		BackendType:    row.BackendType,
-		BaseURL:        row.BaseUrl,
-		CredentialHint: row.CredentialHint,
-		Enabled:        row.Enabled,
-		IsDefault:      defaultID.Valid && row.ID == defaultID,
-		Metadata:       metadata,
-		CreatedAt:      textTimestamp(row.CreatedAt),
-		UpdatedAt:      textTimestamp(row.UpdatedAt),
+		ID:                   uuidString(row.ID),
+		Slug:                 row.Slug,
+		DisplayName:          row.DisplayName,
+		BackendType:          row.BackendType,
+		BaseURL:              row.BaseUrl,
+		CredentialHint:       row.CredentialHint,
+		Transport:            row.Transport,
+		Enabled:              row.Enabled,
+		IsDefault:            defaultID.Valid && row.ID == defaultID,
+		Metadata:             metadata,
+		SubscriptionProvider: row.SubscriptionProvider,
+		DispatchScope:        row.DispatchScope,
+		ValidationStatus:     row.ValidationStatus,
+		ValidatedRuntimeID:   optionalUUIDString(row.ValidatedRuntimeID),
+		LastValidationAt:     optionalTimestamp(row.LastValidationAt),
+		LastValidationError:  row.LastValidationError,
+		CreatedAt:            textTimestamp(row.CreatedAt),
+		UpdatedAt:            textTimestamp(row.UpdatedAt),
 	}
 }
 
 func backendCredentialResponse(row db.GatewayBackendCredential) BackendCredentialResponse {
 	return BackendCredentialResponse{
-		ID:                 uuidString(row.ID),
-		BackendID:          uuidString(row.BackendID),
-		Label:              row.Label,
-		CredentialHint:     row.CredentialHint,
-		Enabled:            row.Enabled,
-		Priority:           row.Priority,
-		LastUsedAt:         optionalTimestamp(row.LastUsedAt),
-		LastErrorAt:        optionalTimestamp(row.LastErrorAt),
-		LastError:          row.LastError,
-		RateLimitedUntil:   optionalTimestamp(row.RateLimitedUntil),
-		RateLimitRemaining: optionalInt4(row.RateLimitRemaining),
-		RateLimitResetAt:   optionalTimestamp(row.RateLimitResetAt),
-		CreatedAt:          textTimestamp(row.CreatedAt),
-		UpdatedAt:          textTimestamp(row.UpdatedAt),
+		ID:                   uuidString(row.ID),
+		BackendID:            uuidString(row.BackendID),
+		Label:                row.Label,
+		CredentialHint:       row.CredentialHint,
+		CredentialType:       row.CredentialType,
+		SubscriptionProvider: row.SubscriptionProvider,
+		DispatchScope:        row.DispatchScope,
+		ValidationStatus:     row.ValidationStatus,
+		ValidatedRuntimeID:   optionalUUIDString(row.ValidatedRuntimeID),
+		LastValidationAt:     optionalTimestamp(row.LastValidationAt),
+		LastValidationError:  row.LastValidationError,
+		AccountHint:          row.AccountHint,
+		Enabled:              row.Enabled,
+		Priority:             row.Priority,
+		LastUsedAt:           optionalTimestamp(row.LastUsedAt),
+		LastErrorAt:          optionalTimestamp(row.LastErrorAt),
+		LastError:            row.LastError,
+		RateLimitedUntil:     optionalTimestamp(row.RateLimitedUntil),
+		RateLimitRemaining:   optionalInt4(row.RateLimitRemaining),
+		RateLimitResetAt:     optionalTimestamp(row.RateLimitResetAt),
+		CreatedAt:            textTimestamp(row.CreatedAt),
+		UpdatedAt:            textTimestamp(row.UpdatedAt),
 	}
 }
 

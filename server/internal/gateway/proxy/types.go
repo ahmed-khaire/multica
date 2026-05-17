@@ -14,6 +14,17 @@ const (
 	StatusUpstreamError = "upstream_error"
 	StatusGatewayError  = "gateway_error"
 	StatusPolicyBlocked = "policy_blocked"
+
+	TransportDirectHTTP     = "direct_http"
+	TransportDaemonDispatch = "daemon_dispatch"
+
+	CredentialTypeAPIKey             = "api_key"
+	CredentialTypeSubscriptionBundle = "subscription_bundle"
+
+	SubscriptionProviderClaudeCode = "claude_code"
+	SubscriptionProviderCodex      = "codex"
+
+	DispatchScopeWorkspaceAuthenticatedDaemons = "workspace_authenticated_daemons"
 )
 
 type TranslationMode string
@@ -32,15 +43,19 @@ type AuthContext struct {
 }
 
 type BackendTarget struct {
-	ID                string
-	Slug              string
-	BackendType       string
-	CredentialID      string
-	UpstreamProtocol  string
-	BaseURL           string
-	UpstreamSecret    string
-	CapturePolicy     string
-	PolicyExceptionID string
+	ID                   string
+	Slug                 string
+	BackendType          string
+	CredentialID         string
+	UpstreamProtocol     string
+	BaseURL              string
+	UpstreamSecret       string
+	CredentialType       string
+	Transport            string
+	SubscriptionProvider string
+	DispatchScope        string
+	CapturePolicy        string
+	PolicyExceptionID    string
 }
 
 type ModelRouting struct {

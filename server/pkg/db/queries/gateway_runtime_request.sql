@@ -2,7 +2,24 @@
 INSERT INTO gateway_subscription_runtime_validation (
     workspace_id, backend_id, credential_id, runtime_id, status, provider
 )
-VALUES ($1, $2, $3, $4, 'pending', $5)
+SELECT $1, b.id, c.id, ar.id, 'pending', $5
+FROM gateway_backend b
+JOIN gateway_backend_credential c
+  ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
+JOIN agent_runtime ar
+  ON ar.workspace_id = b.workspace_id
+JOIN member m
+  ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
+WHERE b.workspace_id = $1
+  AND b.id = $2
+  AND c.id = $3
+  AND ar.id = $4
+  AND b.transport = 'daemon_dispatch'
+  AND b.subscription_provider = $5
+  AND c.credential_type = 'subscription_bundle'
+  AND c.subscription_provider = $5
+  AND ar.status = 'online'
+  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
 ON CONFLICT (credential_id, runtime_id)
 DO UPDATE SET
     backend_id = EXCLUDED.backend_id,
@@ -30,7 +47,7 @@ WHERE v.id = (
       AND v2.provider = $3
       AND v2.status = 'pending'
       AND ar.workspace_id = v2.workspace_id
-      AND ar.provider = v2.provider
+      AND ar.provider = CASE WHEN v2.provider = 'claude_code' THEN 'claude' ELSE v2.provider END
       AND ar.status = 'online'
     ORDER BY v2.created_at ASC
     LIMIT 1
@@ -78,6 +95,8 @@ WHERE v.workspace_id = $1
   AND v.credential_id = $3
   AND v.provider = $4
   AND v.status = 'succeeded'
+  AND ar.workspace_id = v.workspace_id
+  AND ar.provider = CASE WHEN v.provider = 'claude_code' THEN 'claude' ELSE v.provider END
   AND ar.status = 'online'
 ORDER BY ar.last_seen_at DESC;
 
@@ -86,7 +105,27 @@ INSERT INTO gateway_runtime_request (
     workspace_id, backend_id, credential_id, runtime_id, provider, surface, status,
     request_body, stream
 )
-VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8)
+SELECT $1, b.id, c.id, ar.id, $5, $6, 'queued', $7, $8
+FROM gateway_backend b
+JOIN gateway_backend_credential c
+  ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
+JOIN agent_runtime ar
+  ON ar.workspace_id = b.workspace_id
+JOIN member m
+  ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
+WHERE b.workspace_id = $1
+  AND b.id = $2
+  AND c.id = $3
+  AND ar.id = $4
+  AND b.enabled = TRUE
+  AND c.enabled = TRUE
+  AND b.transport = 'daemon_dispatch'
+  AND b.subscription_provider = $5
+  AND c.credential_type = 'subscription_bundle'
+  AND c.subscription_provider = $5
+  AND c.validation_status = 'active'
+  AND ar.status = 'online'
+  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
 RETURNING *;
 
 -- name: ClaimGatewayRuntimeRequest :one
@@ -102,7 +141,7 @@ WHERE r.id = (
       AND r2.provider = $3
       AND r2.status = 'queued'
       AND ar.workspace_id = r2.workspace_id
-      AND ar.provider = r2.provider
+      AND ar.provider = CASE WHEN r2.provider = 'claude_code' THEN 'claude' ELSE r2.provider END
       AND ar.status = 'online'
     ORDER BY r2.created_at ASC
     LIMIT 1

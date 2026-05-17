@@ -6,6 +6,9 @@ DROP INDEX IF EXISTS idx_gateway_subscription_validation_runtime;
 DROP INDEX IF EXISTS idx_gateway_subscription_validation_claim;
 DROP TABLE IF EXISTS gateway_subscription_runtime_validation;
 
+DROP INDEX IF EXISTS idx_agent_runtime_workspace_id;
+DROP INDEX IF EXISTS idx_gateway_backend_credential_workspace_backend_id;
+
 ALTER TABLE gateway_backend_credential
     DROP COLUMN IF EXISTS last_validation_error,
     DROP COLUMN IF EXISTS last_validation_at,

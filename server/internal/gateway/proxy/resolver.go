@@ -134,16 +134,27 @@ func (r *Resolver) ResolveBackend(ctx context.Context, workspaceID, protocol, ba
 		return BackendTarget{}, err
 	}
 	return BackendTarget{
-		ID:                util.UUIDToString(backend.ID),
-		Slug:              backend.Slug,
-		BackendType:       backend.BackendType,
-		CredentialID:      credentialID,
-		UpstreamProtocol:  BackendProtocolForType(backend.BackendType),
-		BaseURL:           backend.BaseUrl,
-		UpstreamSecret:    secret,
-		CapturePolicy:     settings.CapturePolicy,
-		PolicyExceptionID: policyExceptionID,
+		ID:                   util.UUIDToString(backend.ID),
+		Slug:                 backend.Slug,
+		BackendType:          backend.BackendType,
+		CredentialID:         credentialID,
+		UpstreamProtocol:     BackendProtocolForType(backend.BackendType),
+		BaseURL:              backend.BaseUrl,
+		UpstreamSecret:       secret,
+		CredentialType:       selectedCredentialType(credentials),
+		Transport:            backend.Transport,
+		SubscriptionProvider: backend.SubscriptionProvider,
+		DispatchScope:        backend.DispatchScope,
+		CapturePolicy:        settings.CapturePolicy,
+		PolicyExceptionID:    policyExceptionID,
 	}, nil
+}
+
+func selectedCredentialType(credentials []db.GatewayBackendCredential) string {
+	if len(credentials) > 0 {
+		return credentials[0].CredentialType
+	}
+	return CredentialTypeAPIKey
 }
 
 func (r *Resolver) providerRiskBlockReason(ctx context.Context, workspaceID pgtype.UUID, backend db.GatewayBackend) (string, bool, string, string, error) {

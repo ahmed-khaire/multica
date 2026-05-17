@@ -73,6 +73,24 @@ func TestProviderPresetFor(t *testing.T) {
 			displayName:        "Claude OAuth",
 			requiresCredential: false,
 		},
+		{
+			name:               "claude-code-subscription",
+			provider:           "claude-code-subscription",
+			slug:               "claude-code-subscription",
+			backendType:        BackendTypeSubscriptionRuntime,
+			baseURL:            "daemon://claude-code",
+			displayName:        "Claude Code Subscription",
+			requiresCredential: true,
+		},
+		{
+			name:               "codex-subscription",
+			provider:           "codex-subscription",
+			slug:               "codex-subscription",
+			backendType:        BackendTypeSubscriptionRuntime,
+			baseURL:            "daemon://codex",
+			displayName:        "Codex Subscription",
+			requiresCredential: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -205,6 +223,7 @@ func TestResponseDTOJSONTags(t *testing.T) {
 		BackendType:    BackendTypeOpenAICompatible,
 		BaseURL:        "https://api.openai.com/v1",
 		CredentialHint: "sk-proj-...cdef",
+		Transport:      TransportDirectHTTP,
 		Enabled:        true,
 		IsDefault:      true,
 		Metadata:       map[string]any{"tier": "prod"},
@@ -219,6 +238,7 @@ func TestResponseDTOJSONTags(t *testing.T) {
 		"backend_type",
 		"base_url",
 		"credential_hint",
+		"transport",
 		"enabled",
 		"is_default",
 		"metadata",

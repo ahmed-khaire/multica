@@ -3,9 +3,21 @@ package management
 import "strings"
 
 const (
-	BackendTypeOpenAICompatible = "openai_compatible"
-	BackendTypeAnthropic        = "anthropic"
-	BackendTypeClaudeOAuth      = "claude_oauth"
+	BackendTypeOpenAICompatible    = "openai_compatible"
+	BackendTypeAnthropic           = "anthropic"
+	BackendTypeClaudeOAuth         = "claude_oauth"
+	BackendTypeSubscriptionRuntime = "subscription_runtime"
+
+	TransportDirectHTTP     = "direct_http"
+	TransportDaemonDispatch = "daemon_dispatch"
+
+	CredentialTypeAPIKey             = "api_key"
+	CredentialTypeSubscriptionBundle = "subscription_bundle"
+
+	SubscriptionProviderClaudeCode = "claude_code"
+	SubscriptionProviderCodex      = "codex"
+
+	DispatchScopeWorkspaceAuthenticatedDaemons = "workspace_authenticated_daemons"
 
 	CaptureMetadataOnly    = "metadata_only"
 	CaptureRedactedContent = "redacted_content"
@@ -28,34 +40,49 @@ type GatewayURLs struct {
 }
 
 type BackendResponse struct {
-	ID             string         `json:"id"`
-	Slug           string         `json:"slug"`
-	DisplayName    string         `json:"display_name"`
-	BackendType    string         `json:"backend_type"`
-	BaseURL        string         `json:"base_url"`
-	CredentialHint string         `json:"credential_hint"`
-	Enabled        bool           `json:"enabled"`
-	IsDefault      bool           `json:"is_default"`
-	Metadata       map[string]any `json:"metadata"`
-	CreatedAt      string         `json:"created_at"`
-	UpdatedAt      string         `json:"updated_at"`
+	ID                   string         `json:"id"`
+	Slug                 string         `json:"slug"`
+	DisplayName          string         `json:"display_name"`
+	BackendType          string         `json:"backend_type"`
+	BaseURL              string         `json:"base_url"`
+	CredentialHint       string         `json:"credential_hint"`
+	Transport            string         `json:"transport"`
+	Enabled              bool           `json:"enabled"`
+	IsDefault            bool           `json:"is_default"`
+	Metadata             map[string]any `json:"metadata"`
+	SubscriptionProvider string         `json:"subscription_provider,omitempty"`
+	DispatchScope        string         `json:"dispatch_scope,omitempty"`
+	ValidationStatus     string         `json:"validation_status,omitempty"`
+	ValidatedRuntimeID   string         `json:"validated_runtime_id,omitempty"`
+	LastValidationAt     *string        `json:"last_validation_at,omitempty"`
+	LastValidationError  string         `json:"last_validation_error,omitempty"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
 }
 
 type BackendCredentialResponse struct {
-	ID                 string  `json:"id"`
-	BackendID          string  `json:"backend_id"`
-	Label              string  `json:"label"`
-	CredentialHint     string  `json:"credential_hint"`
-	Enabled            bool    `json:"enabled"`
-	Priority           int32   `json:"priority"`
-	LastUsedAt         *string `json:"last_used_at"`
-	LastErrorAt        *string `json:"last_error_at"`
-	LastError          string  `json:"last_error"`
-	RateLimitedUntil   *string `json:"rate_limited_until"`
-	RateLimitRemaining *int32  `json:"rate_limit_remaining"`
-	RateLimitResetAt   *string `json:"rate_limit_reset_at"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	ID                   string  `json:"id"`
+	BackendID            string  `json:"backend_id"`
+	Label                string  `json:"label"`
+	CredentialHint       string  `json:"credential_hint"`
+	CredentialType       string  `json:"credential_type,omitempty"`
+	SubscriptionProvider string  `json:"subscription_provider,omitempty"`
+	DispatchScope        string  `json:"dispatch_scope,omitempty"`
+	ValidationStatus     string  `json:"validation_status,omitempty"`
+	ValidatedRuntimeID   string  `json:"validated_runtime_id,omitempty"`
+	LastValidationAt     *string `json:"last_validation_at,omitempty"`
+	LastValidationError  string  `json:"last_validation_error,omitempty"`
+	AccountHint          string  `json:"account_hint,omitempty"`
+	Enabled              bool    `json:"enabled"`
+	Priority             int32   `json:"priority"`
+	LastUsedAt           *string `json:"last_used_at"`
+	LastErrorAt          *string `json:"last_error_at"`
+	LastError            string  `json:"last_error"`
+	RateLimitedUntil     *string `json:"rate_limited_until"`
+	RateLimitRemaining   *int32  `json:"rate_limit_remaining"`
+	RateLimitResetAt     *string `json:"rate_limit_reset_at"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
 }
 
 type SettingsResponse struct {
@@ -411,17 +438,23 @@ type GovernancePolicyItem struct {
 }
 
 type CreateBackendInput struct {
-	WorkspaceID string
-	ActorUserID string
-	Provider    string
-	Slug        string
-	DisplayName string
-	BackendType string
-	BaseURL     string
-	Key         string
-	Enabled     bool
-	SetDefault  bool
-	Metadata    map[string]any
+	WorkspaceID          string
+	ActorUserID          string
+	Provider             string
+	Slug                 string
+	DisplayName          string
+	BackendType          string
+	BaseURL              string
+	Key                  string
+	Transport            string
+	CredentialType       string
+	SubscriptionProvider string
+	DispatchScope        string
+	PayloadFormat        string
+	ValidationStatus     string
+	Enabled              bool
+	SetDefault           bool
+	Metadata             map[string]any
 }
 
 type CreateIngestKeyInput struct {
@@ -432,35 +465,49 @@ type CreateIngestKeyInput struct {
 }
 
 type UpdateBackendInput struct {
-	WorkspaceID string
-	ActorUserID string
-	BackendID   string
-	DisplayName *string
-	BaseURL     *string
-	Key         *string
-	Enabled     *bool
-	Metadata    map[string]any
+	WorkspaceID          string
+	ActorUserID          string
+	BackendID            string
+	DisplayName          *string
+	BaseURL              *string
+	Key                  *string
+	Transport            *string
+	SubscriptionProvider *string
+	DispatchScope        *string
+	ValidationStatus     *string
+	Enabled              *bool
+	Metadata             map[string]any
 }
 
 type CreateBackendCredentialInput struct {
-	WorkspaceID string
-	ActorUserID string
-	BackendID   string
-	Label       string
-	Key         string
-	Enabled     bool
-	Priority    int32
+	WorkspaceID          string
+	ActorUserID          string
+	BackendID            string
+	Label                string
+	Key                  string
+	CredentialType       string
+	SubscriptionProvider string
+	DispatchScope        string
+	PayloadFormat        string
+	ValidationStatus     string
+	Enabled              bool
+	Priority             int32
 }
 
 type UpdateBackendCredentialInput struct {
-	WorkspaceID  string
-	ActorUserID  string
-	BackendID    string
-	CredentialID string
-	Label        *string
-	Key          *string
-	Enabled      *bool
-	Priority     *int32
+	WorkspaceID          string
+	ActorUserID          string
+	BackendID            string
+	CredentialID         string
+	Label                *string
+	Key                  *string
+	CredentialType       *string
+	SubscriptionProvider *string
+	DispatchScope        *string
+	PayloadFormat        *string
+	ValidationStatus     *string
+	Enabled              *bool
+	Priority             *int32
 }
 
 type CapturePolicyInput struct {
@@ -622,6 +669,22 @@ var providerPresets = map[string]ProviderPreset{
 		BackendType:        BackendTypeClaudeOAuth,
 		BaseURL:            "claude-oauth://sidecar",
 		RequiresCredential: false,
+	},
+	"claude-code-subscription": {
+		Provider:           "claude-code-subscription",
+		Slug:               "claude-code-subscription",
+		DisplayName:        "Claude Code Subscription",
+		BackendType:        BackendTypeSubscriptionRuntime,
+		BaseURL:            "daemon://claude-code",
+		RequiresCredential: true,
+	},
+	"codex-subscription": {
+		Provider:           "codex-subscription",
+		Slug:               "codex-subscription",
+		DisplayName:        "Codex Subscription",
+		BackendType:        BackendTypeSubscriptionRuntime,
+		BaseURL:            "daemon://codex",
+		RequiresCredential: true,
 	},
 }
 

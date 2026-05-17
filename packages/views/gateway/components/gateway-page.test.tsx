@@ -950,6 +950,8 @@ describe("GatewayPage", () => {
     const backendsTable = await screen.findByRole("table", { name: /Gateway backends/ });
     expect(within(backendsTable).getByText("OpenRouter")).toBeInTheDocument();
     expect(within(backendsTable).getByText("Local OpenAI-compatible")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Claude Code Subscription" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Codex Subscription" })).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Provider"), "groq");
     await user.clear(screen.getByLabelText("Backend base URL"));

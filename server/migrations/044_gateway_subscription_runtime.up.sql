@@ -35,6 +35,12 @@ ALTER TABLE gateway_backend_credential
     ADD COLUMN last_validation_at TIMESTAMPTZ,
     ADD COLUMN last_validation_error TEXT NOT NULL DEFAULT '';
 
+CREATE UNIQUE INDEX idx_gateway_backend_credential_workspace_backend_id
+    ON gateway_backend_credential(workspace_id, backend_id, id);
+
+CREATE UNIQUE INDEX idx_agent_runtime_workspace_id
+    ON agent_runtime(workspace_id, id);
+
 CREATE TABLE gateway_subscription_runtime_validation (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
@@ -52,6 +58,14 @@ CREATE TABLE gateway_subscription_runtime_validation (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE gateway_subscription_runtime_validation
+    ADD CONSTRAINT gateway_subscription_validation_backend_workspace_fk
+        FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id) ON DELETE CASCADE,
+    ADD CONSTRAINT gateway_subscription_validation_credential_workspace_fk
+        FOREIGN KEY (workspace_id, backend_id, credential_id) REFERENCES gateway_backend_credential(workspace_id, backend_id, id) ON DELETE CASCADE,
+    ADD CONSTRAINT gateway_subscription_validation_runtime_workspace_fk
+        FOREIGN KEY (workspace_id, runtime_id) REFERENCES agent_runtime(workspace_id, id) ON DELETE CASCADE;
 
 CREATE INDEX idx_gateway_subscription_validation_claim
     ON gateway_subscription_runtime_validation(workspace_id, provider, status, created_at);
@@ -78,6 +92,14 @@ CREATE TABLE gateway_runtime_request (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE gateway_runtime_request
+    ADD CONSTRAINT gateway_runtime_request_backend_workspace_fk
+        FOREIGN KEY (workspace_id, backend_id) REFERENCES gateway_backend(workspace_id, id) ON DELETE CASCADE,
+    ADD CONSTRAINT gateway_runtime_request_credential_workspace_fk
+        FOREIGN KEY (workspace_id, backend_id, credential_id) REFERENCES gateway_backend_credential(workspace_id, backend_id, id),
+    ADD CONSTRAINT gateway_runtime_request_runtime_workspace_fk
+        FOREIGN KEY (workspace_id, runtime_id) REFERENCES agent_runtime(workspace_id, id);
 
 CREATE INDEX idx_gateway_runtime_request_claim
     ON gateway_runtime_request(workspace_id, provider, status, created_at);

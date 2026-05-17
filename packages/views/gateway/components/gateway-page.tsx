@@ -136,6 +136,8 @@ const gatewayProviderPresets = [
   { label: "Local", value: "local", baseUrl: "http://127.0.0.1:11434/v1" },
   { label: "Anthropic", value: "anthropic", baseUrl: "https://api.anthropic.com" },
   { label: "Claude OAuth", value: "claude-oauth", baseUrl: "claude-oauth://sidecar" },
+  { label: "Claude Code Subscription", value: "claude-code-subscription", baseUrl: "daemon://claude-code" },
+  { label: "Codex Subscription", value: "codex-subscription", baseUrl: "daemon://codex" },
 ];
 
 const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];

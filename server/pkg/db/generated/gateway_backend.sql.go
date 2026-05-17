@@ -14,23 +14,29 @@ import (
 const createGatewayBackend = `-- name: CreateGatewayBackend :one
 INSERT INTO gateway_backend (
     workspace_id, slug, display_name, backend_type, base_url,
-    encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by
+    encrypted_credential, credential_hint, enabled, metadata,
+    transport, subscription_provider, dispatch_scope, validation_status,
+    created_by, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
 RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
 `
 
 type CreateGatewayBackendParams struct {
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	Slug                string      `json:"slug"`
-	DisplayName         string      `json:"display_name"`
-	BackendType         string      `json:"backend_type"`
-	BaseUrl             string      `json:"base_url"`
-	EncryptedCredential []byte      `json:"encrypted_credential"`
-	CredentialHint      string      `json:"credential_hint"`
-	Enabled             bool        `json:"enabled"`
-	Metadata            []byte      `json:"metadata"`
-	CreatedBy           pgtype.UUID `json:"created_by"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	Slug                 string      `json:"slug"`
+	DisplayName          string      `json:"display_name"`
+	BackendType          string      `json:"backend_type"`
+	BaseUrl              string      `json:"base_url"`
+	EncryptedCredential  []byte      `json:"encrypted_credential"`
+	CredentialHint       string      `json:"credential_hint"`
+	Enabled              bool        `json:"enabled"`
+	Metadata             []byte      `json:"metadata"`
+	Transport            string      `json:"transport"`
+	SubscriptionProvider string      `json:"subscription_provider"`
+	DispatchScope        string      `json:"dispatch_scope"`
+	ValidationStatus     string      `json:"validation_status"`
+	CreatedBy            pgtype.UUID `json:"created_by"`
 }
 
 func (q *Queries) CreateGatewayBackend(ctx context.Context, arg CreateGatewayBackendParams) (GatewayBackend, error) {
@@ -44,6 +50,10 @@ func (q *Queries) CreateGatewayBackend(ctx context.Context, arg CreateGatewayBac
 		arg.CredentialHint,
 		arg.Enabled,
 		arg.Metadata,
+		arg.Transport,
+		arg.SubscriptionProvider,
+		arg.DispatchScope,
+		arg.ValidationStatus,
 		arg.CreatedBy,
 	)
 	var i GatewayBackend
@@ -76,21 +86,29 @@ func (q *Queries) CreateGatewayBackend(ctx context.Context, arg CreateGatewayBac
 const createGatewayBackendCredential = `-- name: CreateGatewayBackendCredential :one
 INSERT INTO gateway_backend_credential (
     workspace_id, backend_id, label, encrypted_credential,
-    credential_hint, enabled, priority, created_by, updated_by
+    credential_hint, enabled, priority,
+    credential_type, subscription_provider, encrypted_payload, payload_format,
+    dispatch_scope, validation_status, created_by, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
 RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
 `
 
 type CreateGatewayBackendCredentialParams struct {
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	BackendID           pgtype.UUID `json:"backend_id"`
-	Label               string      `json:"label"`
-	EncryptedCredential []byte      `json:"encrypted_credential"`
-	CredentialHint      string      `json:"credential_hint"`
-	Enabled             bool        `json:"enabled"`
-	Priority            int32       `json:"priority"`
-	CreatedBy           pgtype.UUID `json:"created_by"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	BackendID            pgtype.UUID `json:"backend_id"`
+	Label                string      `json:"label"`
+	EncryptedCredential  []byte      `json:"encrypted_credential"`
+	CredentialHint       string      `json:"credential_hint"`
+	Enabled              bool        `json:"enabled"`
+	Priority             int32       `json:"priority"`
+	CredentialType       string      `json:"credential_type"`
+	SubscriptionProvider string      `json:"subscription_provider"`
+	EncryptedPayload     []byte      `json:"encrypted_payload"`
+	PayloadFormat        string      `json:"payload_format"`
+	DispatchScope        string      `json:"dispatch_scope"`
+	ValidationStatus     string      `json:"validation_status"`
+	CreatedBy            pgtype.UUID `json:"created_by"`
 }
 
 func (q *Queries) CreateGatewayBackendCredential(ctx context.Context, arg CreateGatewayBackendCredentialParams) (GatewayBackendCredential, error) {
@@ -102,6 +120,12 @@ func (q *Queries) CreateGatewayBackendCredential(ctx context.Context, arg Create
 		arg.CredentialHint,
 		arg.Enabled,
 		arg.Priority,
+		arg.CredentialType,
+		arg.SubscriptionProvider,
+		arg.EncryptedPayload,
+		arg.PayloadFormat,
+		arg.DispatchScope,
+		arg.ValidationStatus,
 		arg.CreatedBy,
 	)
 	var i GatewayBackendCredential
@@ -692,23 +716,31 @@ SET
     credential_hint = $7,
     enabled = $8,
     metadata = $9,
-    updated_by = $10,
+    transport = $10,
+    subscription_provider = $11,
+    dispatch_scope = $12,
+    validation_status = $13,
+    updated_by = $14,
     updated_at = now()
 WHERE workspace_id = $1 AND id = $2
 RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
 `
 
 type UpdateGatewayBackendParams struct {
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	ID                  pgtype.UUID `json:"id"`
-	DisplayName         string      `json:"display_name"`
-	BackendType         string      `json:"backend_type"`
-	BaseUrl             string      `json:"base_url"`
-	EncryptedCredential []byte      `json:"encrypted_credential"`
-	CredentialHint      string      `json:"credential_hint"`
-	Enabled             bool        `json:"enabled"`
-	Metadata            []byte      `json:"metadata"`
-	UpdatedBy           pgtype.UUID `json:"updated_by"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ID                   pgtype.UUID `json:"id"`
+	DisplayName          string      `json:"display_name"`
+	BackendType          string      `json:"backend_type"`
+	BaseUrl              string      `json:"base_url"`
+	EncryptedCredential  []byte      `json:"encrypted_credential"`
+	CredentialHint       string      `json:"credential_hint"`
+	Enabled              bool        `json:"enabled"`
+	Metadata             []byte      `json:"metadata"`
+	Transport            string      `json:"transport"`
+	SubscriptionProvider string      `json:"subscription_provider"`
+	DispatchScope        string      `json:"dispatch_scope"`
+	ValidationStatus     string      `json:"validation_status"`
+	UpdatedBy            pgtype.UUID `json:"updated_by"`
 }
 
 func (q *Queries) UpdateGatewayBackend(ctx context.Context, arg UpdateGatewayBackendParams) (GatewayBackend, error) {
@@ -722,6 +754,10 @@ func (q *Queries) UpdateGatewayBackend(ctx context.Context, arg UpdateGatewayBac
 		arg.CredentialHint,
 		arg.Enabled,
 		arg.Metadata,
+		arg.Transport,
+		arg.SubscriptionProvider,
+		arg.DispatchScope,
+		arg.ValidationStatus,
 		arg.UpdatedBy,
 	)
 	var i GatewayBackend
@@ -759,7 +795,13 @@ SET
     credential_hint = $6,
     enabled = $7,
     priority = $8,
-    updated_by = $9,
+    credential_type = $9,
+    subscription_provider = $10,
+    encrypted_payload = $11,
+    payload_format = $12,
+    dispatch_scope = $13,
+    validation_status = $14,
+    updated_by = $15,
     updated_at = now()
 WHERE workspace_id = $1
   AND backend_id = $2
@@ -768,15 +810,21 @@ RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_
 `
 
 type UpdateGatewayBackendCredentialParams struct {
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	BackendID           pgtype.UUID `json:"backend_id"`
-	ID                  pgtype.UUID `json:"id"`
-	Label               string      `json:"label"`
-	EncryptedCredential []byte      `json:"encrypted_credential"`
-	CredentialHint      string      `json:"credential_hint"`
-	Enabled             bool        `json:"enabled"`
-	Priority            int32       `json:"priority"`
-	UpdatedBy           pgtype.UUID `json:"updated_by"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	BackendID            pgtype.UUID `json:"backend_id"`
+	ID                   pgtype.UUID `json:"id"`
+	Label                string      `json:"label"`
+	EncryptedCredential  []byte      `json:"encrypted_credential"`
+	CredentialHint       string      `json:"credential_hint"`
+	Enabled              bool        `json:"enabled"`
+	Priority             int32       `json:"priority"`
+	CredentialType       string      `json:"credential_type"`
+	SubscriptionProvider string      `json:"subscription_provider"`
+	EncryptedPayload     []byte      `json:"encrypted_payload"`
+	PayloadFormat        string      `json:"payload_format"`
+	DispatchScope        string      `json:"dispatch_scope"`
+	ValidationStatus     string      `json:"validation_status"`
+	UpdatedBy            pgtype.UUID `json:"updated_by"`
 }
 
 func (q *Queries) UpdateGatewayBackendCredential(ctx context.Context, arg UpdateGatewayBackendCredentialParams) (GatewayBackendCredential, error) {
@@ -789,6 +837,12 @@ func (q *Queries) UpdateGatewayBackendCredential(ctx context.Context, arg Update
 		arg.CredentialHint,
 		arg.Enabled,
 		arg.Priority,
+		arg.CredentialType,
+		arg.SubscriptionProvider,
+		arg.EncryptedPayload,
+		arg.PayloadFormat,
+		arg.DispatchScope,
+		arg.ValidationStatus,
 		arg.UpdatedBy,
 	)
 	var i GatewayBackendCredential
@@ -838,10 +892,16 @@ SET
     last_validation_at = now(),
     last_validation_error = $8,
     updated_at = now()
-WHERE workspace_id = $1
-  AND backend_id = $2
-  AND id = $3
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
+FROM gateway_backend b, agent_runtime ar
+WHERE gateway_backend_credential.workspace_id = $1
+  AND gateway_backend_credential.backend_id = $2
+  AND gateway_backend_credential.id = $3
+  AND b.workspace_id = gateway_backend_credential.workspace_id
+  AND b.id = gateway_backend_credential.backend_id
+  AND ar.id = $5
+  AND ar.workspace_id = gateway_backend_credential.workspace_id
+  AND ar.provider = CASE WHEN gateway_backend_credential.subscription_provider = 'claude_code' THEN 'claude' ELSE gateway_backend_credential.subscription_provider END
+RETURNING gateway_backend_credential.id, gateway_backend_credential.workspace_id, gateway_backend_credential.backend_id, gateway_backend_credential.label, gateway_backend_credential.encrypted_credential, gateway_backend_credential.credential_hint, gateway_backend_credential.enabled, gateway_backend_credential.priority, gateway_backend_credential.last_used_at, gateway_backend_credential.last_error_at, gateway_backend_credential.last_error, gateway_backend_credential.created_by, gateway_backend_credential.updated_by, gateway_backend_credential.created_at, gateway_backend_credential.updated_at, gateway_backend_credential.rate_limited_until, gateway_backend_credential.rate_limit_remaining, gateway_backend_credential.rate_limit_reset_at, gateway_backend_credential.credential_type, gateway_backend_credential.subscription_provider, gateway_backend_credential.encrypted_payload, gateway_backend_credential.payload_format, gateway_backend_credential.dispatch_scope, gateway_backend_credential.validation_status, gateway_backend_credential.validated_runtime_id, gateway_backend_credential.account_hint, gateway_backend_credential.account_fingerprint, gateway_backend_credential.expires_at, gateway_backend_credential.refreshable, gateway_backend_credential.last_validation_at, gateway_backend_credential.last_validation_error
 `
 
 type UpdateGatewayBackendCredentialValidationStatusParams struct {
@@ -911,8 +971,13 @@ SET
     last_validation_at = now(),
     last_validation_error = $5,
     updated_at = now()
-WHERE workspace_id = $1 AND id = $2
-RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
+FROM agent_runtime ar
+WHERE gateway_backend.workspace_id = $1
+  AND gateway_backend.id = $2
+  AND ar.id = $4
+  AND ar.workspace_id = gateway_backend.workspace_id
+  AND ar.provider = CASE WHEN gateway_backend.subscription_provider = 'claude_code' THEN 'claude' ELSE gateway_backend.subscription_provider END
+RETURNING gateway_backend.id, gateway_backend.workspace_id, gateway_backend.slug, gateway_backend.display_name, gateway_backend.backend_type, gateway_backend.base_url, gateway_backend.encrypted_credential, gateway_backend.credential_hint, gateway_backend.enabled, gateway_backend.metadata, gateway_backend.created_by, gateway_backend.updated_by, gateway_backend.created_at, gateway_backend.updated_at, gateway_backend.transport, gateway_backend.subscription_provider, gateway_backend.dispatch_scope, gateway_backend.validation_status, gateway_backend.validated_runtime_id, gateway_backend.last_validation_at, gateway_backend.last_validation_error
 `
 
 type UpdateGatewayBackendValidationStatusParams struct {
