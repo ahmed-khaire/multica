@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -97,16 +100,63 @@ func TestDaemonValidateGatewaySubscription(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "codex"}); err != nil {
+	if _, err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{CredentialID: "credential-codex", SubscriptionProvider: "codex", Payload: "dG9rZW4="}); err != nil {
 		t.Fatalf("codex validation returned error: %v", err)
 	}
-	if err := d.validateGatewaySubscription("runtime-claude", &GatewayJob{SubscriptionProvider: "claude_code"}); err != nil {
+	if _, err := d.validateGatewaySubscription("runtime-claude", &GatewayJob{CredentialID: "credential-claude", SubscriptionProvider: "claude_code", Payload: "dG9rZW4="}); err != nil {
 		t.Fatalf("claude validation returned error: %v", err)
 	}
-	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "claude_code"}); err == nil {
+	if _, err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{CredentialID: "credential-mismatch", SubscriptionProvider: "claude_code", Payload: "dG9rZW4="}); err == nil {
 		t.Fatal("expected provider mismatch error")
 	}
-	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "unknown"}); err == nil {
+	if _, err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{CredentialID: "credential-unknown", SubscriptionProvider: "unknown", Payload: "dG9rZW4="}); err == nil {
 		t.Fatal("expected unsupported provider error")
+	}
+	if _, err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{CredentialID: "credential-empty", SubscriptionProvider: "codex"}); err == nil {
+		t.Fatal("expected missing payload error")
+	}
+}
+
+func TestDaemonValidateGatewaySubscriptionMaterializesBundle(t *testing.T) {
+	t.Parallel()
+
+	payload := base64.StdEncoding.EncodeToString([]byte(`{
+		"account_hint":"codex@example.com",
+		"files":{"auth.json":"{\"token\":\"test\"}"},
+		"env":{"CODEX_AUTH_FILE":"auth.json"}
+	}`))
+	d := &Daemon{
+		cfg: Config{WorkspacesRoot: t.TempDir()},
+		runtimeIndex: map[string]Runtime{
+			"runtime-codex": {ID: "runtime-codex", Provider: "codex"},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	result, err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{
+		ID:                   "validation-1",
+		CredentialID:         "credential-1",
+		SubscriptionProvider: "codex",
+		Payload:              payload,
+		PayloadFormat:        "codex_auth_bundle_v1",
+	})
+	if err != nil {
+		t.Fatalf("validateGatewaySubscription returned error: %v", err)
+	}
+	if result.AccountHint != "codex@example.com" {
+		t.Fatalf("AccountHint = %q, want codex@example.com", result.AccountHint)
+	}
+	if result.AccountFingerprint == "" {
+		t.Fatal("AccountFingerprint should be set")
+	}
+	if _, err := os.Stat(filepath.Join(d.cfg.WorkspacesRoot, "gateway_credentials", "credential-1", "auth.json")); err != nil {
+		t.Fatalf("expected auth.json to be materialized: %v", err)
+	}
+	env := d.gatewayCredentialEnv(&GatewayJob{CredentialID: "credential-1", SubscriptionProvider: "codex"})
+	if env["CODEX_HOME"] != filepath.Join(d.cfg.WorkspacesRoot, "gateway_credentials", "credential-1") {
+		t.Fatalf("CODEX_HOME = %q, want materialized credential root", env["CODEX_HOME"])
+	}
+	if env["CODEX_AUTH_FILE"] != "auth.json" {
+		t.Fatalf("CODEX_AUTH_FILE = %q, want auth.json", env["CODEX_AUTH_FILE"])
 	}
 }

@@ -48,14 +48,12 @@ func (d *Daemon) handleGatewayJob(ctx context.Context, runtimeID string, job *Ga
 }
 
 func (d *Daemon) handleGatewayValidationJob(ctx context.Context, runtimeID string, job *GatewayJob) {
-	if err := d.validateGatewaySubscription(runtimeID, job); err != nil {
+	result, err := d.validateGatewaySubscription(runtimeID, job)
+	if err != nil {
 		_ = d.client.FailGatewayValidation(ctx, runtimeID, job.ID, "validation_failed", err.Error())
 		return
 	}
-	_ = d.client.CompleteGatewayValidation(ctx, runtimeID, job.ID, GatewayValidationResult{
-		AccountHint:        job.SubscriptionProvider,
-		AccountFingerprint: fmt.Sprintf("%s:%s", job.SubscriptionProvider, runtimeID),
-	})
+	_ = d.client.CompleteGatewayValidation(ctx, runtimeID, job.ID, result)
 }
 
 func (d *Daemon) handleGatewayRuntimeRequestJob(ctx context.Context, runtimeID string, job *GatewayJob) {
@@ -72,19 +70,23 @@ func (d *Daemon) handleGatewayRuntimeRequestJob(ctx context.Context, runtimeID s
 	}
 }
 
-func (d *Daemon) validateGatewaySubscription(runtimeID string, job *GatewayJob) error {
+func (d *Daemon) validateGatewaySubscription(runtimeID string, job *GatewayJob) (GatewayValidationResult, error) {
 	rt := d.findRuntime(runtimeID)
 	if rt == nil {
-		return fmt.Errorf("runtime %s not found", runtimeID)
+		return GatewayValidationResult{}, fmt.Errorf("runtime %s not found", runtimeID)
 	}
 	want := runtimeProviderForGatewaySubscription(job.SubscriptionProvider)
 	if want == "" {
-		return fmt.Errorf("unsupported subscription provider %q", job.SubscriptionProvider)
+		return GatewayValidationResult{}, fmt.Errorf("unsupported subscription provider %q", job.SubscriptionProvider)
 	}
 	if rt.Provider != want {
-		return fmt.Errorf("subscription provider %q requires runtime provider %q, got %q", job.SubscriptionProvider, want, rt.Provider)
+		return GatewayValidationResult{}, fmt.Errorf("subscription provider %q requires runtime provider %q, got %q", job.SubscriptionProvider, want, rt.Provider)
 	}
-	return nil
+	result, err := d.materializeGatewaySubscriptionCredential(job)
+	if err != nil {
+		return GatewayValidationResult{}, err
+	}
+	return result, nil
 }
 
 func runtimeProviderForGatewaySubscription(provider string) string {

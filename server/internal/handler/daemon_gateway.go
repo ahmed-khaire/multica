@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
+	"github.com/multica-ai/multica/server/internal/gateway/secrets"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -30,6 +31,7 @@ type daemonGatewayJob struct {
 	SubscriptionProvider string         `json:"subscription_provider"`
 	Surface              string         `json:"surface,omitempty"`
 	RequestBody          map[string]any `json:"request_body,omitempty"`
+	Payload              string         `json:"payload,omitempty"`
 	EncryptedPayload     string         `json:"encrypted_payload,omitempty"`
 	PayloadFormat        string         `json:"payload_format,omitempty"`
 }
@@ -262,6 +264,14 @@ func (h *Handler) gatewayValidationJob(r *http.Request, validation db.GatewaySub
 	if err != nil {
 		return nil, err
 	}
+	box, err := secrets.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+	payload, err := box.DecryptString(credential.EncryptedPayload)
+	if err != nil {
+		return nil, err
+	}
 	return &daemonGatewayJob{
 		ID:                   uuidToString(validation.ID),
 		Type:                 gatewayJobTypeSubscriptionValidation,
@@ -269,7 +279,7 @@ func (h *Handler) gatewayValidationJob(r *http.Request, validation db.GatewaySub
 		BackendID:            uuidToString(validation.BackendID),
 		CredentialID:         uuidToString(validation.CredentialID),
 		SubscriptionProvider: validation.Provider,
-		EncryptedPayload:     base64.StdEncoding.EncodeToString(credential.EncryptedPayload),
+		Payload:              base64.StdEncoding.EncodeToString([]byte(payload)),
 		PayloadFormat:        credential.PayloadFormat,
 	}, nil
 }

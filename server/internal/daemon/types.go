@@ -88,6 +88,7 @@ type GatewayJob struct {
 	SubscriptionProvider string         `json:"subscription_provider"`
 	Surface              string         `json:"surface,omitempty"`
 	RequestBody          map[string]any `json:"request_body,omitempty"`
+	Payload              string         `json:"payload,omitempty"`
 	EncryptedPayload     string         `json:"encrypted_payload,omitempty"`
 	PayloadFormat        string         `json:"payload_format,omitempty"`
 }

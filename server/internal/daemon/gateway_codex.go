@@ -25,6 +25,7 @@ func (d *Daemon) executeCodexGatewayRuntimeRequest(ctx context.Context, job *Gat
 
 	backend, err := agent.New("codex", agent.Config{
 		ExecutablePath: entry.Path,
+		Env:            d.gatewayCredentialEnv(job),
 		Logger:         d.logger,
 	})
 	if err != nil {
