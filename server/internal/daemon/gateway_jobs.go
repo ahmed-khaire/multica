@@ -65,6 +65,13 @@ func (d *Daemon) handleGatewayRuntimeRequestJob(ctx context.Context, runtimeID s
 			return
 		}
 		_ = d.client.CompleteGatewayRuntimeRequest(ctx, runtimeID, job.ID, response)
+	case "claude_code":
+		response, err := d.executeClaudeCodeGatewayRuntimeRequest(ctx, job)
+		if err != nil {
+			_ = d.client.FailGatewayRuntimeRequest(ctx, runtimeID, job.ID, "runtime_error", err.Error())
+			return
+		}
+		_ = d.client.CompleteGatewayRuntimeRequest(ctx, runtimeID, job.ID, response)
 	default:
 		_ = d.client.FailGatewayRuntimeRequest(ctx, runtimeID, job.ID, "unsupported_gateway_job", fmt.Sprintf("gateway runtime requests are not implemented for %s", job.SubscriptionProvider))
 	}
