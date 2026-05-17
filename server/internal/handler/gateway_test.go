@@ -1059,7 +1059,7 @@ func TestGatewayGovernanceInsightsSummarizesRiskBehaviorAndCompliance(t *testing
 		)
 		VALUES
 			($1, $2, 'provider', 'insights-provider', 'Insights Provider',
-			 'block', 'insights_provider_blocked', '[{"id":"insights-provider-blocked"}]'::jsonb, '', '[]'::jsonb),
+			 'block', 'insights_provider_blocked', '[{"id":"insights-provider-blocked"}]'::jsonb, NULL, '[]'::jsonb),
 			($1, $2, 'model', 'gpt-insights', 'gpt-insights',
 			 'require_approval', 'insights_model_requires_approval', '[{"id":"insights-approval"}]'::jsonb, 'requested', '[]'::jsonb)
 	`, testWorkspaceID, testUserID); err != nil {
