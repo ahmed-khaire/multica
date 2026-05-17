@@ -101,6 +101,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.workspaceSyncLoop(ctx)
 
 	go d.heartbeatLoop(ctx)
+	go d.gatewayJobPollLoop(ctx)
 	go d.usageScanLoop(ctx)
 	go d.serveHealth(ctx, healthLn, time.Now())
 	return d.pollLoop(ctx)

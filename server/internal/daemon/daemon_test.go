@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -81,5 +83,30 @@ func TestIsWorkspaceNotFoundError(t *testing.T) {
 
 	if isWorkspaceNotFoundError(&requestError{StatusCode: http.StatusInternalServerError, Body: `{"error":"workspace not found"}`}) {
 		t.Fatal("did not expect 500 to be treated as workspace not found")
+	}
+}
+
+func TestDaemonValidateGatewaySubscription(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{
+		runtimeIndex: map[string]Runtime{
+			"runtime-codex":  {ID: "runtime-codex", Provider: "codex"},
+			"runtime-claude": {ID: "runtime-claude", Provider: "claude"},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "codex"}); err != nil {
+		t.Fatalf("codex validation returned error: %v", err)
+	}
+	if err := d.validateGatewaySubscription("runtime-claude", &GatewayJob{SubscriptionProvider: "claude_code"}); err != nil {
+		t.Fatalf("claude validation returned error: %v", err)
+	}
+	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "claude_code"}); err == nil {
+		t.Fatal("expected provider mismatch error")
+	}
+	if err := d.validateGatewaySubscription("runtime-codex", &GatewayJob{SubscriptionProvider: "unknown"}); err == nil {
+		t.Fatal("expected unsupported provider error")
 	}
 }
