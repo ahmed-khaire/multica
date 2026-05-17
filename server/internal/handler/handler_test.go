@@ -62,6 +62,10 @@ func TestMain(m *testing.M) {
 	hub := realtime.NewHub()
 	go hub.Run()
 	bus := events.New()
+	if err := os.Unsetenv("RESEND_API_KEY"); err != nil {
+		fmt.Printf("Failed to unset RESEND_API_KEY for handler tests: %v\n", err)
+		os.Exit(1)
+	}
 	emailSvc := service.NewEmailService()
 	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil)
 	testPool = pool
