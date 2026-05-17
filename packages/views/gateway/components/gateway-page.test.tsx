@@ -979,6 +979,32 @@ describe("GatewayPage", () => {
     });
   });
 
+  it("adds subscription backends with a canonical credential bundle", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await user.selectOptions(screen.getByLabelText("Provider"), "codex-subscription");
+    await user.type(screen.getByLabelText("Subscription token"), "codex-token");
+    await user.click(screen.getByRole("button", { name: /Add backend/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayBackend).toHaveBeenCalled();
+    });
+    const input = mockApi.createGatewayBackend.mock.calls.at(-1)?.[0];
+    expect(input).toMatchObject({
+      provider: "codex-subscription",
+      base_url: "daemon://codex",
+      backend_type: "subscription_runtime",
+      transport: "daemon_dispatch",
+      credential_type: "subscription_bundle",
+      subscription_provider: "codex",
+      payload_format: "codex_auth_bundle_v1",
+      set_default: false,
+    });
+    expect(JSON.parse(input.key)).toEqual({ token: "codex-token" });
+  });
+
   it("shows backend credential pools and manages credential rotation without exposing raw keys", async () => {
     const user = userEvent.setup();
     renderGatewayPage();

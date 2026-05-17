@@ -140,6 +140,22 @@ const gatewayProviderPresets = [
   { label: "Codex Subscription", value: "codex-subscription", baseUrl: "daemon://codex" },
 ];
 
+function gatewaySubscriptionProviderForProvider(provider: string) {
+  if (provider === "codex-subscription") return "codex";
+  if (provider === "claude-code-subscription") return "claude_code";
+  return "";
+}
+
+function gatewaySubscriptionPayloadFormatForProvider(provider: string) {
+  if (provider === "codex-subscription") return "codex_auth_bundle_v1";
+  if (provider === "claude-code-subscription") return "claude_code_auth_bundle_v1";
+  return "";
+}
+
+function gatewaySubscriptionBundle(token: string) {
+  return JSON.stringify({ token });
+}
+
 const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];
 
 const governanceStatuses = ["unknown", "not_started", "in_review", "approved", "rejected", "expired"];
@@ -1764,7 +1780,13 @@ function GatewayConfigurationSetup({
   const status = statusQuery.data as GatewayStatusResponse | undefined;
   const backends = backendsQuery.data ?? [];
   const generatedEnv = generatedKey ? gatewayUserKeyEnv(generatedKey) : "";
+  const selectedSubscriptionProvider = gatewaySubscriptionProviderForProvider(provider);
+  const selectedProviderIsSubscription = Boolean(selectedSubscriptionProvider);
   const selectedProviderRequiresKey = provider !== "claude-oauth";
+  const backendCredentialLabel = selectedProviderIsSubscription ? "Subscription token" : "Backend API key";
+  const backendCredentialPlaceholder = selectedProviderIsSubscription
+    ? "Paste subscription token"
+    : selectedProviderRequiresKey ? "sk-..." : "managed by sidecar";
 
   const submitBackend = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1773,7 +1795,17 @@ function GatewayConfigurationSetup({
       set_default: setAsDefault,
     };
     if (baseUrl.trim()) input.base_url = baseUrl.trim();
-    if (backendKey.trim()) input.key = backendKey.trim();
+    if (selectedProviderIsSubscription) {
+      input.backend_type = "subscription_runtime";
+      input.transport = "daemon_dispatch";
+      input.credential_type = "subscription_bundle";
+      input.subscription_provider = selectedSubscriptionProvider;
+      input.dispatch_scope = "workspace_authenticated_daemons";
+      input.payload_format = gatewaySubscriptionPayloadFormatForProvider(provider);
+      if (backendKey.trim()) input.key = gatewaySubscriptionBundle(backendKey.trim());
+    } else if (backendKey.trim()) {
+      input.key = backendKey.trim();
+    }
     if (backendName.trim()) input.display_name = backendName.trim();
     createBackendMutation.mutate(input);
   };
@@ -2031,12 +2063,12 @@ function GatewayConfigurationSetup({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="gateway-backend-key">Backend API key</Label>
+                  <Label htmlFor="gateway-backend-key">{backendCredentialLabel}</Label>
                   <Input
                     id="gateway-backend-key"
                     value={backendKey}
                     onChange={(event) => setBackendKey(event.target.value)}
-                    placeholder={selectedProviderRequiresKey ? "sk-..." : "managed by sidecar"}
+                    placeholder={backendCredentialPlaceholder}
                     autoComplete="off"
                   />
                 </div>
