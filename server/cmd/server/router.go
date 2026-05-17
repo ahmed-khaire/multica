@@ -113,6 +113,11 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Post("/runtimes/{runtimeId}/usage", h.ReportRuntimeUsage)
 		r.Post("/runtimes/{runtimeId}/ping/{pingId}/result", h.ReportPingResult)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
+		r.Post("/runtimes/{runtimeId}/gateway/jobs/claim", h.ClaimGatewayJobByRuntime)
+		r.Post("/runtimes/{runtimeId}/gateway/validations/{validationId}/complete", h.CompleteGatewayValidation)
+		r.Post("/runtimes/{runtimeId}/gateway/validations/{validationId}/fail", h.FailGatewayValidation)
+		r.Post("/runtimes/{runtimeId}/gateway/requests/{requestId}/complete", h.CompleteGatewayRuntimeRequest)
+		r.Post("/runtimes/{runtimeId}/gateway/requests/{requestId}/fail", h.FailGatewayRuntimeRequest)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
