@@ -71,6 +71,40 @@ func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error)
 	return resp.Task, nil
 }
 
+func (c *Client) ClaimGatewayJob(ctx context.Context, runtimeID string) (*GatewayJob, error) {
+	var resp struct {
+		Job *GatewayJob `json:"job"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gateway/jobs/claim", runtimeID), map[string]any{}, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Job, nil
+}
+
+func (c *Client) CompleteGatewayValidation(ctx context.Context, runtimeID, validationID string, result GatewayValidationResult) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gateway/validations/%s/complete", runtimeID, validationID), result, nil)
+}
+
+func (c *Client) FailGatewayValidation(ctx context.Context, runtimeID, validationID, code, message string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gateway/validations/%s/fail", runtimeID, validationID), map[string]any{
+		"error_code":    code,
+		"error_message": message,
+	}, nil)
+}
+
+func (c *Client) CompleteGatewayRuntimeRequest(ctx context.Context, runtimeID, requestID string, response map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gateway/requests/%s/complete", runtimeID, requestID), map[string]any{
+		"response": response,
+	}, nil)
+}
+
+func (c *Client) FailGatewayRuntimeRequest(ctx context.Context, runtimeID, requestID, typ, message string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/gateway/requests/%s/fail", runtimeID, requestID), map[string]any{
+		"error_type":    typ,
+		"error_message": message,
+	}, nil)
+}
+
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
 }

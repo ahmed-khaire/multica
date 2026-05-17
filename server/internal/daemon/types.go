@@ -23,14 +23,14 @@ type RepoData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
-	ID             string     `json:"id"`
-	AgentID        string     `json:"agent_id"`
-	RuntimeID      string     `json:"runtime_id"`
-	IssueID        string     `json:"issue_id"`
-	WorkspaceID    string     `json:"workspace_id"`
-	Agent          *AgentData `json:"agent,omitempty"`
-	Repos          []RepoData `json:"repos,omitempty"`
-	PriorSessionID   string     `json:"prior_session_id,omitempty"`    // Claude session ID from a previous task on this issue
+	ID               string     `json:"id"`
+	AgentID          string     `json:"agent_id"`
+	RuntimeID        string     `json:"runtime_id"`
+	IssueID          string     `json:"issue_id"`
+	WorkspaceID      string     `json:"workspace_id"`
+	Agent            *AgentData `json:"agent,omitempty"`
+	Repos            []RepoData `json:"repos,omitempty"`
+	PriorSessionID   string     `json:"prior_session_id,omitempty"`   // Claude session ID from a previous task on this issue
 	PriorWorkDir     string     `json:"prior_work_dir,omitempty"`     // work_dir from a previous task on this issue
 	TriggerCommentID string     `json:"trigger_comment_id,omitempty"` // comment that triggered this task
 	ChatSessionID    string     `json:"chat_session_id,omitempty"`    // non-empty for chat tasks
@@ -77,4 +77,22 @@ type TaskResult struct {
 	SessionID  string           `json:"session_id,omitempty"` // Claude session ID for future resumption
 	WorkDir    string           `json:"work_dir,omitempty"`   // working directory used during execution
 	Usage      []TaskUsageEntry `json:"usage,omitempty"`      // per-model token usage
+}
+
+type GatewayJob struct {
+	ID                   string         `json:"id"`
+	Type                 string         `json:"type"`
+	WorkspaceID          string         `json:"workspace_id"`
+	BackendID            string         `json:"backend_id"`
+	CredentialID         string         `json:"credential_id"`
+	SubscriptionProvider string         `json:"subscription_provider"`
+	Surface              string         `json:"surface,omitempty"`
+	RequestBody          map[string]any `json:"request_body,omitempty"`
+	EncryptedPayload     string         `json:"encrypted_payload,omitempty"`
+	PayloadFormat        string         `json:"payload_format,omitempty"`
+}
+
+type GatewayValidationResult struct {
+	AccountHint        string `json:"account_hint"`
+	AccountFingerprint string `json:"account_fingerprint"`
 }
