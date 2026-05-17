@@ -17,6 +17,7 @@ set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
+unset RESEND_API_KEY
 
 POSTGRES_DB="${POSTGRES_DB:-multica}"
 POSTGRES_USER="${POSTGRES_USER:-multica}"
