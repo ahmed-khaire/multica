@@ -17,7 +17,7 @@ INSERT INTO gateway_backend (
     encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
-RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
 `
 
 type CreateGatewayBackendParams struct {
@@ -62,6 +62,13 @@ func (q *Queries) CreateGatewayBackend(ctx context.Context, arg CreateGatewayBac
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -72,7 +79,7 @@ INSERT INTO gateway_backend_credential (
     credential_hint, enabled, priority, created_by, updated_by
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
 `
 
 type CreateGatewayBackendCredentialParams struct {
@@ -117,6 +124,19 @@ func (q *Queries) CreateGatewayBackendCredential(ctx context.Context, arg Create
 		&i.RateLimitedUntil,
 		&i.RateLimitRemaining,
 		&i.RateLimitResetAt,
+		&i.CredentialType,
+		&i.SubscriptionProvider,
+		&i.EncryptedPayload,
+		&i.PayloadFormat,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.AccountHint,
+		&i.AccountFingerprint,
+		&i.ExpiresAt,
+		&i.Refreshable,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -137,7 +157,7 @@ func (q *Queries) DeleteGatewayBackend(ctx context.Context, arg DeleteGatewayBac
 }
 
 const getGatewayBackendByID = `-- name: GetGatewayBackendByID :one
-SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at FROM gateway_backend
+SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error FROM gateway_backend
 WHERE workspace_id = $1 AND id = $2
 `
 
@@ -164,12 +184,19 @@ func (q *Queries) GetGatewayBackendByID(ctx context.Context, arg GetGatewayBacke
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
 
 const getGatewayBackendBySlug = `-- name: GetGatewayBackendBySlug :one
-SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at FROM gateway_backend
+SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error FROM gateway_backend
 WHERE workspace_id = $1 AND slug = $2
 `
 
@@ -196,12 +223,19 @@ func (q *Queries) GetGatewayBackendBySlug(ctx context.Context, arg GetGatewayBac
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
 
 const getGatewayBackendCredentialByID = `-- name: GetGatewayBackendCredentialByID :one
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND id = $3
@@ -235,6 +269,19 @@ func (q *Queries) GetGatewayBackendCredentialByID(ctx context.Context, arg GetGa
 		&i.RateLimitedUntil,
 		&i.RateLimitRemaining,
 		&i.RateLimitResetAt,
+		&i.CredentialType,
+		&i.SubscriptionProvider,
+		&i.EncryptedPayload,
+		&i.PayloadFormat,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.AccountHint,
+		&i.AccountFingerprint,
+		&i.ExpiresAt,
+		&i.Refreshable,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -258,7 +305,7 @@ func (q *Queries) GetGatewayWorkspaceSettings(ctx context.Context, workspaceID p
 }
 
 const listActiveGatewayBackendCredentialsForBackend = `-- name: ListActiveGatewayBackendCredentialsForBackend :many
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
   AND enabled = TRUE
@@ -303,6 +350,19 @@ func (q *Queries) ListActiveGatewayBackendCredentialsForBackend(ctx context.Cont
 			&i.RateLimitedUntil,
 			&i.RateLimitRemaining,
 			&i.RateLimitResetAt,
+			&i.CredentialType,
+			&i.SubscriptionProvider,
+			&i.EncryptedPayload,
+			&i.PayloadFormat,
+			&i.DispatchScope,
+			&i.ValidationStatus,
+			&i.ValidatedRuntimeID,
+			&i.AccountHint,
+			&i.AccountFingerprint,
+			&i.ExpiresAt,
+			&i.Refreshable,
+			&i.LastValidationAt,
+			&i.LastValidationError,
 		); err != nil {
 			return nil, err
 		}
@@ -315,7 +375,7 @@ func (q *Queries) ListActiveGatewayBackendCredentialsForBackend(ctx context.Cont
 }
 
 const listEnabledGatewayBackends = `-- name: ListEnabledGatewayBackends :many
-SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at FROM gateway_backend
+SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error FROM gateway_backend
 WHERE workspace_id = $1 AND enabled = TRUE
 ORDER BY slug
 `
@@ -344,6 +404,13 @@ func (q *Queries) ListEnabledGatewayBackends(ctx context.Context, workspaceID pg
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Transport,
+			&i.SubscriptionProvider,
+			&i.DispatchScope,
+			&i.ValidationStatus,
+			&i.ValidatedRuntimeID,
+			&i.LastValidationAt,
+			&i.LastValidationError,
 		); err != nil {
 			return nil, err
 		}
@@ -356,7 +423,7 @@ func (q *Queries) ListEnabledGatewayBackends(ctx context.Context, workspaceID pg
 }
 
 const listGatewayBackendCredentialsForBackend = `-- name: ListGatewayBackendCredentialsForBackend :many
-SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at FROM gateway_backend_credential
+SELECT id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error FROM gateway_backend_credential
 WHERE workspace_id = $1
   AND backend_id = $2
 ORDER BY enabled DESC, priority ASC, created_at ASC
@@ -395,6 +462,19 @@ func (q *Queries) ListGatewayBackendCredentialsForBackend(ctx context.Context, a
 			&i.RateLimitedUntil,
 			&i.RateLimitRemaining,
 			&i.RateLimitResetAt,
+			&i.CredentialType,
+			&i.SubscriptionProvider,
+			&i.EncryptedPayload,
+			&i.PayloadFormat,
+			&i.DispatchScope,
+			&i.ValidationStatus,
+			&i.ValidatedRuntimeID,
+			&i.AccountHint,
+			&i.AccountFingerprint,
+			&i.ExpiresAt,
+			&i.Refreshable,
+			&i.LastValidationAt,
+			&i.LastValidationError,
 		); err != nil {
 			return nil, err
 		}
@@ -407,7 +487,7 @@ func (q *Queries) ListGatewayBackendCredentialsForBackend(ctx context.Context, a
 }
 
 const listGatewayBackends = `-- name: ListGatewayBackends :many
-SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at FROM gateway_backend
+SELECT id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error FROM gateway_backend
 WHERE workspace_id = $1
 ORDER BY slug
 `
@@ -436,6 +516,13 @@ func (q *Queries) ListGatewayBackends(ctx context.Context, workspaceID pgtype.UU
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Transport,
+			&i.SubscriptionProvider,
+			&i.DispatchScope,
+			&i.ValidationStatus,
+			&i.ValidatedRuntimeID,
+			&i.LastValidationAt,
+			&i.LastValidationError,
 		); err != nil {
 			return nil, err
 		}
@@ -460,7 +547,7 @@ SET
 WHERE workspace_id = $6
   AND backend_id = $7
   AND id = $8
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
 `
 
 type RecordGatewayBackendCredentialResultParams struct {
@@ -505,6 +592,19 @@ func (q *Queries) RecordGatewayBackendCredentialResult(ctx context.Context, arg 
 		&i.RateLimitedUntil,
 		&i.RateLimitRemaining,
 		&i.RateLimitResetAt,
+		&i.CredentialType,
+		&i.SubscriptionProvider,
+		&i.EncryptedPayload,
+		&i.PayloadFormat,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.AccountHint,
+		&i.AccountFingerprint,
+		&i.ExpiresAt,
+		&i.Refreshable,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -513,7 +613,7 @@ const setGatewayBackendEnabled = `-- name: SetGatewayBackendEnabled :one
 UPDATE gateway_backend
 SET enabled = $3, updated_by = $4, updated_at = now()
 WHERE workspace_id = $1 AND id = $2
-RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
 `
 
 type SetGatewayBackendEnabledParams struct {
@@ -546,6 +646,13 @@ func (q *Queries) SetGatewayBackendEnabled(ctx context.Context, arg SetGatewayBa
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -588,7 +695,7 @@ SET
     updated_by = $10,
     updated_at = now()
 WHERE workspace_id = $1 AND id = $2
-RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
 `
 
 type UpdateGatewayBackendParams struct {
@@ -633,6 +740,13 @@ func (q *Queries) UpdateGatewayBackend(ctx context.Context, arg UpdateGatewayBac
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }
@@ -650,7 +764,7 @@ SET
 WHERE workspace_id = $1
   AND backend_id = $2
   AND id = $3
-RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
 `
 
 type UpdateGatewayBackendCredentialParams struct {
@@ -697,6 +811,149 @@ func (q *Queries) UpdateGatewayBackendCredential(ctx context.Context, arg Update
 		&i.RateLimitedUntil,
 		&i.RateLimitRemaining,
 		&i.RateLimitResetAt,
+		&i.CredentialType,
+		&i.SubscriptionProvider,
+		&i.EncryptedPayload,
+		&i.PayloadFormat,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.AccountHint,
+		&i.AccountFingerprint,
+		&i.ExpiresAt,
+		&i.Refreshable,
+		&i.LastValidationAt,
+		&i.LastValidationError,
+	)
+	return i, err
+}
+
+const updateGatewayBackendCredentialValidationStatus = `-- name: UpdateGatewayBackendCredentialValidationStatus :one
+UPDATE gateway_backend_credential
+SET
+    validation_status = $4,
+    validated_runtime_id = $5,
+    account_hint = $6,
+    account_fingerprint = $7,
+    last_validation_at = now(),
+    last_validation_error = $8,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND id = $3
+RETURNING id, workspace_id, backend_id, label, encrypted_credential, credential_hint, enabled, priority, last_used_at, last_error_at, last_error, created_by, updated_by, created_at, updated_at, rate_limited_until, rate_limit_remaining, rate_limit_reset_at, credential_type, subscription_provider, encrypted_payload, payload_format, dispatch_scope, validation_status, validated_runtime_id, account_hint, account_fingerprint, expires_at, refreshable, last_validation_at, last_validation_error
+`
+
+type UpdateGatewayBackendCredentialValidationStatusParams struct {
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	BackendID           pgtype.UUID `json:"backend_id"`
+	ID                  pgtype.UUID `json:"id"`
+	ValidationStatus    string      `json:"validation_status"`
+	ValidatedRuntimeID  pgtype.UUID `json:"validated_runtime_id"`
+	AccountHint         string      `json:"account_hint"`
+	AccountFingerprint  string      `json:"account_fingerprint"`
+	LastValidationError string      `json:"last_validation_error"`
+}
+
+func (q *Queries) UpdateGatewayBackendCredentialValidationStatus(ctx context.Context, arg UpdateGatewayBackendCredentialValidationStatusParams) (GatewayBackendCredential, error) {
+	row := q.db.QueryRow(ctx, updateGatewayBackendCredentialValidationStatus,
+		arg.WorkspaceID,
+		arg.BackendID,
+		arg.ID,
+		arg.ValidationStatus,
+		arg.ValidatedRuntimeID,
+		arg.AccountHint,
+		arg.AccountFingerprint,
+		arg.LastValidationError,
+	)
+	var i GatewayBackendCredential
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.BackendID,
+		&i.Label,
+		&i.EncryptedCredential,
+		&i.CredentialHint,
+		&i.Enabled,
+		&i.Priority,
+		&i.LastUsedAt,
+		&i.LastErrorAt,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RateLimitedUntil,
+		&i.RateLimitRemaining,
+		&i.RateLimitResetAt,
+		&i.CredentialType,
+		&i.SubscriptionProvider,
+		&i.EncryptedPayload,
+		&i.PayloadFormat,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.AccountHint,
+		&i.AccountFingerprint,
+		&i.ExpiresAt,
+		&i.Refreshable,
+		&i.LastValidationAt,
+		&i.LastValidationError,
+	)
+	return i, err
+}
+
+const updateGatewayBackendValidationStatus = `-- name: UpdateGatewayBackendValidationStatus :one
+UPDATE gateway_backend
+SET
+    validation_status = $3,
+    validated_runtime_id = $4,
+    last_validation_at = now(),
+    last_validation_error = $5,
+    updated_at = now()
+WHERE workspace_id = $1 AND id = $2
+RETURNING id, workspace_id, slug, display_name, backend_type, base_url, encrypted_credential, credential_hint, enabled, metadata, created_by, updated_by, created_at, updated_at, transport, subscription_provider, dispatch_scope, validation_status, validated_runtime_id, last_validation_at, last_validation_error
+`
+
+type UpdateGatewayBackendValidationStatusParams struct {
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	ID                  pgtype.UUID `json:"id"`
+	ValidationStatus    string      `json:"validation_status"`
+	ValidatedRuntimeID  pgtype.UUID `json:"validated_runtime_id"`
+	LastValidationError string      `json:"last_validation_error"`
+}
+
+func (q *Queries) UpdateGatewayBackendValidationStatus(ctx context.Context, arg UpdateGatewayBackendValidationStatusParams) (GatewayBackend, error) {
+	row := q.db.QueryRow(ctx, updateGatewayBackendValidationStatus,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.ValidationStatus,
+		arg.ValidatedRuntimeID,
+		arg.LastValidationError,
+	)
+	var i GatewayBackend
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.BackendType,
+		&i.BaseUrl,
+		&i.EncryptedCredential,
+		&i.CredentialHint,
+		&i.Enabled,
+		&i.Metadata,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Transport,
+		&i.SubscriptionProvider,
+		&i.DispatchScope,
+		&i.ValidationStatus,
+		&i.ValidatedRuntimeID,
+		&i.LastValidationAt,
+		&i.LastValidationError,
 	)
 	return i, err
 }

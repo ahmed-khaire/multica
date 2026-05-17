@@ -311,41 +311,61 @@ type GatewayAgentObservation struct {
 }
 
 type GatewayBackend struct {
-	ID                  pgtype.UUID        `json:"id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	Slug                string             `json:"slug"`
-	DisplayName         string             `json:"display_name"`
-	BackendType         string             `json:"backend_type"`
-	BaseUrl             string             `json:"base_url"`
-	EncryptedCredential []byte             `json:"encrypted_credential"`
-	CredentialHint      string             `json:"credential_hint"`
-	Enabled             bool               `json:"enabled"`
-	Metadata            []byte             `json:"metadata"`
-	CreatedBy           pgtype.UUID        `json:"created_by"`
-	UpdatedBy           pgtype.UUID        `json:"updated_by"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Slug                 string             `json:"slug"`
+	DisplayName          string             `json:"display_name"`
+	BackendType          string             `json:"backend_type"`
+	BaseUrl              string             `json:"base_url"`
+	EncryptedCredential  []byte             `json:"encrypted_credential"`
+	CredentialHint       string             `json:"credential_hint"`
+	Enabled              bool               `json:"enabled"`
+	Metadata             []byte             `json:"metadata"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	Transport            string             `json:"transport"`
+	SubscriptionProvider string             `json:"subscription_provider"`
+	DispatchScope        string             `json:"dispatch_scope"`
+	ValidationStatus     string             `json:"validation_status"`
+	ValidatedRuntimeID   pgtype.UUID        `json:"validated_runtime_id"`
+	LastValidationAt     pgtype.Timestamptz `json:"last_validation_at"`
+	LastValidationError  string             `json:"last_validation_error"`
 }
 
 type GatewayBackendCredential struct {
-	ID                  pgtype.UUID        `json:"id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	BackendID           pgtype.UUID        `json:"backend_id"`
-	Label               string             `json:"label"`
-	EncryptedCredential []byte             `json:"encrypted_credential"`
-	CredentialHint      string             `json:"credential_hint"`
-	Enabled             bool               `json:"enabled"`
-	Priority            int32              `json:"priority"`
-	LastUsedAt          pgtype.Timestamptz `json:"last_used_at"`
-	LastErrorAt         pgtype.Timestamptz `json:"last_error_at"`
-	LastError           string             `json:"last_error"`
-	CreatedBy           pgtype.UUID        `json:"created_by"`
-	UpdatedBy           pgtype.UUID        `json:"updated_by"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	RateLimitedUntil    pgtype.Timestamptz `json:"rate_limited_until"`
-	RateLimitRemaining  pgtype.Int4        `json:"rate_limit_remaining"`
-	RateLimitResetAt    pgtype.Timestamptz `json:"rate_limit_reset_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	BackendID            pgtype.UUID        `json:"backend_id"`
+	Label                string             `json:"label"`
+	EncryptedCredential  []byte             `json:"encrypted_credential"`
+	CredentialHint       string             `json:"credential_hint"`
+	Enabled              bool               `json:"enabled"`
+	Priority             int32              `json:"priority"`
+	LastUsedAt           pgtype.Timestamptz `json:"last_used_at"`
+	LastErrorAt          pgtype.Timestamptz `json:"last_error_at"`
+	LastError            string             `json:"last_error"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	UpdatedBy            pgtype.UUID        `json:"updated_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	RateLimitedUntil     pgtype.Timestamptz `json:"rate_limited_until"`
+	RateLimitRemaining   pgtype.Int4        `json:"rate_limit_remaining"`
+	RateLimitResetAt     pgtype.Timestamptz `json:"rate_limit_reset_at"`
+	CredentialType       string             `json:"credential_type"`
+	SubscriptionProvider string             `json:"subscription_provider"`
+	EncryptedPayload     []byte             `json:"encrypted_payload"`
+	PayloadFormat        string             `json:"payload_format"`
+	DispatchScope        string             `json:"dispatch_scope"`
+	ValidationStatus     string             `json:"validation_status"`
+	ValidatedRuntimeID   pgtype.UUID        `json:"validated_runtime_id"`
+	AccountHint          string             `json:"account_hint"`
+	AccountFingerprint   string             `json:"account_fingerprint"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	Refreshable          bool               `json:"refreshable"`
+	LastValidationAt     pgtype.Timestamptz `json:"last_validation_at"`
+	LastValidationError  string             `json:"last_validation_error"`
 }
 
 type GatewayEvent struct {
@@ -517,6 +537,26 @@ type GatewayRequest struct {
 	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
 }
 
+type GatewayRuntimeRequest struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	BackendID    pgtype.UUID        `json:"backend_id"`
+	CredentialID pgtype.UUID        `json:"credential_id"`
+	RuntimeID    pgtype.UUID        `json:"runtime_id"`
+	Provider     string             `json:"provider"`
+	Surface      string             `json:"surface"`
+	Status       string             `json:"status"`
+	RequestBody  []byte             `json:"request_body"`
+	ResponseBody []byte             `json:"response_body"`
+	ErrorType    string             `json:"error_type"`
+	ErrorMessage string             `json:"error_message"`
+	Stream       bool               `json:"stream"`
+	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GatewaySession struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
@@ -570,6 +610,24 @@ type GatewaySpanLink struct {
 	LinkedSpanID  string             `json:"linked_span_id"`
 	Attributes    []byte             `json:"attributes"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type GatewaySubscriptionRuntimeValidation struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	BackendID          pgtype.UUID        `json:"backend_id"`
+	CredentialID       pgtype.UUID        `json:"credential_id"`
+	RuntimeID          pgtype.UUID        `json:"runtime_id"`
+	Status             string             `json:"status"`
+	Provider           string             `json:"provider"`
+	AccountHint        string             `json:"account_hint"`
+	AccountFingerprint string             `json:"account_fingerprint"`
+	ErrorCode          string             `json:"error_code"`
+	ErrorMessage       string             `json:"error_message"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type GatewayToolObservation struct {

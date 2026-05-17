@@ -130,3 +130,29 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND backend_id = sqlc.arg(backend_id)
   AND id = sqlc.arg(id)
 RETURNING *;
+
+-- name: UpdateGatewayBackendValidationStatus :one
+UPDATE gateway_backend
+SET
+    validation_status = $3,
+    validated_runtime_id = $4,
+    last_validation_at = now(),
+    last_validation_error = $5,
+    updated_at = now()
+WHERE workspace_id = $1 AND id = $2
+RETURNING *;
+
+-- name: UpdateGatewayBackendCredentialValidationStatus :one
+UPDATE gateway_backend_credential
+SET
+    validation_status = $4,
+    validated_runtime_id = $5,
+    account_hint = $6,
+    account_fingerprint = $7,
+    last_validation_at = now(),
+    last_validation_error = $8,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND backend_id = $2
+  AND id = $3
+RETURNING *;

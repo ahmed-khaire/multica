@@ -1,4 +1,9 @@
 ALTER TABLE gateway_backend
+    DROP CONSTRAINT IF EXISTS gateway_backend_backend_type_check,
+    ADD CONSTRAINT gateway_backend_backend_type_check
+        CHECK (backend_type IN ('openai_compatible', 'anthropic', 'claude_oauth', 'subscription_runtime'));
+
+ALTER TABLE gateway_backend
     ADD COLUMN transport TEXT NOT NULL DEFAULT 'direct_http'
         CHECK (transport IN ('direct_http', 'daemon_dispatch')),
     ADD COLUMN subscription_provider TEXT NOT NULL DEFAULT ''

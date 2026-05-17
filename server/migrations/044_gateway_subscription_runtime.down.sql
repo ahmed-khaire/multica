@@ -29,3 +29,8 @@ ALTER TABLE gateway_backend
     DROP COLUMN IF EXISTS dispatch_scope,
     DROP COLUMN IF EXISTS subscription_provider,
     DROP COLUMN IF EXISTS transport;
+
+ALTER TABLE gateway_backend
+    DROP CONSTRAINT IF EXISTS gateway_backend_backend_type_check,
+    ADD CONSTRAINT gateway_backend_backend_type_check
+        CHECK (backend_type IN ('openai_compatible', 'anthropic', 'claude_oauth'));
