@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/gateway/management"
 )
 
 type doctorCheckAssertion struct {
@@ -318,6 +319,59 @@ func TestGatewayCreateBackendRedactsCredential(t *testing.T) {
 	}
 	if got := resp["credential_hint"]; got != "sk-or-12...cdef" {
 		t.Fatalf("CreateGatewayBackend: credential_hint = %v, want %q", got, "sk-or-12...cdef")
+	}
+}
+
+func TestGatewayCreateSubscriptionBackendNormalizesRuntimeFields(t *testing.T) {
+	setGatewaySecret(t)
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider":              "codex-subscription",
+		"slug":                  "codex-subscription",
+		"display_name":          "Codex Subscription",
+		"backend_type":          "subscription_runtime",
+		"base_url":              "daemon://codex",
+		"key":                   `{"kind":"codex-auth-bundle","test":true}`,
+		"transport":             "daemon_dispatch",
+		"credential_type":       "subscription_bundle",
+		"subscription_provider": "codex",
+		"dispatch_scope":        "workspace_authenticated_daemons",
+	})
+
+	testHandler.CreateGatewayBackend(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		BackendType          string `json:"backend_type"`
+		BaseURL              string `json:"base_url"`
+		Transport            string `json:"transport"`
+		SubscriptionProvider string `json:"subscription_provider"`
+		DispatchScope        string `json:"dispatch_scope"`
+		ValidationStatus     string `json:"validation_status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("CreateGatewayBackend: failed to decode response: %v", err)
+	}
+	if resp.BackendType != management.BackendTypeSubscriptionRuntime {
+		t.Fatalf("BackendType = %q, want %q", resp.BackendType, management.BackendTypeSubscriptionRuntime)
+	}
+	if resp.BaseURL != "daemon://codex" {
+		t.Fatalf("BaseURL = %q, want daemon://codex", resp.BaseURL)
+	}
+	if resp.Transport != "daemon_dispatch" {
+		t.Fatalf("Transport = %q, want daemon_dispatch", resp.Transport)
+	}
+	if resp.SubscriptionProvider != "codex" {
+		t.Fatalf("SubscriptionProvider = %q, want codex", resp.SubscriptionProvider)
+	}
+	if resp.DispatchScope != "workspace_authenticated_daemons" {
+		t.Fatalf("DispatchScope = %q, want workspace_authenticated_daemons", resp.DispatchScope)
+	}
+	if resp.ValidationStatus != "pending_runtime_validation" {
+		t.Fatalf("ValidationStatus = %q, want pending_runtime_validation", resp.ValidationStatus)
 	}
 }
 

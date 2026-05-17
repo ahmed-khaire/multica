@@ -16,37 +16,56 @@ import (
 )
 
 type gatewayCreateBackendRequest struct {
-	Provider    string         `json:"provider"`
-	Slug        string         `json:"slug"`
-	DisplayName string         `json:"display_name"`
-	BackendType string         `json:"backend_type"`
-	BaseURL     string         `json:"base_url"`
-	Key         string         `json:"key"`
-	Enabled     *bool          `json:"enabled"`
-	SetDefault  bool           `json:"set_default"`
-	Metadata    map[string]any `json:"metadata"`
+	Provider             string         `json:"provider"`
+	Slug                 string         `json:"slug"`
+	DisplayName          string         `json:"display_name"`
+	BackendType          string         `json:"backend_type"`
+	BaseURL              string         `json:"base_url"`
+	Key                  string         `json:"key"`
+	Transport            string         `json:"transport"`
+	CredentialType       string         `json:"credential_type"`
+	SubscriptionProvider string         `json:"subscription_provider"`
+	DispatchScope        string         `json:"dispatch_scope"`
+	PayloadFormat        string         `json:"payload_format"`
+	Enabled              *bool          `json:"enabled"`
+	SetDefault           bool           `json:"set_default"`
+	Metadata             map[string]any `json:"metadata"`
 }
 
 type gatewayUpdateBackendRequest struct {
-	DisplayName *string        `json:"display_name"`
-	BaseURL     *string        `json:"base_url"`
-	Key         *string        `json:"key"`
-	Enabled     *bool          `json:"enabled"`
-	Metadata    map[string]any `json:"metadata"`
+	DisplayName          *string        `json:"display_name"`
+	BaseURL              *string        `json:"base_url"`
+	Key                  *string        `json:"key"`
+	Transport            *string        `json:"transport"`
+	SubscriptionProvider *string        `json:"subscription_provider"`
+	DispatchScope        *string        `json:"dispatch_scope"`
+	ValidationStatus     *string        `json:"validation_status"`
+	Enabled              *bool          `json:"enabled"`
+	Metadata             map[string]any `json:"metadata"`
 }
 
 type gatewayCreateBackendCredentialRequest struct {
-	Label    string `json:"label"`
-	Key      string `json:"key"`
-	Enabled  *bool  `json:"enabled"`
-	Priority int32  `json:"priority"`
+	Label                string `json:"label"`
+	Key                  string `json:"key"`
+	CredentialType       string `json:"credential_type"`
+	SubscriptionProvider string `json:"subscription_provider"`
+	DispatchScope        string `json:"dispatch_scope"`
+	PayloadFormat        string `json:"payload_format"`
+	ValidationStatus     string `json:"validation_status"`
+	Enabled              *bool  `json:"enabled"`
+	Priority             int32  `json:"priority"`
 }
 
 type gatewayUpdateBackendCredentialRequest struct {
-	Label    *string `json:"label"`
-	Key      *string `json:"key"`
-	Enabled  *bool   `json:"enabled"`
-	Priority *int32  `json:"priority"`
+	Label                *string `json:"label"`
+	Key                  *string `json:"key"`
+	CredentialType       *string `json:"credential_type"`
+	SubscriptionProvider *string `json:"subscription_provider"`
+	DispatchScope        *string `json:"dispatch_scope"`
+	PayloadFormat        *string `json:"payload_format"`
+	ValidationStatus     *string `json:"validation_status"`
+	Enabled              *bool   `json:"enabled"`
+	Priority             *int32  `json:"priority"`
 }
 
 type gatewaySetDefaultRequest struct {
@@ -273,17 +292,22 @@ func (h *Handler) CreateGatewayBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.CreateBackend(r.Context(), management.CreateBackendInput{
-		WorkspaceID: workspaceID,
-		ActorUserID: userID,
-		Provider:    req.Provider,
-		Slug:        req.Slug,
-		DisplayName: req.DisplayName,
-		BackendType: req.BackendType,
-		BaseURL:     req.BaseURL,
-		Key:         req.Key,
-		Enabled:     enabled,
-		SetDefault:  req.SetDefault,
-		Metadata:    req.Metadata,
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		Provider:             req.Provider,
+		Slug:                 req.Slug,
+		DisplayName:          req.DisplayName,
+		BackendType:          req.BackendType,
+		BaseURL:              req.BaseURL,
+		Key:                  req.Key,
+		Transport:            req.Transport,
+		CredentialType:       req.CredentialType,
+		SubscriptionProvider: req.SubscriptionProvider,
+		DispatchScope:        req.DispatchScope,
+		PayloadFormat:        req.PayloadFormat,
+		Enabled:              enabled,
+		SetDefault:           req.SetDefault,
+		Metadata:             req.Metadata,
 	})
 	h.writeGatewayResult(w, http.StatusCreated, resp, err)
 }
@@ -301,14 +325,18 @@ func (h *Handler) UpdateGatewayBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.Gateway.UpdateBackend(r.Context(), management.UpdateBackendInput{
-		WorkspaceID: workspaceID,
-		ActorUserID: userID,
-		BackendID:   chi.URLParam(r, "id"),
-		DisplayName: req.DisplayName,
-		BaseURL:     req.BaseURL,
-		Key:         req.Key,
-		Enabled:     req.Enabled,
-		Metadata:    req.Metadata,
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		BackendID:            chi.URLParam(r, "id"),
+		DisplayName:          req.DisplayName,
+		BaseURL:              req.BaseURL,
+		Key:                  req.Key,
+		Transport:            req.Transport,
+		SubscriptionProvider: req.SubscriptionProvider,
+		DispatchScope:        req.DispatchScope,
+		ValidationStatus:     req.ValidationStatus,
+		Enabled:              req.Enabled,
+		Metadata:             req.Metadata,
 	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
@@ -330,13 +358,18 @@ func (h *Handler) CreateGatewayBackendCredential(w http.ResponseWriter, r *http.
 	}
 
 	resp, err := h.Gateway.CreateBackendCredential(r.Context(), management.CreateBackendCredentialInput{
-		WorkspaceID: workspaceID,
-		ActorUserID: userID,
-		BackendID:   chi.URLParam(r, "id"),
-		Label:       req.Label,
-		Key:         req.Key,
-		Enabled:     enabled,
-		Priority:    req.Priority,
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		BackendID:            chi.URLParam(r, "id"),
+		Label:                req.Label,
+		Key:                  req.Key,
+		CredentialType:       req.CredentialType,
+		SubscriptionProvider: req.SubscriptionProvider,
+		DispatchScope:        req.DispatchScope,
+		PayloadFormat:        req.PayloadFormat,
+		ValidationStatus:     req.ValidationStatus,
+		Enabled:              enabled,
+		Priority:             req.Priority,
 	})
 	h.writeGatewayResult(w, http.StatusCreated, resp, err)
 }
@@ -354,14 +387,19 @@ func (h *Handler) UpdateGatewayBackendCredential(w http.ResponseWriter, r *http.
 	}
 
 	resp, err := h.Gateway.UpdateBackendCredential(r.Context(), management.UpdateBackendCredentialInput{
-		WorkspaceID:  workspaceID,
-		ActorUserID:  userID,
-		BackendID:    chi.URLParam(r, "id"),
-		CredentialID: chi.URLParam(r, "credentialID"),
-		Label:        req.Label,
-		Key:          req.Key,
-		Enabled:      req.Enabled,
-		Priority:     req.Priority,
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		BackendID:            chi.URLParam(r, "id"),
+		CredentialID:         chi.URLParam(r, "credentialID"),
+		Label:                req.Label,
+		Key:                  req.Key,
+		CredentialType:       req.CredentialType,
+		SubscriptionProvider: req.SubscriptionProvider,
+		DispatchScope:        req.DispatchScope,
+		PayloadFormat:        req.PayloadFormat,
+		ValidationStatus:     req.ValidationStatus,
+		Enabled:              req.Enabled,
+		Priority:             req.Priority,
 	})
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }

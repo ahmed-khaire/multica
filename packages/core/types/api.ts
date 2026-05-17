@@ -113,6 +113,13 @@ export interface GatewayBackend {
   backend_type: string;
   base_url: string;
   credential_hint: string;
+  transport?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  validation_status?: string;
+  validated_runtime_id?: string;
+  last_validation_at?: string | null;
+  last_validation_error?: string;
   enabled: boolean;
   is_default: boolean;
   metadata: Record<string, unknown>;
@@ -125,6 +132,14 @@ export interface GatewayBackendCredential {
   backend_id: string;
   label: string;
   credential_hint: string;
+  credential_type?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  validation_status?: string;
+  validated_runtime_id?: string;
+  last_validation_at?: string | null;
+  last_validation_error?: string;
+  account_hint?: string;
   enabled: boolean;
   priority: number;
   last_used_at: string | null;
@@ -387,6 +402,11 @@ export interface CreateGatewayBackendRequest {
   backend_type?: string;
   base_url?: string;
   key?: string;
+  transport?: string;
+  credential_type?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  payload_format?: string;
   enabled?: boolean;
   set_default?: boolean;
   metadata?: Record<string, unknown>;
@@ -396,6 +416,10 @@ export interface UpdateGatewayBackendRequest {
   display_name?: string;
   base_url?: string;
   key?: string;
+  transport?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  validation_status?: string;
   enabled?: boolean;
   metadata?: Record<string, unknown>;
 }
@@ -403,6 +427,11 @@ export interface UpdateGatewayBackendRequest {
 export interface CreateGatewayBackendCredentialRequest {
   label?: string;
   key: string;
+  credential_type?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  payload_format?: string;
+  validation_status?: string;
   enabled?: boolean;
   priority?: number;
 }
@@ -410,6 +439,11 @@ export interface CreateGatewayBackendCredentialRequest {
 export interface UpdateGatewayBackendCredentialRequest {
   label?: string;
   key?: string;
+  credential_type?: string;
+  subscription_provider?: string;
+  dispatch_scope?: string;
+  payload_format?: string;
+  validation_status?: string;
   enabled?: boolean;
   priority?: number;
 }
