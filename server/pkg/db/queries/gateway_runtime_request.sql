@@ -2,7 +2,7 @@
 INSERT INTO gateway_subscription_runtime_validation (
     workspace_id, backend_id, credential_id, runtime_id, status, provider
 )
-SELECT $1, b.id, c.id, ar.id, 'pending', $5
+SELECT sqlc.arg(workspace_id), b.id, c.id, ar.id, 'pending', sqlc.arg(provider)
 FROM gateway_backend b
 JOIN gateway_backend_credential c
   ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
@@ -10,16 +10,16 @@ JOIN agent_runtime ar
   ON ar.workspace_id = b.workspace_id
 JOIN member m
   ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
-WHERE b.workspace_id = $1
-  AND b.id = $2
-  AND c.id = $3
-  AND ar.id = $4
+WHERE b.workspace_id = sqlc.arg(workspace_id)
+  AND b.id = sqlc.arg(backend_id)
+  AND c.id = sqlc.arg(credential_id)
+  AND ar.id = sqlc.arg(runtime_id)
   AND b.transport = 'daemon_dispatch'
-  AND b.subscription_provider = $5
+  AND b.subscription_provider = sqlc.arg(provider)
   AND c.credential_type = 'subscription_bundle'
-  AND c.subscription_provider = $5
+  AND c.subscription_provider = sqlc.arg(provider)
   AND ar.status = 'online'
-  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
+  AND ar.provider = CASE WHEN sqlc.arg(provider) = 'claude_code' THEN 'claude' ELSE sqlc.arg(provider) END
 ON CONFLICT (credential_id, runtime_id)
 DO UPDATE SET
     backend_id = EXCLUDED.backend_id,
@@ -105,7 +105,9 @@ INSERT INTO gateway_runtime_request (
     workspace_id, backend_id, credential_id, runtime_id, provider, surface, status,
     request_body, stream
 )
-SELECT $1, b.id, c.id, ar.id, $5, $6, 'queued', $7, $8
+SELECT
+  sqlc.arg(workspace_id), b.id, c.id, ar.id, sqlc.arg(provider),
+  sqlc.arg(surface), 'queued', sqlc.arg(request_body), sqlc.arg(stream)
 FROM gateway_backend b
 JOIN gateway_backend_credential c
   ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
@@ -113,19 +115,19 @@ JOIN agent_runtime ar
   ON ar.workspace_id = b.workspace_id
 JOIN member m
   ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
-WHERE b.workspace_id = $1
-  AND b.id = $2
-  AND c.id = $3
-  AND ar.id = $4
+WHERE b.workspace_id = sqlc.arg(workspace_id)
+  AND b.id = sqlc.arg(backend_id)
+  AND c.id = sqlc.arg(credential_id)
+  AND ar.id = sqlc.arg(runtime_id)
   AND b.enabled = TRUE
   AND c.enabled = TRUE
   AND b.transport = 'daemon_dispatch'
-  AND b.subscription_provider = $5
+  AND b.subscription_provider = sqlc.arg(provider)
   AND c.credential_type = 'subscription_bundle'
-  AND c.subscription_provider = $5
+  AND c.subscription_provider = sqlc.arg(provider)
   AND c.validation_status = 'active'
   AND ar.status = 'online'
-  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
+  AND ar.provider = CASE WHEN sqlc.arg(provider) = 'claude_code' THEN 'claude' ELSE sqlc.arg(provider) END
 RETURNING *;
 
 -- name: ClaimGatewayRuntimeRequest :one

@@ -227,7 +227,9 @@ INSERT INTO gateway_runtime_request (
     workspace_id, backend_id, credential_id, runtime_id, provider, surface, status,
     request_body, stream
 )
-SELECT $1, b.id, c.id, ar.id, $5, $6, 'queued', $7, $8
+SELECT
+  $1, b.id, c.id, ar.id, $2,
+  $3, 'queued', $4, $5
 FROM gateway_backend b
 JOIN gateway_backend_credential c
   ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
@@ -236,42 +238,42 @@ JOIN agent_runtime ar
 JOIN member m
   ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
 WHERE b.workspace_id = $1
-  AND b.id = $2
-  AND c.id = $3
-  AND ar.id = $4
+  AND b.id = $6
+  AND c.id = $7
+  AND ar.id = $8
   AND b.enabled = TRUE
   AND c.enabled = TRUE
   AND b.transport = 'daemon_dispatch'
-  AND b.subscription_provider = $5
+  AND b.subscription_provider = $2
   AND c.credential_type = 'subscription_bundle'
-  AND c.subscription_provider = $5
+  AND c.subscription_provider = $2
   AND c.validation_status = 'active'
   AND ar.status = 'online'
-  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
+  AND ar.provider = CASE WHEN $2 = 'claude_code' THEN 'claude' ELSE $2 END
 RETURNING id, workspace_id, backend_id, credential_id, runtime_id, provider, surface, status, request_body, response_body, error_type, error_message, stream, claimed_at, completed_at, created_at, updated_at
 `
 
 type CreateGatewayRuntimeRequestParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ID          pgtype.UUID `json:"id"`
-	ID_2        pgtype.UUID `json:"id_2"`
-	ID_3        pgtype.UUID `json:"id_3"`
-	Provider    string      `json:"provider"`
-	Surface     string      `json:"surface"`
-	RequestBody []byte      `json:"request_body"`
-	Stream      bool        `json:"stream"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	Provider     string      `json:"provider"`
+	Surface      string      `json:"surface"`
+	RequestBody  []byte      `json:"request_body"`
+	Stream       bool        `json:"stream"`
+	BackendID    pgtype.UUID `json:"backend_id"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	RuntimeID    pgtype.UUID `json:"runtime_id"`
 }
 
 func (q *Queries) CreateGatewayRuntimeRequest(ctx context.Context, arg CreateGatewayRuntimeRequestParams) (GatewayRuntimeRequest, error) {
 	row := q.db.QueryRow(ctx, createGatewayRuntimeRequest,
 		arg.WorkspaceID,
-		arg.ID,
-		arg.ID_2,
-		arg.ID_3,
 		arg.Provider,
 		arg.Surface,
 		arg.RequestBody,
 		arg.Stream,
+		arg.BackendID,
+		arg.CredentialID,
+		arg.RuntimeID,
 	)
 	var i GatewayRuntimeRequest
 	err := row.Scan(
@@ -300,7 +302,7 @@ const createGatewaySubscriptionValidation = `-- name: CreateGatewaySubscriptionV
 INSERT INTO gateway_subscription_runtime_validation (
     workspace_id, backend_id, credential_id, runtime_id, status, provider
 )
-SELECT $1, b.id, c.id, ar.id, 'pending', $5
+SELECT $1, b.id, c.id, ar.id, 'pending', $2
 FROM gateway_backend b
 JOIN gateway_backend_credential c
   ON c.workspace_id = b.workspace_id AND c.backend_id = b.id
@@ -309,15 +311,15 @@ JOIN agent_runtime ar
 JOIN member m
   ON m.workspace_id = ar.workspace_id AND m.user_id = ar.owner_id
 WHERE b.workspace_id = $1
-  AND b.id = $2
-  AND c.id = $3
-  AND ar.id = $4
+  AND b.id = $3
+  AND c.id = $4
+  AND ar.id = $5
   AND b.transport = 'daemon_dispatch'
-  AND b.subscription_provider = $5
+  AND b.subscription_provider = $2
   AND c.credential_type = 'subscription_bundle'
-  AND c.subscription_provider = $5
+  AND c.subscription_provider = $2
   AND ar.status = 'online'
-  AND ar.provider = CASE WHEN $5 = 'claude_code' THEN 'claude' ELSE $5 END
+  AND ar.provider = CASE WHEN $2 = 'claude_code' THEN 'claude' ELSE $2 END
 ON CONFLICT (credential_id, runtime_id)
 DO UPDATE SET
     backend_id = EXCLUDED.backend_id,
@@ -334,20 +336,20 @@ RETURNING id, workspace_id, backend_id, credential_id, runtime_id, status, provi
 `
 
 type CreateGatewaySubscriptionValidationParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ID          pgtype.UUID `json:"id"`
-	ID_2        pgtype.UUID `json:"id_2"`
-	ID_3        pgtype.UUID `json:"id_3"`
-	Provider    string      `json:"provider"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	Provider     string      `json:"provider"`
+	BackendID    pgtype.UUID `json:"backend_id"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	RuntimeID    pgtype.UUID `json:"runtime_id"`
 }
 
 func (q *Queries) CreateGatewaySubscriptionValidation(ctx context.Context, arg CreateGatewaySubscriptionValidationParams) (GatewaySubscriptionRuntimeValidation, error) {
 	row := q.db.QueryRow(ctx, createGatewaySubscriptionValidation,
 		arg.WorkspaceID,
-		arg.ID,
-		arg.ID_2,
-		arg.ID_3,
 		arg.Provider,
+		arg.BackendID,
+		arg.CredentialID,
+		arg.RuntimeID,
 	)
 	var i GatewaySubscriptionRuntimeValidation
 	err := row.Scan(
