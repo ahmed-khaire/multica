@@ -9,16 +9,19 @@ RETURNING *;
 -- name: ListGatewayPolicies :many
 SELECT * FROM gateway_policy
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY enabled DESC, name;
 
 -- name: ListEnabledGatewayPolicies :many
 SELECT * FROM gateway_policy
-WHERE workspace_id = $1 AND enabled = TRUE
+WHERE workspace_id = $1
+  AND enabled = TRUE
+  AND archived_at IS NULL
 ORDER BY policy_type, name;
 
 -- name: GetGatewayPolicy :one
 SELECT * FROM gateway_policy
-WHERE workspace_id = $1 AND id = $2;
+WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL;
 
 -- name: UpdateGatewayPolicy :one
 UPDATE gateway_policy
@@ -33,6 +36,19 @@ SET
     updated_by = $9,
     updated_at = now()
 WHERE workspace_id = $1 AND id = $2
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: ArchiveGatewayPolicy :one
+UPDATE gateway_policy
+SET
+    enabled = FALSE,
+    archived_at = now(),
+    updated_by = $3,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: RecordGatewayPolicyDecision :one

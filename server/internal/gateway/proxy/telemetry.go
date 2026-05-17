@@ -234,6 +234,12 @@ func ExtractOpenAIUsage(resp map[string]any) Usage {
 	usageMap, _ := resp["usage"].(map[string]any)
 	prompt := int64Value(usageMap["prompt_tokens"])
 	completion := int64Value(usageMap["completion_tokens"])
+	if prompt == 0 {
+		prompt = int64Value(usageMap["input_tokens"])
+	}
+	if completion == 0 {
+		completion = int64Value(usageMap["output_tokens"])
+	}
 	total := int64Value(usageMap["total_tokens"])
 	if total == 0 && (prompt > 0 || completion > 0) {
 		total = prompt + completion
@@ -245,6 +251,9 @@ func ExtractAnthropicUsage(resp map[string]any) Usage {
 	usageMap, _ := resp["usage"].(map[string]any)
 	prompt := int64Value(usageMap["input_tokens"])
 	completion := int64Value(usageMap["output_tokens"])
+	if prompt == 0 {
+		prompt = int64Value(resp["input_tokens"])
+	}
 	return usageWithSource(prompt, completion, prompt+completion)
 }
 
@@ -343,6 +352,10 @@ func requestType(surface string) string {
 	switch surface {
 	case SurfaceAnthropicMessages:
 		return "messages"
+	case SurfaceAnthropicCountTokens:
+		return "count_tokens"
+	case SurfaceOpenAIResponses:
+		return "responses"
 	default:
 		return "chat"
 	}

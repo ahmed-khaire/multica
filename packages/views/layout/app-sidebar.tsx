@@ -8,6 +8,7 @@ import {
   ListTodo,
   Bot,
   Eye,
+  ShieldCheck,
   Monitor,
   ChevronDown,
   Settings,
@@ -64,6 +65,7 @@ const workspaceNav = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/gateway", label: "Gateway", icon: Eye },
+  { href: "/gateway/governance", label: "Governance", icon: ShieldCheck },
 ];
 
 const configureNav = [
@@ -244,7 +246,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
-                  const isActive = pathname === item.href;
+                  const isActive =
+                    item.href === "/gateway"
+                      ? pathname === item.href
+                      : pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton

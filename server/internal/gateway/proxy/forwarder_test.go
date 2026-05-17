@@ -54,6 +54,33 @@ func TestBuildUpstreamRequestOpenAIReplacesGatewayHeaders(t *testing.T) {
 	}
 }
 
+func TestBuildUpstreamRequestGETWithoutSummaryBodySendsNilBody(t *testing.T) {
+	inbound, err := http.NewRequest(http.MethodGet, "/v1/models", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	inbound.Header.Set("Authorization", "Bearer mgw_gateway")
+
+	req, err := BuildUpstreamRequest(context.Background(), inbound, BackendTarget{
+		BaseURL:        "https://api.openai.com/v1",
+		UpstreamSecret: "sk-upstream",
+	}, RequestSummary{
+		Protocol:  ProtocolOpenAI,
+		RoutePath: "/models",
+		Method:    http.MethodGet,
+	})
+	if err != nil {
+		t.Fatalf("BuildUpstreamRequest: %v", err)
+	}
+
+	if req.GetBody != nil {
+		t.Fatal("GET /models upstream request should not be replayable as an empty body")
+	}
+	if req.ContentLength != 0 {
+		t.Fatalf("ContentLength = %d, want 0", req.ContentLength)
+	}
+}
+
 func TestBuildUpstreamRequestAnthropicUsesAPIKeyAndDefaultVersion(t *testing.T) {
 	inbound, err := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-test"}`))
 	if err != nil {

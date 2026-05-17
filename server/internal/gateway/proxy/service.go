@@ -44,8 +44,16 @@ func (s *Service) ServeOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	s.serve(w, r, SurfaceOpenAIChatCompletions)
 }
 
+func (s *Service) ServeOpenAIResponses(w http.ResponseWriter, r *http.Request) {
+	s.serve(w, r, SurfaceOpenAIResponses)
+}
+
 func (s *Service) ServeAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	s.serve(w, r, SurfaceAnthropicMessages)
+}
+
+func (s *Service) ServeAnthropicCountTokens(w http.ResponseWriter, r *http.Request) {
+	s.serve(w, r, SurfaceAnthropicCountTokens)
 }
 
 func (s *Service) ServeModels(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +139,11 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 	}
 
 	obs := s.Recorder.Start(r.Context(), authCtx, target, summary)
+	if summary.Surface == SurfaceAnthropicCountTokens && target.UpstreamProtocol != ProtocolAnthropic {
+		result := writeEstimatedCountTokensResponse(w, summary)
+		s.Recorder.Complete(context.Background(), obs, result)
+		return
+	}
 	var result ProxyResult
 	if target.Transport == TransportDaemonDispatch {
 		result, err = s.dispatchRuntimeRequest(r.Context(), w, authCtx, target, summary)
@@ -638,6 +651,11 @@ func routePathFor(surface string, target BackendTarget) string {
 				return "/v1/models"
 			}
 			return "/models"
+		case SurfaceAnthropicCountTokens:
+			if strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
+				return "/messages/count_tokens"
+			}
+			return "/v1/messages/count_tokens"
 		default:
 			if strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
 				return "/messages"
@@ -648,6 +666,10 @@ func routePathFor(surface string, target BackendTarget) string {
 	switch surface {
 	case SurfaceOpenAIChatCompletions, SurfaceAnthropicMessages:
 		return "/chat/completions"
+	case SurfaceOpenAIResponses:
+		return "/responses"
+	case SurfaceAnthropicCountTokens:
+		return "/messages/count_tokens"
 	case SurfaceModels:
 		if target.BackendType == "anthropic" && !strings.HasSuffix(strings.TrimRight(target.BaseURL, "/"), "/v1") {
 			return "/v1/models"
@@ -656,6 +678,34 @@ func routePathFor(surface string, target BackendTarget) string {
 	default:
 		return rtrimSlash(surface)
 	}
+}
+
+func writeEstimatedCountTokensResponse(w http.ResponseWriter, summary RequestSummary) ProxyResult {
+	bodyJSON := map[string]any{
+		"input_tokens": estimateInputTokens(summary.BodyJSON),
+	}
+	body, _ := json.Marshal(bodyJSON)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+	return ProxyResult{
+		StatusCode:   http.StatusOK,
+		Status:       StatusSuccess,
+		ResponseBody: body,
+		ResponseJSON: bodyJSON,
+	}
+}
+
+func estimateInputTokens(value any) int64 {
+	body, err := json.Marshal(value)
+	if err != nil || len(body) == 0 {
+		return 1
+	}
+	estimate := int64(len(body) / 4)
+	if estimate < 1 {
+		return 1
+	}
+	return estimate
 }
 
 func writeProviderError(w http.ResponseWriter, protocol string, err GatewayError) {

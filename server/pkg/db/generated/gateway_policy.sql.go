@@ -11,13 +11,54 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveGatewayPolicy = `-- name: ArchiveGatewayPolicy :one
+UPDATE gateway_policy
+SET
+    enabled = FALSE,
+    archived_at = now(),
+    updated_by = $3,
+    updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at
+`
+
+type ArchiveGatewayPolicyParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+	UpdatedBy   pgtype.UUID `json:"updated_by"`
+}
+
+func (q *Queries) ArchiveGatewayPolicy(ctx context.Context, arg ArchiveGatewayPolicyParams) (GatewayPolicy, error) {
+	row := q.db.QueryRow(ctx, archiveGatewayPolicy, arg.WorkspaceID, arg.ID, arg.UpdatedBy)
+	var i GatewayPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.PolicyType,
+		&i.Enabled,
+		&i.Version,
+		&i.RuleDefinition,
+		&i.EnforcementMode,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const createGatewayPolicy = `-- name: CreateGatewayPolicy :one
 INSERT INTO gateway_policy (
     workspace_id, name, description, policy_type, enabled,
     version, rule_definition, enforcement_mode, created_by, updated_by
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-RETURNING id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at
+RETURNING id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at
 `
 
 type CreateGatewayPolicyParams struct {
@@ -59,13 +100,14 @@ func (q *Queries) CreateGatewayPolicy(ctx context.Context, arg CreateGatewayPoli
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const getGatewayPolicy = `-- name: GetGatewayPolicy :one
-SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at FROM gateway_policy
-WHERE workspace_id = $1 AND id = $2
+SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at FROM gateway_policy
+WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL
 `
 
 type GetGatewayPolicyParams struct {
@@ -90,6 +132,7 @@ func (q *Queries) GetGatewayPolicy(ctx context.Context, arg GetGatewayPolicyPara
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -131,8 +174,10 @@ func (q *Queries) GetGatewayPolicyDecision(ctx context.Context, arg GetGatewayPo
 }
 
 const listEnabledGatewayPolicies = `-- name: ListEnabledGatewayPolicies :many
-SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at FROM gateway_policy
-WHERE workspace_id = $1 AND enabled = TRUE
+SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at FROM gateway_policy
+WHERE workspace_id = $1
+  AND enabled = TRUE
+  AND archived_at IS NULL
 ORDER BY policy_type, name
 `
 
@@ -159,6 +204,7 @@ func (q *Queries) ListEnabledGatewayPolicies(ctx context.Context, workspaceID pg
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -171,8 +217,9 @@ func (q *Queries) ListEnabledGatewayPolicies(ctx context.Context, workspaceID pg
 }
 
 const listGatewayPolicies = `-- name: ListGatewayPolicies :many
-SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at FROM gateway_policy
+SELECT id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at FROM gateway_policy
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY enabled DESC, name
 `
 
@@ -199,6 +246,7 @@ func (q *Queries) ListGatewayPolicies(ctx context.Context, workspaceID pgtype.UU
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -348,7 +396,8 @@ SET
     updated_by = $9,
     updated_at = now()
 WHERE workspace_id = $1 AND id = $2
-RETURNING id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at
+  AND archived_at IS NULL
+RETURNING id, workspace_id, name, description, policy_type, enabled, version, rule_definition, enforcement_mode, created_by, updated_by, created_at, updated_at, archived_at
 `
 
 type UpdateGatewayPolicyParams struct {
@@ -390,6 +439,7 @@ func (q *Queries) UpdateGatewayPolicy(ctx context.Context, arg UpdateGatewayPoli
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }

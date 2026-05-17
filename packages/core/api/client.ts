@@ -46,6 +46,7 @@ import type {
   CreateGatewayBackendRequest,
   CreateGatewayBackendCredentialRequest,
   CreateGatewayGovernancePolicyRequest,
+  CreateGatewayIncidentRequest,
   CreateGatewayPolicyExceptionRequest,
   DeleteGatewayBackendResponse,
   CreateGatewayIngestKeyRequest,
@@ -74,11 +75,13 @@ import type {
   GatewayPolicyDecisionItem,
   GatewayPolicyExceptionItem,
   GatewayProviderRisk,
+  GatewaySmokeResponse,
   GatewaySettingsResponse,
   GatewaySessionListResponse,
   GatewaySessionDetail,
   GatewaySessionSpansResponse,
   GatewayStatusResponse,
+  GatewayUserKeyListItem,
   GatewayUserKeyResponse,
   GatewayLLMCallListResponse,
   UpdateGatewayBackendRequest,
@@ -86,6 +89,7 @@ import type {
   UpdateGatewayGovernancePolicyRequest,
   UpdateGatewayIncidentRequest,
   UpdateGatewayPolicyExceptionRequest,
+  UpsertGatewayControlMappingRequest,
   UpsertGatewayProviderRiskRequest,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
@@ -670,6 +674,10 @@ export class ApiClient {
     return this.fetch("/api/gateway/doctor", params?.signal ? { signal: params.signal } : undefined);
   }
 
+  async runGatewaySmoke(params?: GatewayObservabilityParams): Promise<GatewaySmokeResponse> {
+    return this.fetch(`/api/gateway/smoke${this.gatewayObservabilityQuery(params)}`, this.gatewayObservabilityInit(params));
+  }
+
   async getGatewayHealthReport(params?: { signal?: AbortSignal }): Promise<GatewayHealthReportResponse> {
     return this.fetch("/api/gateway/health-report", params?.signal ? { signal: params.signal } : undefined);
   }
@@ -684,6 +692,17 @@ export class ApiClient {
 
   async createGatewayUserKey(): Promise<GatewayUserKeyResponse> {
     return this.fetch("/api/gateway/key", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async listGatewayUserKeys(params?: { signal?: AbortSignal }): Promise<GatewayUserKeyListItem[]> {
+    return this.fetch("/api/gateway/keys", params?.signal ? { signal: params.signal } : undefined);
+  }
+
+  async revokeGatewayUserKey(id: string): Promise<GatewayUserKeyListItem> {
+    return this.fetch(`/api/gateway/keys/${encodeURIComponent(id)}/revoke`, {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -808,6 +827,12 @@ export class ApiClient {
     });
   }
 
+  async deleteGatewayGovernancePolicy(id: string): Promise<GatewayGovernancePolicyItem> {
+    return this.fetch(`/api/gateway/governance/policies/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
   async listGatewayEvidence(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayEvidenceItem[]> {
     const search = new URLSearchParams();
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
@@ -819,6 +844,19 @@ export class ApiClient {
     return this.fetch("/api/gateway/governance/control-mappings", params?.signal ? { signal: params.signal } : undefined);
   }
 
+  async upsertGatewayControlMapping(data: UpsertGatewayControlMappingRequest): Promise<GatewayControlMappingItem> {
+    return this.fetch("/api/gateway/governance/control-mappings", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGatewayControlMapping(id: string): Promise<GatewayControlMappingItem> {
+    return this.fetch(`/api/gateway/governance/control-mappings/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
   async listGatewayIncidents(params?: { limit?: number; signal?: AbortSignal }): Promise<GatewayIncidentItem[]> {
     const search = new URLSearchParams();
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
@@ -826,10 +864,23 @@ export class ApiClient {
     return this.fetch(`/api/gateway/governance/incidents${query ? `?${query}` : ""}`, params?.signal ? { signal: params.signal } : undefined);
   }
 
+  async createGatewayIncident(data: CreateGatewayIncidentRequest): Promise<GatewayIncidentItem> {
+    return this.fetch("/api/gateway/governance/incidents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateGatewayIncident(id: string, data: UpdateGatewayIncidentRequest): Promise<GatewayIncidentItem> {
     return this.fetch(`/api/gateway/governance/incidents/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGatewayIncident(id: string): Promise<GatewayIncidentItem> {
+    return this.fetch(`/api/gateway/governance/incidents/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
   }
 
@@ -858,6 +909,12 @@ export class ApiClient {
     return this.fetch("/api/gateway/governance/provider-risks", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGatewayProviderRisk(id: string): Promise<GatewayProviderRisk> {
+    return this.fetch(`/api/gateway/governance/provider-risks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
   }
 

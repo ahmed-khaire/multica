@@ -105,6 +105,7 @@ type AiControlMapping struct {
 	Status                string             `json:"status"`
 	OwnerUserID           pgtype.UUID        `json:"owner_user_id"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt            pgtype.Timestamptz `json:"archived_at"`
 }
 
 type AiEvidence struct {
@@ -153,6 +154,7 @@ type AiIncident struct {
 	RemediationNotes     string             `json:"remediation_notes"`
 	OpenedAt             pgtype.Timestamptz `json:"opened_at"`
 	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ArchivedAt           pgtype.Timestamptz `json:"archived_at"`
 }
 
 type AiPolicyException struct {
@@ -213,6 +215,7 @@ type AiThirdPartyRisk struct {
 	ActiveExceptionCount int32              `json:"active_exception_count"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt           pgtype.Timestamptz `json:"archived_at"`
 }
 
 type Attachment struct {
@@ -490,6 +493,7 @@ type GatewayPolicy struct {
 	UpdatedBy       pgtype.UUID        `json:"updated_by"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt      pgtype.Timestamptz `json:"archived_at"`
 }
 
 type GatewayPolicyDecision struct {

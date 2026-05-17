@@ -50,6 +50,8 @@ export const gatewayKeys = {
     [...gatewayKeys.all(wsId), "ingest-keys"] as const,
   status: (wsId: string) =>
     [...gatewayKeys.all(wsId), "status"] as const,
+  userKeys: (wsId: string) =>
+    [...gatewayKeys.all(wsId), "user-keys"] as const,
   doctor: (wsId: string) =>
     [...gatewayKeys.all(wsId), "doctor"] as const,
   healthReport: (wsId: string) =>
@@ -148,6 +150,15 @@ export function gatewayStatusOptions(wsId: string) {
     queryKey: gatewayKeys.status(wsId),
     queryFn: ({ signal }) =>
       signal ? api.getGatewayStatus({ signal }) : api.getGatewayStatus(),
+    enabled: !!wsId,
+  });
+}
+
+export function gatewayUserKeysOptions(wsId: string) {
+  return queryOptions({
+    queryKey: gatewayKeys.userKeys(wsId),
+    queryFn: ({ signal }) =>
+      signal ? api.listGatewayUserKeys({ signal }) : api.listGatewayUserKeys(),
     enabled: !!wsId,
   });
 }

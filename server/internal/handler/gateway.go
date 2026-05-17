@@ -1,18 +1,22 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/gateway/management"
+	"github.com/multica-ai/multica/server/internal/gateway/observability"
 )
 
 type gatewayCreateBackendRequest struct {
@@ -81,6 +85,27 @@ type gatewayCreateIngestKeyRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
+type gatewaySmokeCheck struct {
+	ID       string         `json:"id"`
+	Status   string         `json:"status"`
+	Title    string         `json:"title"`
+	Detail   string         `json:"detail"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type gatewaySmokeResponse struct {
+	Status      string              `json:"status"`
+	GeneratedAt string              `json:"generated_at"`
+	Checks      []gatewaySmokeCheck `json:"checks"`
+}
+
+type gatewaySmokeModelResult struct {
+	Count      int
+	FirstModel string
+}
+
+var gatewaySmokeFetchModels = fetchGatewaySmokeModels
+
 type gatewayProviderRiskRequest struct {
 	ProviderName         string   `json:"provider_name"`
 	BackendID            string   `json:"backend_id"`
@@ -105,6 +130,29 @@ type gatewayProviderRiskRequest struct {
 type gatewayUpdateIncidentRequest struct {
 	Status           string `json:"status"`
 	RemediationNotes string `json:"remediation_notes"`
+}
+
+type gatewayCreateIncidentRequest struct {
+	Severity             string `json:"severity"`
+	Category             string `json:"category"`
+	LinkedRequestID      string `json:"linked_request_id"`
+	LinkedSessionID      string `json:"linked_session_id"`
+	LinkedSpanRowID      string `json:"linked_span_row_id"`
+	LinkedPolicyID       string `json:"linked_policy_id"`
+	LinkedProviderRiskID string `json:"linked_provider_risk_id"`
+	Summary              string `json:"summary"`
+	Status               string `json:"status"`
+	RemediationNotes     string `json:"remediation_notes"`
+}
+
+type gatewayControlMappingRequest struct {
+	Framework             string `json:"framework"`
+	ControlID             string `json:"control_id"`
+	ControlTitle          string `json:"control_title"`
+	MappedPolicyIDs       any    `json:"mapped_policy_ids"`
+	MappedEvidenceQueries any    `json:"mapped_evidence_queries"`
+	Status                string `json:"status"`
+	OwnerUserID           string `json:"owner_user_id"`
 }
 
 type gatewayCreatePolicyExceptionRequest struct {
@@ -162,6 +210,145 @@ func (h *Handler) GatewayHealthReport(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.Gateway.HealthReport(r.Context(), workspaceID, userID, gatewayServerBaseURL(r))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) GatewaySmoke(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	now := time.Now()
+	filter, err := observability.ParseFilter(r.URL.Query(), now)
+	if err != nil {
+		h.writeGatewayObservabilityResult(w, http.StatusOK, nil, err)
+		return
+	}
+
+	checks := make([]gatewaySmokeCheck, 0, 5)
+	addCheck := func(id, status, title, detail string, metadata map[string]any) {
+		checks = append(checks, gatewaySmokeCheck{
+			ID:       id,
+			Status:   status,
+			Title:    title,
+			Detail:   detail,
+			Metadata: metadata,
+		})
+	}
+
+	serverBaseURL := gatewayServerBaseURL(r)
+	status, err := h.Gateway.Status(r.Context(), workspaceID, userID, serverBaseURL)
+	if err != nil {
+		addCheck("status", "fail", "Gateway status", err.Error(), nil)
+		writeJSON(w, http.StatusOK, gatewaySmokeResponse{
+			Status:      gatewaySmokeOverallStatus(checks),
+			GeneratedAt: now.UTC().Format(time.RFC3339Nano),
+			Checks:      checks,
+		})
+		return
+	}
+	defaultBackend := "none"
+	if status.DefaultBackend != nil && status.DefaultBackend.Slug != "" {
+		defaultBackend = status.DefaultBackend.Slug
+	}
+	statusOK := status.EnabledBackendCount > 0 && defaultBackend != "none"
+	statusCheck := "pass"
+	if !statusOK {
+		statusCheck = "fail"
+	}
+	addCheck(
+		"status",
+		statusCheck,
+		"Gateway status",
+		fmt.Sprintf("%d/%d backends enabled, default %s, capture %s", status.EnabledBackendCount, status.BackendCount, defaultBackend, status.CapturePolicy),
+		map[string]any{
+			"backend_count":         status.BackendCount,
+			"enabled_backend_count": status.EnabledBackendCount,
+			"default_backend":       defaultBackend,
+			"capture_policy":        status.CapturePolicy,
+		},
+	)
+
+	doctor, err := h.Gateway.Doctor(r.Context(), workspaceID, userID, serverBaseURL)
+	if err != nil {
+		addCheck("doctor", "fail", "Gateway doctor", err.Error(), nil)
+		writeJSON(w, http.StatusOK, gatewaySmokeResponse{
+			Status:      gatewaySmokeOverallStatus(checks),
+			GeneratedAt: now.UTC().Format(time.RFC3339Nano),
+			Checks:      checks,
+		})
+		return
+	}
+	doctorStatus := "pass"
+	if doctor.Status == "healthy_with_warnings" {
+		doctorStatus = "warning"
+	}
+	if doctor.Status == "" || doctor.Status == "unhealthy" {
+		doctorStatus = "fail"
+	}
+	addCheck("doctor", doctorStatus, "Gateway doctor", doctor.Status, map[string]any{"check_count": len(doctor.Checks)})
+
+	key, err := h.Gateway.GetOrCreateUserKey(r.Context(), workspaceID, userID, serverBaseURL)
+	if err != nil {
+		addCheck("key", "fail", "Gateway key", err.Error(), nil)
+		writeJSON(w, http.StatusOK, gatewaySmokeResponse{
+			Status:      gatewaySmokeOverallStatus(checks),
+			GeneratedAt: now.UTC().Format(time.RFC3339Nano),
+			Checks:      checks,
+		})
+		return
+	}
+	keyOK := key.OpenAIBaseURL != "" && key.OpenAIAPIKey != ""
+	keyStatus := "pass"
+	if !keyOK {
+		keyStatus = "fail"
+	}
+	addCheck("key", keyStatus, "Gateway key", "Gateway key available", map[string]any{"key_prefix": key.KeyPrefix})
+
+	models, err := gatewaySmokeFetchModels(r.Context(), http.DefaultClient, key.OpenAIBaseURL, key.OpenAIAPIKey)
+	if err != nil {
+		addCheck("models", "fail", "Model catalog", err.Error(), nil)
+		writeJSON(w, http.StatusOK, gatewaySmokeResponse{
+			Status:      gatewaySmokeOverallStatus(checks),
+			GeneratedAt: now.UTC().Format(time.RFC3339Nano),
+			Checks:      checks,
+		})
+		return
+	}
+	modelStatus := "pass"
+	if models.Count == 0 {
+		modelStatus = "fail"
+	}
+	modelDetail := fmt.Sprintf("%d models", models.Count)
+	if models.FirstModel != "" {
+		modelDetail += ", first " + models.FirstModel
+	}
+	addCheck("models", modelStatus, "Model catalog", modelDetail, map[string]any{"model_count": models.Count, "first_model": models.FirstModel})
+
+	overview, err := h.GatewayObservability.Overview(r.Context(), workspaceID, filter)
+	if err != nil {
+		addCheck("export", "fail", "Gateway export", err.Error(), nil)
+	} else {
+		addCheck(
+			"export",
+			"pass",
+			"Gateway export",
+			fmt.Sprintf("%d sessions, %d LLM calls", overview.Summary.SessionCount, overview.Summary.LLMCallCount),
+			map[string]any{
+				"session_count":  overview.Summary.SessionCount,
+				"llm_call_count": overview.Summary.LLMCallCount,
+				"since":          filter.Since.UTC().Format(time.RFC3339Nano),
+				"until":          filter.Until.UTC().Format(time.RFC3339Nano),
+				"limit":          filter.Limit,
+			},
+		)
+	}
+
+	writeJSON(w, http.StatusOK, gatewaySmokeResponse{
+		Status:      gatewaySmokeOverallStatus(checks),
+		GeneratedAt: now.UTC().Format(time.RFC3339Nano),
+		Checks:      checks,
+	})
 }
 
 func (h *Handler) GetGatewaySettings(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +626,16 @@ func (h *Handler) ListGatewayProviderRisks(w http.ResponseWriter, r *http.Reques
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) DeleteGatewayProviderRisk(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ArchiveProviderRisk(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) ListGatewayPolicyDecisions(w http.ResponseWriter, r *http.Request) {
 	workspaceID, _, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -532,6 +729,42 @@ func (h *Handler) ListGatewayControlMappings(w http.ResponseWriter, r *http.Requ
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
+func (h *Handler) UpsertGatewayControlMapping(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayControlMappingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.UpsertControlMapping(r.Context(), management.UpsertControlMappingInput{
+		WorkspaceID:           workspaceID,
+		ActorUserID:           userID,
+		Framework:             req.Framework,
+		ControlID:             req.ControlID,
+		ControlTitle:          req.ControlTitle,
+		MappedPolicyIDs:       req.MappedPolicyIDs,
+		MappedEvidenceQueries: req.MappedEvidenceQueries,
+		Status:                req.Status,
+		OwnerUserID:           req.OwnerUserID,
+	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) DeleteGatewayControlMapping(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ArchiveControlMapping(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
 func (h *Handler) ListGatewayIncidents(w http.ResponseWriter, r *http.Request) {
 	workspaceID, _, ok := h.gatewayRequestScope(w, r)
 	if !ok {
@@ -545,6 +778,35 @@ func (h *Handler) ListGatewayIncidents(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.Gateway.ListIncidents(r.Context(), workspaceID, limit)
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) CreateGatewayIncident(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	var req gatewayCreateIncidentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.Gateway.CreateIncident(r.Context(), management.CreateIncidentInput{
+		WorkspaceID:          workspaceID,
+		ActorUserID:          userID,
+		Severity:             req.Severity,
+		Category:             req.Category,
+		LinkedRequestID:      req.LinkedRequestID,
+		LinkedSessionID:      req.LinkedSessionID,
+		LinkedSpanRowID:      req.LinkedSpanRowID,
+		LinkedPolicyID:       req.LinkedPolicyID,
+		LinkedProviderRiskID: req.LinkedProviderRiskID,
+		Summary:              req.Summary,
+		Status:               req.Status,
+		RemediationNotes:     req.RemediationNotes,
+	})
+	h.writeGatewayResult(w, http.StatusCreated, resp, err)
 }
 
 func (h *Handler) UpdateGatewayIncident(w http.ResponseWriter, r *http.Request) {
@@ -566,6 +828,16 @@ func (h *Handler) UpdateGatewayIncident(w http.ResponseWriter, r *http.Request) 
 		Status:           req.Status,
 		RemediationNotes: req.RemediationNotes,
 	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) DeleteGatewayIncident(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ArchiveIncident(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
@@ -688,6 +960,16 @@ func (h *Handler) UpdateGatewayGovernancePolicy(w http.ResponseWriter, r *http.R
 		RuleDefinition:  req.RuleDefinition,
 		EnforcementMode: req.EnforcementMode,
 	})
+	h.writeGatewayResult(w, http.StatusOK, resp, err)
+}
+
+func (h *Handler) DeleteGatewayGovernancePolicy(w http.ResponseWriter, r *http.Request) {
+	workspaceID, userID, ok := h.gatewayRequestScope(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.Gateway.ArchiveGovernancePolicy(r.Context(), workspaceID, userID, chi.URLParam(r, "id"))
 	h.writeGatewayResult(w, http.StatusOK, resp, err)
 }
 
@@ -877,6 +1159,52 @@ func validGatewayHost(raw string) bool {
 	}
 	parsed, err := url.Parse("http://" + host)
 	return err == nil && parsed.Host != ""
+}
+
+func gatewaySmokeOverallStatus(checks []gatewaySmokeCheck) string {
+	status := "pass"
+	for _, check := range checks {
+		switch check.Status {
+		case "fail":
+			return "fail"
+		case "warning":
+			status = "warning"
+		}
+	}
+	return status
+}
+
+func fetchGatewaySmokeModels(ctx context.Context, client *http.Client, openAIBaseURL, gatewayKey string) (gatewaySmokeModelResult, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	modelsURL := strings.TrimRight(openAIBaseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return gatewaySmokeModelResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return gatewaySmokeModelResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return gatewaySmokeModelResult{}, fmt.Errorf("GET %s returned %d", modelsURL, resp.StatusCode)
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return gatewaySmokeModelResult{}, err
+	}
+	result := gatewaySmokeModelResult{Count: len(body.Data)}
+	if len(body.Data) > 0 {
+		result.FirstModel = body.Data[0].ID
+	}
+	return result, nil
 }
 
 func (h *Handler) writeGatewayResult(w http.ResponseWriter, status int, payload any, err error) {

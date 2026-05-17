@@ -194,6 +194,20 @@ export interface GatewayDoctorResponse {
   generated_at: string;
 }
 
+export interface GatewaySmokeCheck {
+  id: string;
+  status: GatewayDoctorCheckStatus;
+  title: string;
+  detail: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface GatewaySmokeResponse {
+  status: GatewayDoctorCheckStatus;
+  generated_at: string;
+  checks: GatewaySmokeCheck[];
+}
+
 export interface GatewayCredentialHealthSummary {
   total: number;
   enabled: number;
@@ -527,6 +541,16 @@ export interface GatewayControlMappingItem {
   updated_at: string;
 }
 
+export interface UpsertGatewayControlMappingRequest {
+  framework: string;
+  control_id: string;
+  control_title: string;
+  mapped_policy_ids?: unknown;
+  mapped_evidence_queries?: unknown;
+  status: string;
+  owner_user_id?: string;
+}
+
 export interface GatewayIncidentItem {
   id: string;
   severity: string;
@@ -541,6 +565,19 @@ export interface GatewayIncidentItem {
   remediation_notes: string;
   opened_at: string;
   closed_at: string | null;
+}
+
+export interface CreateGatewayIncidentRequest {
+  severity: string;
+  category: string;
+  linked_request_id?: string;
+  linked_session_id?: string;
+  linked_span_row_id?: string;
+  linked_policy_id?: string;
+  linked_provider_risk_id?: string;
+  summary: string;
+  status?: string;
+  remediation_notes?: string;
 }
 
 export interface GatewayPolicyExceptionItem {

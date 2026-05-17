@@ -11,6 +11,129 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveAIControlMapping = `-- name: ArchiveAIControlMapping :one
+UPDATE ai_control_mapping
+SET archived_at = now(), updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING id, workspace_id, framework, control_id, control_title, mapped_policy_ids, mapped_evidence_queries, status, owner_user_id, updated_at, archived_at
+`
+
+type ArchiveAIControlMappingParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ArchiveAIControlMapping(ctx context.Context, arg ArchiveAIControlMappingParams) (AiControlMapping, error) {
+	row := q.db.QueryRow(ctx, archiveAIControlMapping, arg.WorkspaceID, arg.ID)
+	var i AiControlMapping
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Framework,
+		&i.ControlID,
+		&i.ControlTitle,
+		&i.MappedPolicyIds,
+		&i.MappedEvidenceQueries,
+		&i.Status,
+		&i.OwnerUserID,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const archiveAIIncident = `-- name: ArchiveAIIncident :one
+UPDATE ai_incident
+SET
+    status = CASE WHEN status = 'open' THEN 'closed' ELSE status END,
+    remediation_notes = CASE
+        WHEN remediation_notes = '' THEN 'Archived by workspace admin.'
+        ELSE remediation_notes
+    END,
+    closed_at = CASE WHEN closed_at IS NULL THEN now() ELSE closed_at END,
+    archived_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at, archived_at
+`
+
+type ArchiveAIIncidentParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ArchiveAIIncident(ctx context.Context, arg ArchiveAIIncidentParams) (AiIncident, error) {
+	row := q.db.QueryRow(ctx, archiveAIIncident, arg.WorkspaceID, arg.ID)
+	var i AiIncident
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Severity,
+		&i.Category,
+		&i.LinkedRequestID,
+		&i.LinkedSessionID,
+		&i.LinkedSpanRowID,
+		&i.LinkedPolicyID,
+		&i.LinkedProviderRiskID,
+		&i.Summary,
+		&i.Status,
+		&i.RemediationNotes,
+		&i.OpenedAt,
+		&i.ClosedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const archiveAIThirdPartyRisk = `-- name: ArchiveAIThirdPartyRisk :one
+UPDATE ai_third_party_risk
+SET archived_at = now(), updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING id, workspace_id, backend_id, provider_name, owner_user_id, approved_use_cases, data_categories, regions, hosting_notes, contract_status, security_review_status, evidence_links, limitations, prohibited_uses, model_list, capability_class, risk_score, review_cadence_days, last_assessment_at, next_review_at, active_exception_count, created_at, updated_at, archived_at
+`
+
+type ArchiveAIThirdPartyRiskParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ArchiveAIThirdPartyRisk(ctx context.Context, arg ArchiveAIThirdPartyRiskParams) (AiThirdPartyRisk, error) {
+	row := q.db.QueryRow(ctx, archiveAIThirdPartyRisk, arg.WorkspaceID, arg.ID)
+	var i AiThirdPartyRisk
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.BackendID,
+		&i.ProviderName,
+		&i.OwnerUserID,
+		&i.ApprovedUseCases,
+		&i.DataCategories,
+		&i.Regions,
+		&i.HostingNotes,
+		&i.ContractStatus,
+		&i.SecurityReviewStatus,
+		&i.EvidenceLinks,
+		&i.Limitations,
+		&i.ProhibitedUses,
+		&i.ModelList,
+		&i.CapabilityClass,
+		&i.RiskScore,
+		&i.ReviewCadenceDays,
+		&i.LastAssessmentAt,
+		&i.NextReviewAt,
+		&i.ActiveExceptionCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const createAIAuditLog = `-- name: CreateAIAuditLog :one
 INSERT INTO ai_audit_log (
     workspace_id, actor_user_id, action, target_type, target_id,
@@ -178,7 +301,7 @@ INSERT INTO ai_incident (
     summary, status, remediation_notes
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at
+RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at, archived_at
 `
 
 type CreateAIIncidentParams struct {
@@ -225,6 +348,7 @@ func (q *Queries) CreateAIIncident(ctx context.Context, arg CreateAIIncidentPara
 		&i.RemediationNotes,
 		&i.OpenedAt,
 		&i.ClosedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -442,7 +566,7 @@ func (q *Queries) GetActiveAIPolicyExceptionForProvider(ctx context.Context, arg
 
 const listAIControlMappingsWithEvidence = `-- name: ListAIControlMappingsWithEvidence :many
 SELECT
-    m.id, m.workspace_id, m.framework, m.control_id, m.control_title, m.mapped_policy_ids, m.mapped_evidence_queries, m.status, m.owner_user_id, m.updated_at,
+    m.id, m.workspace_id, m.framework, m.control_id, m.control_title, m.mapped_policy_ids, m.mapped_evidence_queries, m.status, m.owner_user_id, m.updated_at, m.archived_at,
     COALESCE(evidence.evidence_count, 0)::bigint AS evidence_count,
     evidence.last_evidence_generated_at
 FROM ai_control_mapping m
@@ -458,6 +582,7 @@ LEFT JOIN LATERAL (
       )
 ) evidence ON true
 WHERE m.workspace_id = $1
+  AND m.archived_at IS NULL
 ORDER BY m.framework, m.control_id
 `
 
@@ -472,6 +597,7 @@ type ListAIControlMappingsWithEvidenceRow struct {
 	Status                  string             `json:"status"`
 	OwnerUserID             pgtype.UUID        `json:"owner_user_id"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt              pgtype.Timestamptz `json:"archived_at"`
 	EvidenceCount           int64              `json:"evidence_count"`
 	LastEvidenceGeneratedAt interface{}        `json:"last_evidence_generated_at"`
 }
@@ -496,6 +622,7 @@ func (q *Queries) ListAIControlMappingsWithEvidence(ctx context.Context, workspa
 			&i.Status,
 			&i.OwnerUserID,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
 			&i.EvidenceCount,
 			&i.LastEvidenceGeneratedAt,
 		); err != nil {
@@ -629,8 +756,9 @@ func (q *Queries) ListAIEvidenceExports(ctx context.Context, arg ListAIEvidenceE
 }
 
 const listAIIncidents = `-- name: ListAIIncidents :many
-SELECT id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at FROM ai_incident
+SELECT id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at, archived_at FROM ai_incident
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY opened_at DESC
 LIMIT $2
 `
@@ -664,6 +792,7 @@ func (q *Queries) ListAIIncidents(ctx context.Context, arg ListAIIncidentsParams
 			&i.RemediationNotes,
 			&i.OpenedAt,
 			&i.ClosedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -764,8 +893,9 @@ func (q *Queries) ListAISystemInventory(ctx context.Context, workspaceID pgtype.
 }
 
 const listAIThirdPartyRisk = `-- name: ListAIThirdPartyRisk :many
-SELECT id, workspace_id, backend_id, provider_name, owner_user_id, approved_use_cases, data_categories, regions, hosting_notes, contract_status, security_review_status, evidence_links, limitations, prohibited_uses, model_list, capability_class, risk_score, review_cadence_days, last_assessment_at, next_review_at, active_exception_count, created_at, updated_at FROM ai_third_party_risk
+SELECT id, workspace_id, backend_id, provider_name, owner_user_id, approved_use_cases, data_categories, regions, hosting_notes, contract_status, security_review_status, evidence_links, limitations, prohibited_uses, model_list, capability_class, risk_score, review_cadence_days, last_assessment_at, next_review_at, active_exception_count, created_at, updated_at, archived_at FROM ai_third_party_risk
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY risk_score DESC, next_review_at NULLS FIRST, provider_name
 `
 
@@ -802,6 +932,7 @@ func (q *Queries) ListAIThirdPartyRisk(ctx context.Context, workspaceID pgtype.U
 			&i.ActiveExceptionCount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -896,7 +1027,8 @@ SET
     closed_at = CASE WHEN $3 = 'closed' THEN now() ELSE closed_at END
 WHERE workspace_id = $1
   AND id = $2
-RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at
+  AND archived_at IS NULL
+RETURNING id, workspace_id, severity, category, linked_request_id, linked_session_id, linked_span_row_id, linked_policy_id, linked_provider_risk_id, summary, status, remediation_notes, opened_at, closed_at, archived_at
 `
 
 type UpdateAIIncidentParams struct {
@@ -929,6 +1061,7 @@ func (q *Queries) UpdateAIIncident(ctx context.Context, arg UpdateAIIncidentPara
 		&i.RemediationNotes,
 		&i.OpenedAt,
 		&i.ClosedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -995,8 +1128,9 @@ DO UPDATE SET
     mapped_evidence_queries = EXCLUDED.mapped_evidence_queries,
     status = EXCLUDED.status,
     owner_user_id = EXCLUDED.owner_user_id,
+    archived_at = NULL,
     updated_at = now()
-RETURNING id, workspace_id, framework, control_id, control_title, mapped_policy_ids, mapped_evidence_queries, status, owner_user_id, updated_at
+RETURNING id, workspace_id, framework, control_id, control_title, mapped_policy_ids, mapped_evidence_queries, status, owner_user_id, updated_at, archived_at
 `
 
 type UpsertAIControlMappingParams struct {
@@ -1033,6 +1167,7 @@ func (q *Queries) UpsertAIControlMapping(ctx context.Context, arg UpsertAIContro
 		&i.Status,
 		&i.OwnerUserID,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -1067,8 +1202,9 @@ DO UPDATE SET
     last_assessment_at = EXCLUDED.last_assessment_at,
     next_review_at = EXCLUDED.next_review_at,
     active_exception_count = EXCLUDED.active_exception_count,
+    archived_at = NULL,
     updated_at = now()
-RETURNING id, workspace_id, backend_id, provider_name, owner_user_id, approved_use_cases, data_categories, regions, hosting_notes, contract_status, security_review_status, evidence_links, limitations, prohibited_uses, model_list, capability_class, risk_score, review_cadence_days, last_assessment_at, next_review_at, active_exception_count, created_at, updated_at
+RETURNING id, workspace_id, backend_id, provider_name, owner_user_id, approved_use_cases, data_categories, regions, hosting_notes, contract_status, security_review_status, evidence_links, limitations, prohibited_uses, model_list, capability_class, risk_score, review_cadence_days, last_assessment_at, next_review_at, active_exception_count, created_at, updated_at, archived_at
 `
 
 type UpsertAIThirdPartyRiskParams struct {
@@ -1142,6 +1278,7 @@ func (q *Queries) UpsertAIThirdPartyRisk(ctx context.Context, arg UpsertAIThirdP
 		&i.ActiveExceptionCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }

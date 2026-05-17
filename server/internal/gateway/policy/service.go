@@ -45,6 +45,7 @@ type RequestContext struct {
 	Model       string
 	Tools       []string
 	DataClasses []string
+	PromptText  string
 }
 
 func NewService(queries *db.Queries) *Service {
@@ -75,6 +76,7 @@ func (s *Service) Evaluate(ctx context.Context, req RequestContext) (Evaluation,
 			Model:       req.Model,
 			Tools:       req.Tools,
 			DataClasses: req.DataClasses,
+			PromptText:  req.PromptText,
 			UserID:      req.UserID,
 			AgentID:     req.AgentID,
 		})
@@ -179,6 +181,8 @@ func resourceTypeForDecision(decision Decision) string {
 		return "tool"
 	case len(match.DataClasses) > 0:
 		return "data_class"
+	case len(match.PromptKeywords) > 0:
+		return "prompt_keyword"
 	case len(match.Users) > 0:
 		return "user"
 	case len(match.Agents) > 0:
@@ -209,6 +213,8 @@ func resourceLabelForDecision(req RequestContext, decision Decision) string {
 		return firstMatching(match.Tools, req.Tools)
 	case len(match.DataClasses) > 0:
 		return firstMatching(match.DataClasses, req.DataClasses)
+	case len(match.PromptKeywords) > 0:
+		return firstMatchingPromptKeyword(match.PromptKeywords, req.PromptText)
 	case len(match.Users) > 0:
 		return req.UserID
 	case len(match.Agents) > 0:
@@ -216,6 +222,20 @@ func resourceLabelForDecision(req RequestContext, decision Decision) string {
 	default:
 		return "gateway"
 	}
+}
+
+func firstMatchingPromptKeyword(keywords []string, promptText string) string {
+	normalizedPrompt := strings.ToLower(promptText)
+	for _, keyword := range keywords {
+		normalizedKeyword := strings.ToLower(strings.TrimSpace(keyword))
+		if normalizedKeyword != "" && strings.Contains(normalizedPrompt, normalizedKeyword) {
+			return strings.TrimSpace(keyword)
+		}
+	}
+	if len(keywords) > 0 {
+		return strings.TrimSpace(keywords[0])
+	}
+	return ""
 }
 
 func firstMatching(allowed, values []string) string {

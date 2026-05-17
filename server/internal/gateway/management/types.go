@@ -590,6 +590,33 @@ type UpdateIncidentInput struct {
 	RemediationNotes string
 }
 
+type CreateIncidentInput struct {
+	WorkspaceID          string
+	ActorUserID          string
+	Severity             string
+	Category             string
+	LinkedRequestID      string
+	LinkedSessionID      string
+	LinkedSpanRowID      string
+	LinkedPolicyID       string
+	LinkedProviderRiskID string
+	Summary              string
+	Status               string
+	RemediationNotes     string
+}
+
+type UpsertControlMappingInput struct {
+	WorkspaceID           string
+	ActorUserID           string
+	Framework             string
+	ControlID             string
+	ControlTitle          string
+	MappedPolicyIDs       any
+	MappedEvidenceQueries any
+	Status                string
+	OwnerUserID           string
+}
+
 type CreateGovernancePolicyInput struct {
 	WorkspaceID     string
 	ActorUserID     string

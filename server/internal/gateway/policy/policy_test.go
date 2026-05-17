@@ -59,6 +59,46 @@ func TestEvaluateRequiresApprovalForSensitiveDataClass(t *testing.T) {
 	}
 }
 
+func TestEvaluateBlocksMatchingPromptKeyword(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate([]Rule{{
+		ID:         "block-keyword",
+		Action:     ActionBlock,
+		ReasonCode: "prompt_keyword_blocked",
+		Match: Match{
+			PromptKeywords: []string{"confidential acquisition"},
+		},
+	}}, Request{PromptText: "Summarize this CONFIDENTIAL acquisition plan for the board."})
+
+	if got.Action != ActionBlock {
+		t.Fatalf("expected block, got %s", got.Action)
+	}
+	if got.ReasonCode != "prompt_keyword_blocked" {
+		t.Fatalf("reason mismatch: %q", got.ReasonCode)
+	}
+}
+
+func TestEvaluateAllowsWhenPromptKeywordIsAbsent(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate([]Rule{{
+		ID:         "block-keyword",
+		Action:     ActionBlock,
+		ReasonCode: "prompt_keyword_blocked",
+		Match: Match{
+			PromptKeywords: []string{"confidential acquisition"},
+		},
+	}}, Request{PromptText: "Summarize the public launch notes."})
+
+	if got.Action != ActionAllow {
+		t.Fatalf("expected allow, got %s", got.Action)
+	}
+	if len(got.MatchedRules) != 0 {
+		t.Fatalf("expected no matched rules, got %#v", got.MatchedRules)
+	}
+}
+
 func TestEvaluateChoosesHighestSeverity(t *testing.T) {
 	t.Parallel()
 

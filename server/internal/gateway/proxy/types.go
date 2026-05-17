@@ -7,7 +7,9 @@ const (
 	ProtocolAnthropic = "anthropic"
 
 	SurfaceOpenAIChatCompletions = "openai_chat_completions"
+	SurfaceOpenAIResponses       = "openai_responses"
 	SurfaceAnthropicMessages     = "anthropic_messages"
+	SurfaceAnthropicCountTokens  = "anthropic_count_tokens"
 	SurfaceModels                = "models"
 
 	StatusSuccess       = "success"
@@ -98,9 +100,9 @@ type ProxyResult struct {
 
 func ProtocolForRequest(r *http.Request, surface string) string {
 	switch surface {
-	case SurfaceAnthropicMessages:
+	case SurfaceAnthropicMessages, SurfaceAnthropicCountTokens:
 		return ProtocolAnthropic
-	case SurfaceOpenAIChatCompletions:
+	case SurfaceOpenAIChatCompletions, SurfaceOpenAIResponses:
 		return ProtocolOpenAI
 	case SurfaceModels:
 		if r.Header.Get("anthropic-version") != "" || r.Header.Get("x-api-key") != "" {

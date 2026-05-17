@@ -49,6 +49,21 @@ var incidentStatuses = map[string]struct{}{
 	"closed":        {},
 }
 
+var incidentSeverities = map[string]struct{}{
+	"low":      {},
+	"medium":   {},
+	"high":     {},
+	"critical": {},
+}
+
+var controlMappingStatuses = map[string]struct{}{
+	"not_started":   {},
+	"in_progress":   {},
+	"covered":       {},
+	"gap":           {},
+	"accepted_risk": {},
+}
+
 var policyExceptionStatuses = map[string]struct{}{
 	"requested": {},
 	"approved":  {},
@@ -62,6 +77,7 @@ var gatewayPolicyTypes = map[string]struct{}{
 	"model":    {},
 	"tool":     {},
 	"data":     {},
+	"prompt":   {},
 	"budget":   {},
 	"approval": {},
 	"routing":  {},
@@ -2918,6 +2934,97 @@ func (s *Service) UpdateIncident(ctx context.Context, input UpdateIncidentInput)
 	return incidentItem(row), nil
 }
 
+func (s *Service) CreateIncident(ctx context.Context, input CreateIncidentInput) (IncidentItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	normalized, err := normalizeCreateIncidentInput(input)
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	requestID, err := optionalUUID(normalized.LinkedRequestID, "linked_request_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	sessionID, err := optionalUUID(normalized.LinkedSessionID, "linked_session_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	spanRowID, err := optionalUUID(normalized.LinkedSpanRowID, "linked_span_row_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	policyID, err := optionalUUID(normalized.LinkedPolicyID, "linked_policy_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	providerRiskID, err := optionalUUID(normalized.LinkedProviderRiskID, "linked_provider_risk_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+
+	var row db.AiIncident
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.CreateAIIncident(ctx, db.CreateAIIncidentParams{
+			WorkspaceID:          workspaceUUID,
+			Severity:             normalized.Severity,
+			Category:             normalized.Category,
+			LinkedRequestID:      requestID,
+			LinkedSessionID:      sessionID,
+			LinkedSpanRowID:      spanRowID,
+			LinkedPolicyID:       policyID,
+			LinkedProviderRiskID: providerRiskID,
+			Summary:              normalized.Summary,
+			Status:               normalized.Status,
+			RemediationNotes:     normalized.RemediationNotes,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.incident.create", "ai_incident", uuidString(row.ID), nil, incidentItem(row))
+	}); err != nil {
+		return IncidentItem{}, err
+	}
+	return incidentItem(row), nil
+}
+
+func (s *Service) ArchiveIncident(ctx context.Context, workspaceID, actorUserID, incidentID string) (IncidentItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+	incidentUUID, err := uuidValue(incidentID, "incident_id")
+	if err != nil {
+		return IncidentItem{}, err
+	}
+
+	var row db.AiIncident
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.ArchiveAIIncident(ctx, db.ArchiveAIIncidentParams{WorkspaceID: workspaceUUID, ID: incidentUUID})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.incident.archive", "ai_incident", uuidString(row.ID), incidentItem(row), nil)
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return IncidentItem{}, ErrGatewayBackendNotFound
+		}
+		return IncidentItem{}, err
+	}
+	return incidentItem(row), nil
+}
+
 func (s *Service) ListPolicyExceptions(ctx context.Context, workspaceID string, limit int32) ([]PolicyExceptionItem, error) {
 	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
 	if err != nil {
@@ -3136,6 +3243,41 @@ func (s *Service) UpdateGovernancePolicy(ctx context.Context, input UpdateGovern
 	return governancePolicyItem(row), nil
 }
 
+func (s *Service) ArchiveGovernancePolicy(ctx context.Context, workspaceID, actorUserID, policyID string) (GovernancePolicyItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+	policyUUID, err := uuidValue(policyID, "policy_id")
+	if err != nil {
+		return GovernancePolicyItem{}, err
+	}
+
+	var row db.GatewayPolicy
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.ArchiveGatewayPolicy(ctx, db.ArchiveGatewayPolicyParams{
+			WorkspaceID: workspaceUUID,
+			ID:          policyUUID,
+			UpdatedBy:   actorUUID,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.policy.archive", "gateway_policy", uuidString(row.ID), governancePolicyItem(row), nil)
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GovernancePolicyItem{}, ErrGatewayBackendNotFound
+		}
+		return GovernancePolicyItem{}, err
+	}
+	return governancePolicyItem(row), nil
+}
+
 func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, workspaceID pgtype.UUID) error {
 	for _, control := range defaultGatewayControlMappings {
 		mappedEvidenceQueries, err := json.Marshal(control.MappedEvidenceQueries)
@@ -3156,6 +3298,86 @@ func (s *Service) ensureDefaultGatewayControlMappings(ctx context.Context, works
 		}
 	}
 	return nil
+}
+
+func (s *Service) UpsertControlMapping(ctx context.Context, input UpsertControlMappingInput) (ControlMappingItem, error) {
+	workspaceUUID, err := uuidValue(input.WorkspaceID, "workspace_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	actorUUID, err := uuidValue(input.ActorUserID, "actor_user_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	normalized, err := normalizeControlMappingInput(input)
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	ownerUUID, err := optionalUUID(normalized.OwnerUserID, "owner_user_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	mappedPolicyIDs, err := jsonAny(normalized.MappedPolicyIDs, []byte("[]"), "mapped_policy_ids")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	mappedEvidenceQueries, err := jsonAny(normalized.MappedEvidenceQueries, []byte("[]"), "mapped_evidence_queries")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+
+	var row db.AiControlMapping
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.UpsertAIControlMapping(ctx, db.UpsertAIControlMappingParams{
+			WorkspaceID:           workspaceUUID,
+			Framework:             normalized.Framework,
+			ControlID:             normalized.ControlID,
+			ControlTitle:          normalized.ControlTitle,
+			MappedPolicyIds:       mappedPolicyIDs,
+			MappedEvidenceQueries: mappedEvidenceQueries,
+			Status:                normalized.Status,
+			OwnerUserID:           ownerUUID,
+		})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.control_mapping.upsert", "ai_control_mapping", uuidString(row.ID), nil, controlMappingFromRow(row))
+	}); err != nil {
+		return ControlMappingItem{}, err
+	}
+	return controlMappingFromRow(row), nil
+}
+
+func (s *Service) ArchiveControlMapping(ctx context.Context, workspaceID, actorUserID, controlMappingID string) (ControlMappingItem, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+	controlMappingUUID, err := uuidValue(controlMappingID, "control_mapping_id")
+	if err != nil {
+		return ControlMappingItem{}, err
+	}
+
+	var row db.AiControlMapping
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.ArchiveAIControlMapping(ctx, db.ArchiveAIControlMappingParams{WorkspaceID: workspaceUUID, ID: controlMappingUUID})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.control_mapping.archive", "ai_control_mapping", uuidString(row.ID), controlMappingFromRow(row), nil)
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ControlMappingItem{}, ErrGatewayBackendNotFound
+		}
+		return ControlMappingItem{}, err
+	}
+	return controlMappingFromRow(row), nil
 }
 
 func (s *Service) ListProviderRisks(ctx context.Context, workspaceID string) ([]ProviderRiskResponse, error) {
@@ -3255,6 +3477,37 @@ func (s *Service) UpsertProviderRisk(ctx context.Context, input UpsertProviderRi
 	return providerRiskResponse(row), nil
 }
 
+func (s *Service) ArchiveProviderRisk(ctx context.Context, workspaceID, actorUserID, providerRiskID string) (ProviderRiskResponse, error) {
+	workspaceUUID, err := uuidValue(workspaceID, "workspace_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	actorUUID, err := uuidValue(actorUserID, "actor_user_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+	providerRiskUUID, err := uuidValue(providerRiskID, "provider_risk_id")
+	if err != nil {
+		return ProviderRiskResponse{}, err
+	}
+
+	var row db.AiThirdPartyRisk
+	if err := s.withTx(ctx, func(q *db.Queries) error {
+		var err error
+		row, err = q.ArchiveAIThirdPartyRisk(ctx, db.ArchiveAIThirdPartyRiskParams{WorkspaceID: workspaceUUID, ID: providerRiskUUID})
+		if err != nil {
+			return err
+		}
+		return audit(ctx, q, workspaceUUID, actorUUID, "gateway.governance.provider_risk.archive", "ai_third_party_risk", uuidString(row.ID), providerRiskResponse(row), nil)
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProviderRiskResponse{}, ErrGatewayBackendNotFound
+		}
+		return ProviderRiskResponse{}, err
+	}
+	return providerRiskResponse(row), nil
+}
+
 func normalizeProviderRiskInput(input UpsertProviderRiskInput) (UpsertProviderRiskInput, error) {
 	normalized := input
 	normalized.ProviderName = strings.ToLower(strings.TrimSpace(normalized.ProviderName))
@@ -3293,6 +3546,61 @@ func normalizeProviderRiskInput(input UpsertProviderRiskInput) (UpsertProviderRi
 	}
 	if _, ok := governanceStatuses[normalized.SecurityReviewStatus]; !ok {
 		return normalized, fmt.Errorf("%w: invalid security_review_status", ErrInvalidGatewayBackend)
+	}
+	return normalized, nil
+}
+
+func normalizeCreateIncidentInput(input CreateIncidentInput) (CreateIncidentInput, error) {
+	normalized := input
+	normalized.Severity = strings.ToLower(strings.TrimSpace(normalized.Severity))
+	normalized.Category = strings.TrimSpace(normalized.Category)
+	normalized.Summary = strings.TrimSpace(normalized.Summary)
+	normalized.Status = strings.ToLower(strings.TrimSpace(normalized.Status))
+	if normalized.Status == "" {
+		normalized.Status = "open"
+	}
+	normalized.RemediationNotes = strings.TrimSpace(normalized.RemediationNotes)
+	normalized.LinkedRequestID = strings.TrimSpace(normalized.LinkedRequestID)
+	normalized.LinkedSessionID = strings.TrimSpace(normalized.LinkedSessionID)
+	normalized.LinkedSpanRowID = strings.TrimSpace(normalized.LinkedSpanRowID)
+	normalized.LinkedPolicyID = strings.TrimSpace(normalized.LinkedPolicyID)
+	normalized.LinkedProviderRiskID = strings.TrimSpace(normalized.LinkedProviderRiskID)
+	if _, ok := incidentSeverities[normalized.Severity]; !ok {
+		return CreateIncidentInput{}, fmt.Errorf("%w: invalid incident severity", ErrInvalidGatewayBackend)
+	}
+	if normalized.Category == "" {
+		return CreateIncidentInput{}, fmt.Errorf("%w: incident category is required", ErrInvalidGatewayBackend)
+	}
+	if normalized.Summary == "" {
+		return CreateIncidentInput{}, fmt.Errorf("%w: incident summary is required", ErrInvalidGatewayBackend)
+	}
+	if _, ok := incidentStatuses[normalized.Status]; !ok {
+		return CreateIncidentInput{}, fmt.Errorf("%w: invalid incident status", ErrInvalidGatewayBackend)
+	}
+	return normalized, nil
+}
+
+func normalizeControlMappingInput(input UpsertControlMappingInput) (UpsertControlMappingInput, error) {
+	normalized := input
+	normalized.Framework = strings.TrimSpace(normalized.Framework)
+	normalized.ControlID = strings.TrimSpace(normalized.ControlID)
+	normalized.ControlTitle = strings.TrimSpace(normalized.ControlTitle)
+	normalized.Status = strings.ToLower(strings.TrimSpace(normalized.Status))
+	normalized.OwnerUserID = strings.TrimSpace(normalized.OwnerUserID)
+	if normalized.Status == "" {
+		normalized.Status = "not_started"
+	}
+	if normalized.Framework == "" {
+		return UpsertControlMappingInput{}, fmt.Errorf("%w: framework is required", ErrInvalidGatewayBackend)
+	}
+	if normalized.ControlID == "" {
+		return UpsertControlMappingInput{}, fmt.Errorf("%w: control_id is required", ErrInvalidGatewayBackend)
+	}
+	if normalized.ControlTitle == "" {
+		return UpsertControlMappingInput{}, fmt.Errorf("%w: control_title is required", ErrInvalidGatewayBackend)
+	}
+	if _, ok := controlMappingStatuses[normalized.Status]; !ok {
+		return UpsertControlMappingInput{}, fmt.Errorf("%w: invalid control status", ErrInvalidGatewayBackend)
 	}
 	return normalized, nil
 }
@@ -3377,6 +3685,22 @@ func controlMappingItem(row db.ListAIControlMappingsWithEvidenceRow) ControlMapp
 		OwnerUserID:             optionalUUIDString(row.OwnerUserID),
 		EvidenceCount:           row.EvidenceCount,
 		LastEvidenceGeneratedAt: controlEvidenceTimestamp(row.LastEvidenceGeneratedAt),
+		UpdatedAt:               textTimestamp(row.UpdatedAt),
+	}
+}
+
+func controlMappingFromRow(row db.AiControlMapping) ControlMappingItem {
+	return ControlMappingItem{
+		ID:                      uuidString(row.ID),
+		Framework:               row.Framework,
+		ControlID:               row.ControlID,
+		ControlTitle:            row.ControlTitle,
+		MappedPolicyIDs:         auditJSON(row.MappedPolicyIds),
+		MappedEvidenceQueries:   auditJSON(row.MappedEvidenceQueries),
+		Status:                  row.Status,
+		OwnerUserID:             optionalUUIDString(row.OwnerUserID),
+		EvidenceCount:           0,
+		LastEvidenceGeneratedAt: "",
 		UpdatedAt:               textTimestamp(row.UpdatedAt),
 	}
 }
@@ -3797,6 +4121,20 @@ func stringArrayJSON(values []string) ([]byte, error) {
 	raw, err := json.Marshal(cleanStringSlice(values))
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid string array: %v", ErrInvalidGatewayBackend, err)
+	}
+	return raw, nil
+}
+
+func jsonAny(value any, defaultRaw []byte, field string) ([]byte, error) {
+	if value == nil {
+		return defaultRaw, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid %s: %v", ErrInvalidGatewayBackend, field, err)
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return defaultRaw, nil
 	}
 	return raw, nil
 }

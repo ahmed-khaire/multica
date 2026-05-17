@@ -18,17 +18,19 @@ type Request struct {
 	Model       string
 	Tools       []string
 	DataClasses []string
+	PromptText  string
 	UserID      string
 	AgentID     string
 }
 
 type Match struct {
-	Providers   []string `json:"providers"`
-	Models      []string `json:"models"`
-	Tools       []string `json:"tools"`
-	DataClasses []string `json:"data_classes"`
-	Users       []string `json:"users"`
-	Agents      []string `json:"agents"`
+	Providers      []string `json:"providers"`
+	Models         []string `json:"models"`
+	Tools          []string `json:"tools"`
+	DataClasses    []string `json:"data_classes"`
+	PromptKeywords []string `json:"prompt_keywords"`
+	Users          []string `json:"users"`
+	Agents         []string `json:"agents"`
 }
 
 type Rule struct {
@@ -85,6 +87,7 @@ func matches(m Match, req Request) bool {
 		matchScalar(m.Models, req.Model) &&
 		matchTools(m.Tools, req.Tools) &&
 		matchAny(m.DataClasses, req.DataClasses) &&
+		matchPromptKeywords(m.PromptKeywords, req.PromptText) &&
 		matchScalar(m.Users, req.UserID) &&
 		matchScalar(m.Agents, req.AgentID)
 }
@@ -125,6 +128,20 @@ func matchTools(allowed []string, values []string) bool {
 			if allowedValue == value || normalizedAllowed == NormalizeToolName(value) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func matchPromptKeywords(keywords []string, promptText string) bool {
+	if len(keywords) == 0 {
+		return true
+	}
+	normalizedPrompt := strings.ToLower(promptText)
+	for _, keyword := range keywords {
+		normalizedKeyword := strings.ToLower(strings.TrimSpace(keyword))
+		if normalizedKeyword != "" && strings.Contains(normalizedPrompt, normalizedKeyword) {
+			return true
 		}
 	}
 	return false

@@ -76,6 +76,19 @@ func TestOpenAIUsageExtraction(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesUsageExtraction(t *testing.T) {
+	got := ExtractOpenAIUsage(map[string]any{
+		"usage": map[string]any{
+			"input_tokens":  float64(12),
+			"output_tokens": float64(8),
+			"total_tokens":  float64(20),
+		},
+	})
+	if got.PromptTokens != 12 || got.CompletionTokens != 8 || got.TotalTokens != 20 || got.Source != "upstream" {
+		t.Fatalf("usage = %#v", got)
+	}
+}
+
 func TestAnthropicUsageExtraction(t *testing.T) {
 	got := ExtractAnthropicUsage(map[string]any{
 		"usage": map[string]any{
@@ -84,6 +97,15 @@ func TestAnthropicUsageExtraction(t *testing.T) {
 		},
 	})
 	if got.PromptTokens != 10 || got.CompletionTokens != 7 || got.TotalTokens != 17 || got.Source != "upstream" {
+		t.Fatalf("usage = %#v", got)
+	}
+}
+
+func TestAnthropicCountTokensUsageExtraction(t *testing.T) {
+	got := ExtractAnthropicUsage(map[string]any{
+		"input_tokens": float64(10),
+	})
+	if got.PromptTokens != 10 || got.CompletionTokens != 0 || got.TotalTokens != 10 || got.Source != "upstream" {
 		t.Fatalf("usage = %#v", got)
 	}
 }

@@ -70,8 +70,9 @@ func (f *Forwarder) Forward(ctx context.Context, w http.ResponseWriter, r *http.
 		return ProxyResult{}, err
 	}
 	responseJSON := decodeObject(body)
-	if summary.TranslationMode != TranslationNone && len(body) > 0 {
-		translated, decoded, err := TranslateResponseBody(body, summary.TranslationMode)
+	translationMode := normalizedTranslationMode(summary.TranslationMode)
+	if translationMode != TranslationNone && len(body) > 0 {
+		translated, decoded, err := TranslateResponseBody(body, translationMode)
 		if err != nil {
 			return ProxyResult{}, err
 		}
@@ -109,8 +110,9 @@ func BuildUpstreamRequest(ctx context.Context, inbound *http.Request, target Bac
 		method = inbound.Method
 	}
 	body := summary.Body
-	if summary.TranslationMode != TranslationNone {
-		translated, _, err := TranslateRequestBody(summary, summary.TranslationMode)
+	translationMode := normalizedTranslationMode(summary.TranslationMode)
+	if translationMode != TranslationNone {
+		translated, _, err := TranslateRequestBody(summary, translationMode)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +124,11 @@ func BuildUpstreamRequest(ctx context.Context, inbound *http.Request, target Bac
 		upstreamURL += "?" + inbound.URL.RawQuery
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, bytes.NewReader(body))
+	var requestBody io.Reader
+	if len(body) > 0 {
+		requestBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, upstreamURL, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +157,13 @@ func BuildUpstreamRequest(ctx context.Context, inbound *http.Request, target Bac
 	}
 
 	return req, nil
+}
+
+func normalizedTranslationMode(mode TranslationMode) TranslationMode {
+	if mode == "" {
+		return TranslationNone
+	}
+	return mode
 }
 
 func cloneForwardHeaders(src http.Header) http.Header {

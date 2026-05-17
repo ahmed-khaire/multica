@@ -1,8 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import type React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceIdProvider } from "@multica/core/hooks";
+import { NavigationProvider } from "../../navigation";
 import type {
   GatewayLLMCallListResponse,
   GatewayBackend,
@@ -28,7 +30,9 @@ import type {
   GatewaySessionDetail,
   GatewaySessionListResponse,
   GatewaySessionSpansResponse,
+  GatewaySmokeResponse,
   GatewayStatusResponse,
+  GatewayUserKeyListItem,
   GatewayUserKeyResponse,
 } from "@multica/core/types";
 
@@ -65,11 +69,17 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     listGatewayGovernancePolicies: vi.fn(),
     createGatewayGovernancePolicy: vi.fn(),
     updateGatewayGovernancePolicy: vi.fn(),
+    deleteGatewayGovernancePolicy: vi.fn(),
     listGatewayEvidence: vi.fn(),
     listGatewayControlMappings: vi.fn(),
+    upsertGatewayControlMapping: vi.fn(),
+    deleteGatewayControlMapping: vi.fn(),
     listGatewayIncidents: vi.fn(),
+    createGatewayIncident: vi.fn(),
+    deleteGatewayIncident: vi.fn(),
     listGatewayPolicyExceptions: vi.fn(),
     getGatewayDoctor: vi.fn(),
+    runGatewaySmoke: vi.fn(),
     getGatewayHealthReport: vi.fn(),
     getGatewayGovernanceInsights: vi.fn(),
     getGatewayEvidenceBundle: vi.fn(),
@@ -79,6 +89,8 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     updateGatewayPolicyException: vi.fn(),
     updateGatewayIncident: vi.fn(),
     createGatewayUserKey: vi.fn(),
+    listGatewayUserKeys: vi.fn(),
+    revokeGatewayUserKey: vi.fn(),
     createGatewayBackend: vi.fn(),
     updateGatewayBackend: vi.fn(),
     deleteGatewayBackend: vi.fn(),
@@ -87,6 +99,7 @@ const { mockApi, mockAuthState } = vi.hoisted(() => ({
     updateGatewayBackendCredential: vi.fn(),
     exportGatewayData: vi.fn(),
     upsertGatewayProviderRisk: vi.fn(),
+    deleteGatewayProviderRisk: vi.fn(),
     setGatewayDefaultBackend: vi.fn(),
     updateGatewayCapturePolicy: vi.fn(),
   },
@@ -97,7 +110,15 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: typeof mockAuthState) => unknown) => selector(mockAuthState),
 }));
 
-import { GatewayPage } from "./gateway-page";
+import {
+  GatewayGovernanceControlsPage,
+  GatewayGovernanceEvidencePage,
+  GatewayGovernanceIncidentsPage,
+  GatewayGovernancePage,
+  GatewayGovernancePoliciesPage,
+  GatewayGovernanceRiskRegisterPage,
+  GatewayPage,
+} from "./gateway-page";
 
 const overview: GatewayOverviewResponse = {
   since: "2026-05-03T00:00:00Z",
@@ -402,6 +423,48 @@ const gatewayHealthReport: GatewayHealthReportResponse = {
   checks: gatewayDoctor.checks,
 };
 
+const gatewaySmoke: GatewaySmokeResponse = {
+  status: "pass",
+  generated_at: "2026-05-04T13:15:00Z",
+  checks: [
+    {
+      id: "status",
+      status: "pass",
+      title: "Gateway status",
+      detail: "2/2 backends enabled, default openrouter, capture full_content",
+      metadata: { backend_count: 2, enabled_backend_count: 2 },
+    },
+    {
+      id: "doctor",
+      status: "warning",
+      title: "Gateway doctor",
+      detail: "healthy_with_warnings",
+      metadata: { check_count: 3 },
+    },
+    {
+      id: "key",
+      status: "pass",
+      title: "Gateway key",
+      detail: "Gateway key available",
+      metadata: { key_prefix: "mgw_active" },
+    },
+    {
+      id: "models",
+      status: "pass",
+      title: "Model catalog",
+      detail: "12 models, first gpt-smoke",
+      metadata: { model_count: 12, first_model: "gpt-smoke" },
+    },
+    {
+      id: "export",
+      status: "pass",
+      title: "Gateway export",
+      detail: "2 sessions, 3 LLM calls",
+      metadata: { session_count: 2, llm_call_count: 3 },
+    },
+  ],
+};
+
 const gatewayGovernanceInsights: GatewayGovernanceInsightsResponse = {
   generated_at: "2026-05-04T13:10:00Z",
   since: "2026-04-04T13:10:00Z",
@@ -493,6 +556,23 @@ const gatewayUserKey: GatewayUserKeyResponse = {
   created_at: "2026-05-04T12:00:00Z",
   last_used_at: null,
 };
+
+const gatewayUserKeys: GatewayUserKeyListItem[] = [
+  {
+    id: "gateway-key-1",
+    key_prefix: "mgw_active",
+    created_at: "2026-05-04T12:00:00Z",
+    last_used_at: "2026-05-04T12:30:00Z",
+    revoked_at: null,
+  },
+  {
+    id: "gateway-key-2",
+    key_prefix: "mgw_old",
+    created_at: "2026-05-03T12:00:00Z",
+    last_used_at: null,
+    revoked_at: "2026-05-04T10:00:00Z",
+  },
+];
 
 const gatewayAudit: GatewayAuditLogItem[] = [
   {
@@ -760,7 +840,7 @@ const adminMembers = [
   },
 ] as const;
 
-function renderGatewayPage() {
+function renderGatewayView(ui: React.ReactNode, pathname = "/gateway") {
   const qc = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0 },
@@ -769,11 +849,49 @@ function renderGatewayPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <WorkspaceIdProvider wsId="ws-1">
-        <GatewayPage />
-      </WorkspaceIdProvider>
+      <NavigationProvider
+        value={{
+          pathname,
+          searchParams: new URLSearchParams(),
+          push: vi.fn(),
+          replace: vi.fn(),
+          back: vi.fn(),
+        }}
+      >
+        <WorkspaceIdProvider wsId="ws-1">
+          {ui}
+        </WorkspaceIdProvider>
+      </NavigationProvider>
     </QueryClientProvider>,
   );
+}
+
+function renderGatewayPage() {
+  return renderGatewayView(<GatewayPage />);
+}
+
+function renderGatewayGovernancePage() {
+  return renderGatewayView(<GatewayGovernancePage />, "/gateway/governance");
+}
+
+function renderGatewayGovernancePoliciesPage() {
+  return renderGatewayView(<GatewayGovernancePoliciesPage />, "/gateway/governance/policies");
+}
+
+function renderGatewayGovernanceRiskRegisterPage() {
+  return renderGatewayView(<GatewayGovernanceRiskRegisterPage />, "/gateway/governance/risk-register");
+}
+
+function renderGatewayGovernanceControlsPage() {
+  return renderGatewayView(<GatewayGovernanceControlsPage />, "/gateway/governance/controls");
+}
+
+function renderGatewayGovernanceIncidentsPage() {
+  return renderGatewayView(<GatewayGovernanceIncidentsPage />, "/gateway/governance/incidents");
+}
+
+function renderGatewayGovernanceEvidencePage() {
+  return renderGatewayView(<GatewayGovernanceEvidencePage />, "/gateway/governance/evidence");
 }
 
 describe("GatewayPage", () => {
@@ -805,11 +923,25 @@ describe("GatewayPage", () => {
       enabled: false,
       version: 2,
     });
+    mockApi.deleteGatewayGovernancePolicy.mockResolvedValue({ deleted: true });
     mockApi.listGatewayEvidence.mockResolvedValue(gatewayEvidence);
     mockApi.listGatewayControlMappings.mockResolvedValue(gatewayControlMappings);
+    mockApi.upsertGatewayControlMapping.mockResolvedValue({
+      ...gatewayControlMappings[0],
+      control_id: "GW-4",
+      control_title: "Prompt keyword controls are enforced",
+    });
+    mockApi.deleteGatewayControlMapping.mockResolvedValue({ deleted: true });
     mockApi.listGatewayIncidents.mockResolvedValue(gatewayIncidents);
+    mockApi.createGatewayIncident.mockResolvedValue({
+      ...gatewayIncidents[0],
+      id: "incident-2",
+      summary: "Manual provider review needed",
+    });
+    mockApi.deleteGatewayIncident.mockResolvedValue({ deleted: true });
     mockApi.listGatewayPolicyExceptions.mockResolvedValue(gatewayPolicyExceptions);
     mockApi.getGatewayDoctor.mockResolvedValue(gatewayDoctor);
+    mockApi.runGatewaySmoke.mockResolvedValue(gatewaySmoke);
     mockApi.getGatewayHealthReport.mockResolvedValue(gatewayHealthReport);
     mockApi.getGatewayGovernanceInsights.mockResolvedValue(gatewayGovernanceInsights);
     mockApi.getGatewayEvidenceBundle.mockResolvedValue(gatewayEvidenceBundle);
@@ -828,6 +960,11 @@ describe("GatewayPage", () => {
       remediation_notes: "Provider review completed.",
     });
     mockApi.createGatewayUserKey.mockResolvedValue(gatewayUserKey);
+    mockApi.listGatewayUserKeys.mockResolvedValue(gatewayUserKeys);
+    mockApi.revokeGatewayUserKey.mockResolvedValue({
+      ...gatewayUserKeys[0],
+      revoked_at: "2026-05-04T13:00:00Z",
+    });
     mockApi.createGatewayBackend.mockResolvedValue({ ...gatewayBackends[1], slug: "groq", display_name: "Groq", base_url: "https://api.groq.com/openai/v1" });
     mockApi.updateGatewayBackend.mockResolvedValue({
       ...gatewayBackends[1],
@@ -860,6 +997,7 @@ describe("GatewayPage", () => {
       contract_status: "approved",
       risk_score: 64,
     });
+    mockApi.deleteGatewayProviderRisk.mockResolvedValue({ deleted: true });
     mockApi.setGatewayDefaultBackend.mockResolvedValue({ capture_policy: "full_content", default_backend: gatewayBackends[1] });
     mockApi.updateGatewayCapturePolicy.mockResolvedValue({ capture_policy: "metadata_only", default_backend: gatewayBackends[0] });
   });
@@ -868,6 +1006,9 @@ describe("GatewayPage", () => {
     renderGatewayPage();
 
     expect(screen.getByText("Gateway")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Operations/ })).toHaveAttribute("href", "/gateway");
+    expect(screen.getByRole("link", { name: /Governance/ })).toHaveAttribute("href", "/gateway/governance");
+    expect(screen.queryByRole("tab", { name: /Governance/ })).not.toBeInTheDocument();
     expect(await screen.findByText("2 sessions")).toBeInTheDocument();
     expect(screen.getByText("3 requests")).toBeInTheDocument();
     expect(screen.getAllByText("200 tokens").length).toBeGreaterThanOrEqual(1);
@@ -923,23 +1064,94 @@ describe("GatewayPage", () => {
     expect(screen.getByText(/MULTICA_OBSERVER_KEY=mig_secret/)).toBeInTheDocument();
   });
 
-  it("shows Gateway URLs and creates a user gateway key from the Setup tab", async () => {
+  it("shows Gateway URLs and creates a user gateway key from the Configure tab", async () => {
     const user = userEvent.setup();
     renderGatewayPage();
 
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await user.click(await screen.findByRole("tab", { name: /Configure/ }));
 
     expect(await screen.findByText("http://localhost:18080/v1")).toBeInTheDocument();
     expect(screen.getByText("http://localhost:18080")).toBeInTheDocument();
-    expect(screen.getByText("Capture: full_content")).toBeInTheDocument();
+    expect(screen.getByText("full_content")).toBeInTheDocument();
+    expect(screen.getByText("mgw_active")).toBeInTheDocument();
+    expect(screen.getByText("mgw_old")).toBeInTheDocument();
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText(/model_provider="multica"/)).toBeInTheDocument();
+    expect(screen.getByText(/model_providers.multica.base_url="http:\/\/localhost:18080\/v1"/)).toBeInTheDocument();
+    expect(screen.getByText(/model_providers.multica.env_key="MULTICA_GATEWAY_API_KEY"/)).toBeInTheDocument();
+    expect(screen.getByText(/model_providers.multica.wire_api="responses"/)).toBeInTheDocument();
+    expect(screen.getByText(/export ANTHROPIC_BASE_URL=http:\/\/localhost:18080/)).toBeInTheDocument();
+    expect(screen.getByText(/export ANTHROPIC_MODEL=<gateway model, e.g. openai:gpt-4o-mini or claude-sonnet-4-6>/)).toBeInTheDocument();
+    expect(screen.getByText(/export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Generate Gateway key/ }));
 
     await waitFor(() => {
       expect(mockApi.createGatewayUserKey).toHaveBeenCalledWith();
     });
-    expect(await screen.findByText(/OPENAI_API_KEY=mgw_secret/)).toBeInTheDocument();
-    expect(screen.getByText(/ANTHROPIC_API_KEY=mgw_secret/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText(/MULTICA_GATEWAY_API_KEY=mgw_secret/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/OPENAI_API_KEY=mgw_secret/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/ANTHROPIC_API_KEY=mgw_secret/).length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByRole("button", { name: /Revoke mgw_active/ }));
+    await waitFor(() => {
+      expect(mockApi.revokeGatewayUserKey).toHaveBeenCalledWith("gateway-key-1");
+    });
+  });
+
+  it("shows Gateway doctor checks from the Configure tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Configure/ }));
+
+    expect(await screen.findByText("Gateway Doctor")).toBeInTheDocument();
+    expect(screen.getByText("healthy_with_warnings")).toBeInTheDocument();
+    const doctorTable = await screen.findByRole("table", { name: /Gateway doctor checks/ });
+    expect(within(doctorTable).getByText("User Gateway key")).toBeInTheDocument();
+    expect(within(doctorTable).getByText("Default backend")).toBeInTheDocument();
+    expect(within(doctorTable).getByText("Open incidents")).toBeInTheDocument();
+    expect(within(doctorTable).getByText("Review and remediate open Gateway incidents.")).toBeInTheDocument();
+    expect(mockApi.getGatewayDoctor).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+  });
+
+  it("runs Gateway smoke checks from the Configure tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Configure/ }));
+    await user.click(await screen.findByRole("button", { name: /Run Smoke Check/ }));
+
+    await waitFor(() => {
+      expect(mockApi.runGatewaySmoke).toHaveBeenCalledWith({ since: "24h", limit: 10 });
+    });
+    expect(await screen.findByText("Gateway Smoke Check")).toBeInTheDocument();
+    expect(screen.getByText("Model catalog")).toBeInTheDocument();
+    expect(screen.getByText("12 models, first gpt-smoke")).toBeInTheDocument();
+    expect(screen.getByText("Gateway export")).toBeInTheDocument();
+    expect(screen.getByText("2 sessions, 3 LLM calls")).toBeInTheDocument();
+  });
+
+  it("shows Gateway MCP client configuration from the Configure tab", async () => {
+    const user = userEvent.setup();
+    renderGatewayPage();
+
+    await user.click(await screen.findByRole("tab", { name: /Configure/ }));
+
+    expect(await screen.findByText("MCP Client Config")).toBeInTheDocument();
+    expect(screen.getByText(/"multica-gateway"/)).toBeInTheDocument();
+    expect(screen.getByText(/"command": "multica"/)).toBeInTheDocument();
+    expect(screen.getByText(/"gateway",/)).toBeInTheDocument();
+    expect(screen.getByText(/"--workspace-id",/)).toBeInTheDocument();
+    expect(screen.getByText(/"ws-1"/)).toBeInTheDocument();
+    expect(screen.getByText("gateway://status")).toBeInTheDocument();
+    expect(screen.getByText("gateway://governance/insights")).toBeInTheDocument();
+    expect(screen.getByText("gateway_status")).toBeInTheDocument();
+    expect(screen.getByText("gateway_session_drilldown")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy MCP client config/ })).toBeInTheDocument();
   });
 
   it("adds Gateway backends, changes the default backend, and updates capture policy", async () => {
@@ -1067,7 +1279,11 @@ describe("GatewayPage", () => {
     await user.click(await screen.findByRole("tab", { name: /Setup/ }));
 
     expect(await screen.findByText(/Gateway administration requires owner or admin access/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generate Gateway key/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Configure/ }));
+    expect(await screen.findByRole("button", { name: /Generate Gateway key/ })).toBeInTheDocument();
+    expect(screen.getByText("mgw_active")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /Setup/ }));
     expect(screen.queryByRole("button", { name: /Add backend/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Edit Local OpenAI-compatible/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create ingest key/ })).not.toBeInTheDocument();
@@ -1078,7 +1294,6 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayControlMappings).not.toHaveBeenCalled();
     expect(mockApi.listGatewayIncidents).not.toHaveBeenCalled();
     expect(mockApi.listGatewayPolicyExceptions).not.toHaveBeenCalled();
-    expect(mockApi.getGatewayDoctor).not.toHaveBeenCalled();
     expect(mockApi.getGatewayHealthReport).not.toHaveBeenCalled();
   });
 
@@ -1105,11 +1320,11 @@ describe("GatewayPage", () => {
   });
 
   it("shows Gateway governance insights for admins", async () => {
-    const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernancePage();
 
-    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
-
+    expect(screen.getByText("Gateway Governance")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Operations/ })).toHaveAttribute("href", "/gateway");
+    expect(screen.getByRole("link", { name: /Governance/ })).toHaveAttribute("href", "/gateway/governance");
     expect(await screen.findByText("Governance Insights")).toBeInTheDocument();
     expect(screen.getByText("1 high severity")).toBeInTheDocument();
     expect(screen.getByText("1 pending approvals")).toBeInTheDocument();
@@ -1118,8 +1333,8 @@ describe("GatewayPage", () => {
     expect(screen.getAllByText("gpt-observe").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("claude-sonnet")).toBeInTheDocument();
     expect(screen.getAllByText("openrouter").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("provider_risk_rejected")).toBeInTheDocument();
-    expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    expect(screen.getAllByText("provider_risk_rejected").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("OpenRouter").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("3 covered")).toBeInTheDocument();
     expect(screen.getAllByText("1 gaps").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("7 evidence records").length).toBeGreaterThanOrEqual(1);
@@ -1130,9 +1345,8 @@ describe("GatewayPage", () => {
 
   it("runs quick actions from the Gateway governance action queue", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernancePage();
 
-    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
     expect(await screen.findByText("Action Queue")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Remediate incident/ }));
@@ -1171,9 +1385,8 @@ describe("GatewayPage", () => {
 
   it("opens an evidence bundle from a Gateway governance action", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernancePage();
 
-    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
     await user.click(await screen.findByRole("button", { name: /View evidence bundle for incident-1/ }));
 
     expect(await screen.findByText("Evidence Bundle")).toBeInTheDocument();
@@ -1216,9 +1429,8 @@ describe("GatewayPage", () => {
     });
 
     try {
-      renderGatewayPage();
+      renderGatewayGovernancePage();
 
-      await user.click(await screen.findByRole("tab", { name: /Governance/ }));
       await user.click(await screen.findByRole("button", { name: /View evidence bundle for incident-1/ }));
       expect(await screen.findByText("Evidence Bundle")).toBeInTheDocument();
 
@@ -1260,12 +1472,10 @@ describe("GatewayPage", () => {
 
   it("opens a stored evidence export from Gateway governance history", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Governance/ }));
+    renderGatewayGovernanceEvidencePage();
 
     expect(await screen.findByText("Evidence Export History")).toBeInTheDocument();
-    expect(screen.getByText(/bundle-digest/)).toBeInTheDocument();
+    expect(await screen.findByText(/bundle-digest/)).toBeInTheDocument();
 
     await user.click(await screen.findByRole("button", { name: /Open stored evidence export export-1/ }));
 
@@ -1276,14 +1486,11 @@ describe("GatewayPage", () => {
     expect(mockApi.getGatewayEvidenceExport).toHaveBeenCalledWith("export-1", { signal: expect.any(AbortSignal) });
   });
 
-  it("shows Gateway audit history for admins from the Setup tab", async () => {
-    const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+  it("shows Gateway audit history for admins from the Governance page", async () => {
+    renderGatewayGovernanceEvidencePage();
 
     expect(await screen.findByText("Gateway Change History")).toBeInTheDocument();
-    expect(screen.getByText("gateway.backend.update")).toBeInTheDocument();
+    expect(await screen.findByText("gateway.backend.update")).toBeInTheDocument();
     expect(screen.getByText("Admin User")).toBeInTheDocument();
     expect(screen.getByText("backend-local")).toBeInTheDocument();
     expect(mockApi.listGatewayAudit).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
@@ -1291,9 +1498,7 @@ describe("GatewayPage", () => {
 
   it("shows and updates Gateway provider risk governance for admins", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    renderGatewayGovernanceRiskRegisterPage();
 
     expect(await screen.findByText("Provider Risk Register")).toBeInTheDocument();
     const riskTable = await screen.findByRole("table", { name: /Gateway provider risk register/ });
@@ -1301,17 +1506,20 @@ describe("GatewayPage", () => {
     expect(within(riskTable).getAllByText("approved").length).toBeGreaterThanOrEqual(1);
     expect(within(riskTable).getByText("source_code")).toBeInTheDocument();
     expect(within(riskTable).getByText("Risk 72")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Risk score")).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Governance provider"), "openrouter");
-    await user.clear(screen.getByLabelText("Risk score"));
-    await user.type(screen.getByLabelText("Risk score"), "64");
-    await user.selectOptions(screen.getByLabelText("Security review"), "approved");
-    await user.selectOptions(screen.getByLabelText("Contract status"), "approved");
-    await user.clear(screen.getByLabelText("Approved use cases"));
-    await user.type(screen.getByLabelText("Approved use cases"), "internal support, code review");
-    await user.clear(screen.getByLabelText("Data categories"));
-    await user.type(screen.getByLabelText("Data categories"), "source_code, customer_data");
-    await user.click(screen.getByRole("button", { name: /Save provider risk/ }));
+    await user.click(within(riskTable).getByRole("button", { name: /Edit provider risk openrouter/ }));
+    const riskDialog = await screen.findByRole("dialog", { name: /Edit provider risk/ });
+    await user.selectOptions(within(riskDialog).getByLabelText("Governance provider"), "openrouter");
+    await user.clear(within(riskDialog).getByLabelText("Risk score"));
+    await user.type(within(riskDialog).getByLabelText("Risk score"), "64");
+    await user.selectOptions(within(riskDialog).getByLabelText("Security review"), "approved");
+    await user.selectOptions(within(riskDialog).getByLabelText("Contract status"), "approved");
+    await user.clear(within(riskDialog).getByLabelText("Approved use cases"));
+    await user.type(within(riskDialog).getByLabelText("Approved use cases"), "internal support, code review");
+    await user.clear(within(riskDialog).getByLabelText("Data categories"));
+    await user.type(within(riskDialog).getByLabelText("Data categories"), "source_code, customer_data");
+    await user.click(within(riskDialog).getByRole("button", { name: /Save provider risk/ }));
 
     await waitFor(() => {
       expect(mockApi.upsertGatewayProviderRisk).toHaveBeenCalledWith({
@@ -1326,11 +1534,35 @@ describe("GatewayPage", () => {
     });
   });
 
-  it("shows Gateway policy decisions for admins from the Setup tab", async () => {
+  it("opens a Gateway provider risk creation dialog from the Risk Register page", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernanceRiskRegisterPage();
 
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    expect(await screen.findByRole("table", { name: /Gateway provider risk register/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Governance provider")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Add New/ }));
+    const riskDialog = await screen.findByRole("dialog", { name: /Add provider risk/ });
+    await user.selectOptions(within(riskDialog).getByLabelText("Governance provider"), "local");
+    await user.clear(within(riskDialog).getByLabelText("Risk score"));
+    await user.type(within(riskDialog).getByLabelText("Risk score"), "12");
+    await user.click(within(riskDialog).getByRole("button", { name: /Save provider risk/ }));
+
+    await waitFor(() => {
+      expect(mockApi.upsertGatewayProviderRisk).toHaveBeenCalledWith({
+        provider_name: "local",
+        backend_id: "backend-local",
+        approved_use_cases: [],
+        data_categories: [],
+        contract_status: "unknown",
+        security_review_status: "unknown",
+        risk_score: 12,
+      });
+    });
+  });
+
+  it("shows Gateway policy decisions for admins from the Governance page", async () => {
+    renderGatewayGovernanceEvidencePage();
 
     expect(await screen.findByText("Policy Decisions")).toBeInTheDocument();
     const decisionsTable = await screen.findByRole("table", { name: /Gateway policy decisions/ });
@@ -1340,11 +1572,9 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayPolicyDecisions).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
-  it("approves and denies requested Gateway policy decisions from the Setup tab", async () => {
+  it("approves and denies requested Gateway policy decisions from the Governance page", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    renderGatewayGovernanceEvidencePage();
 
     const decisionsTable = await screen.findByRole("table", { name: /Gateway policy decisions/ });
     await user.click(within(decisionsTable).getByRole("button", { name: /Approve gpt-approval/ }));
@@ -1364,23 +1594,23 @@ describe("GatewayPage", () => {
     });
   });
 
-  it("creates and toggles Gateway governance policies from the Setup tab", async () => {
+  it("creates and toggles Gateway governance policies from the Governance page", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    renderGatewayGovernancePoliciesPage();
 
     expect(await screen.findByText("Governance Policies")).toBeInTheDocument();
     const policiesTable = await screen.findByRole("table", { name: /Gateway governance policies/ });
     expect(within(policiesTable).getByText("Block test model")).toBeInTheDocument();
     expect(within(policiesTable).getByText("model")).toBeInTheDocument();
     expect(within(policiesTable).getByText("enforce")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Policy name")).not.toBeInTheDocument();
 
-    await user.clear(screen.getByLabelText("Policy name"));
-    await user.type(screen.getByLabelText("Policy name"), "Route source code");
-    await user.selectOptions(screen.getByLabelText("Policy type"), "routing");
-    await user.selectOptions(screen.getByLabelText("Enforcement mode"), "enforce");
-    fireEvent.change(screen.getByLabelText("Policy rule definition"), {
+    await user.click(screen.getByRole("button", { name: /Add New/ }));
+    const policyDialog = await screen.findByRole("dialog", { name: /Add governance policy/ });
+    await user.type(within(policyDialog).getByLabelText("Policy name"), "Route source code");
+    await user.selectOptions(within(policyDialog).getByLabelText("Policy type"), "routing");
+    await user.selectOptions(within(policyDialog).getByLabelText("Enforcement mode"), "enforce");
+    fireEvent.change(within(policyDialog).getByLabelText("Policy rule definition"), {
       target: {
         value: JSON.stringify({
         rules: [
@@ -1395,7 +1625,7 @@ describe("GatewayPage", () => {
         }),
       },
     });
-    await user.click(screen.getByRole("button", { name: /Create policy/ }));
+    await user.click(within(policyDialog).getByRole("button", { name: /Create policy/ }));
 
     await waitFor(() => {
       expect(mockApi.createGatewayGovernancePolicy).toHaveBeenCalledWith({
@@ -1432,11 +1662,28 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayGovernancePolicies).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
-  it("shows Gateway evidence for admins from the Setup tab", async () => {
+  it("opens a Gateway governance policy edit dialog", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernancePoliciesPage();
 
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    const policiesTable = await screen.findByRole("table", { name: /Gateway governance policies/ });
+    await user.click(within(policiesTable).getByRole("button", { name: /Edit policy Block test model/ }));
+
+    const policyDialog = await screen.findByRole("dialog", { name: /Edit governance policy/ });
+    expect(within(policyDialog).getByDisplayValue("Block test model")).toBeInTheDocument();
+    await user.clear(within(policyDialog).getByLabelText("Policy description"));
+    await user.type(within(policyDialog).getByLabelText("Policy description"), "Updated description");
+    await user.click(within(policyDialog).getByRole("button", { name: /Update policy/ }));
+
+    await waitFor(() => {
+      expect(mockApi.updateGatewayGovernancePolicy).toHaveBeenCalledWith("policy-1", expect.objectContaining({
+        description: "Updated description",
+      }));
+    });
+  });
+
+  it("shows Gateway evidence for admins from the Governance page", async () => {
+    renderGatewayGovernanceEvidencePage();
 
     const evidenceTable = await screen.findByRole("table", { name: /Gateway evidence/ });
     expect(within(evidenceTable).getByText("gateway_policy_decision")).toBeInTheDocument();
@@ -1445,11 +1692,8 @@ describe("GatewayPage", () => {
     expect(mockApi.listGatewayEvidence).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
-  it("shows Gateway compliance controls for admins from the Setup tab", async () => {
-    const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+  it("shows Gateway compliance controls for admins from the Governance page", async () => {
+    renderGatewayGovernanceControlsPage();
 
     expect(await screen.findByText("Compliance Controls")).toBeInTheDocument();
     const controlsTable = await screen.findByRole("table", { name: /Gateway compliance controls/ });
@@ -1457,29 +1701,74 @@ describe("GatewayPage", () => {
     expect(within(controlsTable).getByText("Gateway policy blocks are evidenced")).toBeInTheDocument();
     expect(within(controlsTable).getByText("covered")).toBeInTheDocument();
     expect(within(controlsTable).getByText("Evidence 1")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Control ID")).not.toBeInTheDocument();
     expect(mockApi.listGatewayControlMappings).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
 
-  it("shows Gateway incidents for admins from the Setup tab", async () => {
+  it("creates and edits Gateway compliance controls in dialogs", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernanceControlsPage();
 
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await screen.findByRole("table", { name: /Gateway compliance controls/ });
+    await user.click(screen.getByRole("button", { name: /Add New/ }));
+    const createDialog = await screen.findByRole("dialog", { name: /Add compliance control/ });
+    await user.type(within(createDialog).getByLabelText("Control ID"), "GW-4");
+    await user.type(within(createDialog).getByLabelText("Title"), "Prompt keyword controls are enforced");
+    await user.click(within(createDialog).getByRole("button", { name: /Create control/ }));
 
-    expect(await screen.findByText("Incidents")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockApi.upsertGatewayControlMapping).toHaveBeenCalledWith(expect.objectContaining({
+        control_id: "GW-4",
+        control_title: "Prompt keyword controls are enforced",
+      }));
+    });
+
+    const controlsTable = await screen.findByRole("table", { name: /Gateway compliance controls/ });
+    await user.click(within(controlsTable).getByRole("button", { name: /Edit control GW-1/ }));
+    const editDialog = await screen.findByRole("dialog", { name: /Edit compliance control/ });
+    expect(within(editDialog).getByDisplayValue("GW-1")).toBeInTheDocument();
+  });
+
+  it("shows Gateway incidents for admins from the Governance page", async () => {
+    renderGatewayGovernanceIncidentsPage();
+
+    expect(await screen.findByRole("heading", { name: "Incidents", level: 1 })).toBeInTheDocument();
     const incidentsTable = await screen.findByRole("table", { name: /Gateway incidents/ });
     expect(within(incidentsTable).getByText("high")).toBeInTheDocument();
     expect(within(incidentsTable).getByText("gateway_provider_risk_block")).toBeInTheDocument();
     expect(within(incidentsTable).getByText("Gateway blocked provider openrouter: provider_risk_rejected")).toBeInTheDocument();
     expect(within(incidentsTable).getByText("open")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Summary")).not.toBeInTheDocument();
     expect(mockApi.listGatewayIncidents).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) });
   });
 
-  it("updates Gateway incidents from the Setup tab", async () => {
+  it("creates and edits Gateway incidents in dialogs", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
+    renderGatewayGovernanceIncidentsPage();
 
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    await screen.findByRole("table", { name: /Gateway incidents/ });
+    await user.click(screen.getByRole("button", { name: /Add New/ }));
+    const createDialog = await screen.findByRole("dialog", { name: /Add incident/ });
+    await user.type(within(createDialog).getByLabelText("Category"), "manual_review");
+    await user.type(within(createDialog).getByLabelText("Summary"), "Manual provider review needed");
+    await user.click(within(createDialog).getByRole("button", { name: /Create incident/ }));
+
+    await waitFor(() => {
+      expect(mockApi.createGatewayIncident).toHaveBeenCalledWith(expect.objectContaining({
+        category: "manual_review",
+        summary: "Manual provider review needed",
+      }));
+    });
+
+    const incidentsTable = await screen.findByRole("table", { name: /Gateway incidents/ });
+    await user.click(within(incidentsTable).getByRole("button", { name: /Edit incident Gateway blocked provider openrouter/ }));
+    const editDialog = await screen.findByRole("dialog", { name: /Edit incident/ });
+    expect(within(editDialog).getByDisplayValue("Gateway blocked provider openrouter: provider_risk_rejected")).toBeInTheDocument();
+  });
+
+  it("updates Gateway incidents from the Governance page", async () => {
+    const user = userEvent.setup();
+    renderGatewayGovernanceIncidentsPage();
 
     const incidentsTable = await screen.findByRole("table", { name: /Gateway incidents/ });
     await user.click(within(incidentsTable).getByRole("button", { name: /Mark incident remediated/ }));
@@ -1492,11 +1781,9 @@ describe("GatewayPage", () => {
     });
   });
 
-  it("shows and approves Gateway policy exceptions from the Setup tab", async () => {
+  it("shows and approves Gateway policy exceptions from the Governance page", async () => {
     const user = userEvent.setup();
-    renderGatewayPage();
-
-    await user.click(await screen.findByRole("tab", { name: /Setup/ }));
+    renderGatewayGovernanceEvidencePage();
 
     expect(await screen.findByText("Policy Exceptions")).toBeInTheDocument();
     const exceptionsTable = await screen.findByRole("table", { name: /Gateway policy exceptions/ });

@@ -42,13 +42,23 @@ DO UPDATE SET
     last_assessment_at = EXCLUDED.last_assessment_at,
     next_review_at = EXCLUDED.next_review_at,
     active_exception_count = EXCLUDED.active_exception_count,
+    archived_at = NULL,
     updated_at = now()
 RETURNING *;
 
 -- name: ListAIThirdPartyRisk :many
 SELECT * FROM ai_third_party_risk
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY risk_score DESC, next_review_at NULLS FIRST, provider_name;
+
+-- name: ArchiveAIThirdPartyRisk :one
+UPDATE ai_third_party_risk
+SET archived_at = now(), updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING *;
 
 -- name: UpsertAIControlMapping :one
 INSERT INTO ai_control_mapping (
@@ -63,6 +73,7 @@ DO UPDATE SET
     mapped_evidence_queries = EXCLUDED.mapped_evidence_queries,
     status = EXCLUDED.status,
     owner_user_id = EXCLUDED.owner_user_id,
+    archived_at = NULL,
     updated_at = now()
 RETURNING *;
 
@@ -84,7 +95,16 @@ LEFT JOIN LATERAL (
       )
 ) evidence ON true
 WHERE m.workspace_id = $1
+  AND m.archived_at IS NULL
 ORDER BY m.framework, m.control_id;
+
+-- name: ArchiveAIControlMapping :one
+UPDATE ai_control_mapping
+SET archived_at = now(), updated_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING *;
 
 -- name: CreateAIEvidence :one
 INSERT INTO ai_evidence (
@@ -151,6 +171,7 @@ RETURNING *;
 -- name: ListAIIncidents :many
 SELECT * FROM ai_incident
 WHERE workspace_id = $1
+  AND archived_at IS NULL
 ORDER BY opened_at DESC
 LIMIT $2;
 
@@ -162,6 +183,22 @@ SET
     closed_at = CASE WHEN $3 = 'closed' THEN now() ELSE closed_at END
 WHERE workspace_id = $1
   AND id = $2
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: ArchiveAIIncident :one
+UPDATE ai_incident
+SET
+    status = CASE WHEN status = 'open' THEN 'closed' ELSE status END,
+    remediation_notes = CASE
+        WHEN remediation_notes = '' THEN 'Archived by workspace admin.'
+        ELSE remediation_notes
+    END,
+    closed_at = CASE WHEN closed_at IS NULL THEN now() ELSE closed_at END,
+    archived_at = now()
+WHERE workspace_id = $1
+  AND id = $2
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: CreateAIAuditLog :one

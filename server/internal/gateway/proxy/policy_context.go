@@ -19,6 +19,7 @@ func gatewayPolicyRequest(authCtx AuthContext, target BackendTarget, summary Req
 		Model:       policyModel(summary),
 		Tools:       extractToolNames(summary.BodyJSON),
 		DataClasses: detectDataClasses(summary.BodyJSON),
+		PromptText:  policyPromptText(summary.BodyJSON),
 	}
 }
 
@@ -83,6 +84,13 @@ func detectDataClasses(body map[string]any) []string {
 		add("personal_data")
 	}
 	return classes
+}
+
+func policyPromptText(body map[string]any) string {
+	if body == nil {
+		return ""
+	}
+	return strings.Join(policyTextParts(body), "\n")
 }
 
 func policyTextParts(body map[string]any) []string {

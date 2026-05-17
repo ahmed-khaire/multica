@@ -1,1 +1,9 @@
-export { GatewayPage } from "./gateway-page";
+export {
+  GatewayGovernanceControlsPage,
+  GatewayGovernanceEvidencePage,
+  GatewayGovernanceIncidentsPage,
+  GatewayGovernancePage,
+  GatewayGovernancePoliciesPage,
+  GatewayGovernanceRiskRegisterPage,
+  GatewayPage,
+} from "./gateway-page";

@@ -106,6 +106,56 @@ func TestGatewayProxyOpenAIChatCompletionsRoutesToDefaultBackend(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyOpenAIResponsesRoutesToDefaultBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("upstream path = %s, want /v1/responses", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-upstream-responses" {
+			t.Errorf("Authorization = %q, want upstream key", got)
+		}
+		if got := r.Header.Get("X-Workspace-ID"); got != "" {
+			t.Errorf("workspace header leaked upstream: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "resp-test",
+			"object": "response",
+			"model":  "gpt-test",
+			"output": []any{},
+			"usage": map[string]any{
+				"input_tokens":  2,
+				"output_tokens": 3,
+				"total_tokens":  5,
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "local", "local-openai-responses-proxy-test", upstream.URL+"/v1", "sk-upstream-responses")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+
+	testHandler.GatewayOpenAIResponses(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	if !strings.Contains(w.Body.String(), "resp-test") {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
 func TestGatewayProxyAnthropicMessagesRoutesToDefaultBackend(t *testing.T) {
 	setGatewaySecret(t)
 	gatewayKey := createGatewayProxyKey(t)
@@ -153,6 +203,44 @@ func TestGatewayProxyAnthropicMessagesRoutesToDefaultBackend(t *testing.T) {
 		t.Fatal("upstream was not called")
 	}
 	if !strings.Contains(w.Body.String(), "msg_test") {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
+func TestGatewayProxyAnthropicCountTokensRoutesToAnthropicBackend(t *testing.T) {
+	setGatewaySecret(t)
+	gatewayKey := createGatewayProxyKey(t)
+
+	var sawUpstream bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream = true
+		if r.URL.Path != "/v1/messages/count_tokens" {
+			t.Errorf("upstream path = %s, want /v1/messages/count_tokens", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "sk-upstream-count" {
+			t.Errorf("x-api-key = %q, want upstream key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"input_tokens": 12})
+	}))
+	defer upstream.Close()
+
+	createGatewayProxyBackend(t, "anthropic", "anthropic-count-tokens-proxy-test", upstream.URL, "sk-upstream-count")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(`{"model":"claude-test","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", gatewayKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	testHandler.GatewayAnthropicCountTokens(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !sawUpstream {
+		t.Fatal("upstream was not called")
+	}
+	if !strings.Contains(w.Body.String(), `"input_tokens":12`) {
 		t.Fatalf("body = %s", w.Body.String())
 	}
 }

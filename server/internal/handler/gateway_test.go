@@ -131,6 +131,89 @@ func TestGatewayDoctorHandlerReportsHealthyWithWarnings(t *testing.T) {
 	assertDoctorCheck(t, resp.Checks, "open_incidents", "warning")
 }
 
+func TestGatewaySmokeHandlerRunsOperatorChecks(t *testing.T) {
+	setGatewaySecret(t)
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE gateway_backend
+		SET enabled = false
+		WHERE workspace_id = $1
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("disable prior test backends: %v", err)
+	}
+
+	backendW := httptest.NewRecorder()
+	backendReq := newRequest("POST", "/api/gateway/backends", map[string]any{
+		"provider":    "local",
+		"slug":        "smoke-local",
+		"key":         "anything",
+		"set_default": true,
+	})
+	testHandler.CreateGatewayBackend(backendW, backendReq)
+	if backendW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayBackend: expected 201, got %d: %s", backendW.Code, backendW.Body.String())
+	}
+
+	origFetchModels := gatewaySmokeFetchModels
+	gatewaySmokeFetchModels = func(ctx context.Context, client *http.Client, openAIBaseURL, gatewayKey string) (gatewaySmokeModelResult, error) {
+		if !strings.HasSuffix(openAIBaseURL, "/v1") {
+			t.Fatalf("openAIBaseURL = %q, want /v1 suffix", openAIBaseURL)
+		}
+		if gatewayKey == "" {
+			t.Fatal("gateway key should be provided to model smoke check")
+		}
+		return gatewaySmokeModelResult{Count: 2, FirstModel: "gpt-smoke"}, nil
+	}
+	defer func() { gatewaySmokeFetchModels = origFetchModels }()
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/gateway/smoke?since=24h&limit=5", nil)
+	req.Host = "api.multica.ai"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	testHandler.GatewaySmoke(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GatewaySmoke: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Status string `json:"status"`
+		Checks []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Title  string `json:"title"`
+			Detail string `json:"detail"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("GatewaySmoke: failed to decode response: %v", err)
+	}
+	if resp.Status != "pass" && resp.Status != "warning" {
+		t.Fatalf("GatewaySmoke: status = %q, want pass or warning; checks = %#v", resp.Status, resp.Checks)
+	}
+	assertSmokeCheck(t, resp.Checks, "status", "pass")
+	assertSmokeCheck(t, resp.Checks, "key", "pass")
+	assertSmokeCheck(t, resp.Checks, "models", "pass")
+	assertSmokeCheck(t, resp.Checks, "export", "pass")
+}
+
+func assertSmokeCheck(t *testing.T, checks []struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+}, id, status string) {
+	t.Helper()
+	for _, check := range checks {
+		if check.ID == id {
+			if check.Status != status {
+				t.Fatalf("smoke check %s status = %q, want %q", id, check.Status, status)
+			}
+			return
+		}
+	}
+	t.Fatalf("smoke check %s not found in %#v", id, checks)
+}
+
 func TestGatewayHealthReportHandlerSummarizesBackendsCredentialsAndGovernance(t *testing.T) {
 	setGatewaySecret(t)
 
@@ -1526,6 +1609,219 @@ func TestGatewayPolicyHandlersRejectInvalidRuleDefinition(t *testing.T) {
 	testHandler.CreateGatewayGovernancePolicy(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("CreateGatewayGovernancePolicy: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGatewayPolicyHandlersArchivePolicy(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/policies", map[string]any{
+		"name":             "Archive test policy",
+		"policy_type":      "model",
+		"enabled":          true,
+		"enforcement_mode": "enforce",
+		"rule_definition": map[string]any{
+			"rules": []map[string]any{{
+				"id":          "archive-policy",
+				"action":      "block",
+				"reason_code": "archive_policy",
+				"match": map[string]any{
+					"models": []string{"archive-model"},
+				},
+			}},
+		},
+	})
+	testHandler.CreateGatewayGovernancePolicy(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayGovernancePolicy: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayGovernancePolicy: decode response: %v", err)
+	}
+
+	deleteW := httptest.NewRecorder()
+	deleteReq := withURLParam(newRequest("DELETE", "/api/gateway/governance/policies/"+created.ID, nil), "id", created.ID)
+	testHandler.DeleteGatewayGovernancePolicy(deleteW, deleteReq)
+	if deleteW.Code != http.StatusOK {
+		t.Fatalf("DeleteGatewayGovernancePolicy: expected 200, got %d: %s", deleteW.Code, deleteW.Body.String())
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/governance/policies", nil)
+	testHandler.ListGatewayGovernancePolicies(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayGovernancePolicies: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listed []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listed); err != nil {
+		t.Fatalf("ListGatewayGovernancePolicies: decode response: %v", err)
+	}
+	for _, item := range listed {
+		if item.ID == created.ID {
+			t.Fatalf("archived policy should not be listed: %#v", listed)
+		}
+	}
+}
+
+func TestGatewayProviderRiskHandlersArchiveRisk(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/provider-risks", map[string]any{
+		"provider_name":          "archive-risk-provider",
+		"risk_score":             74,
+		"contract_status":        "approved",
+		"security_review_status": "approved",
+	})
+	testHandler.UpsertGatewayProviderRisk(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayProviderRisk: expected 200, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("UpsertGatewayProviderRisk: decode response: %v", err)
+	}
+
+	deleteW := httptest.NewRecorder()
+	deleteReq := withURLParam(newRequest("DELETE", "/api/gateway/governance/provider-risks/"+created.ID, nil), "id", created.ID)
+	testHandler.DeleteGatewayProviderRisk(deleteW, deleteReq)
+	if deleteW.Code != http.StatusOK {
+		t.Fatalf("DeleteGatewayProviderRisk: expected 200, got %d: %s", deleteW.Code, deleteW.Body.String())
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/gateway/governance/provider-risks", nil)
+	testHandler.ListGatewayProviderRisks(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListGatewayProviderRisks: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listed []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listed); err != nil {
+		t.Fatalf("ListGatewayProviderRisks: decode response: %v", err)
+	}
+	for _, item := range listed {
+		if item.ID == created.ID {
+			t.Fatalf("archived provider risk should not be listed: %#v", listed)
+		}
+	}
+}
+
+func TestGatewayControlMappingHandlersCreateUpdateArchive(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/control-mappings", map[string]any{
+		"framework":               "demo_framework",
+		"control_id":              "DEMO-1",
+		"control_title":           "Demo control is enforced",
+		"mapped_policy_ids":       []string{},
+		"mapped_evidence_queries": []map[string]string{{"evidence_type": "gateway_policy_decision"}},
+		"status":                  "in_progress",
+	})
+	testHandler.UpsertGatewayControlMapping(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayControlMapping: expected 200, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var created struct {
+		ID           string `json:"id"`
+		ControlTitle string `json:"control_title"`
+		Status       string `json:"status"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("UpsertGatewayControlMapping: decode response: %v", err)
+	}
+	if created.ControlTitle != "Demo control is enforced" || created.Status != "in_progress" {
+		t.Fatalf("UpsertGatewayControlMapping: response = %#v", created)
+	}
+
+	updateW := httptest.NewRecorder()
+	updateReq := newRequest("POST", "/api/gateway/governance/control-mappings", map[string]any{
+		"framework":               "demo_framework",
+		"control_id":              "DEMO-1",
+		"control_title":           "Demo control is covered",
+		"mapped_policy_ids":       []string{},
+		"mapped_evidence_queries": []map[string]string{{"evidence_type": "gateway_policy_decision"}},
+		"status":                  "covered",
+	})
+	testHandler.UpsertGatewayControlMapping(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpsertGatewayControlMapping update: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	var updated struct {
+		ID           string `json:"id"`
+		ControlTitle string `json:"control_title"`
+		Status       string `json:"status"`
+	}
+	if err := json.NewDecoder(updateW.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpsertGatewayControlMapping update: decode response: %v", err)
+	}
+	if updated.ID != created.ID || updated.ControlTitle != "Demo control is covered" || updated.Status != "covered" {
+		t.Fatalf("UpsertGatewayControlMapping update: response = %#v", updated)
+	}
+
+	deleteW := httptest.NewRecorder()
+	deleteReq := withURLParam(newRequest("DELETE", "/api/gateway/governance/control-mappings/"+created.ID, nil), "id", created.ID)
+	testHandler.DeleteGatewayControlMapping(deleteW, deleteReq)
+	if deleteW.Code != http.StatusOK {
+		t.Fatalf("DeleteGatewayControlMapping: expected 200, got %d: %s", deleteW.Code, deleteW.Body.String())
+	}
+}
+
+func TestGatewayIncidentHandlersCreateUpdateArchive(t *testing.T) {
+	createW := httptest.NewRecorder()
+	createReq := newRequest("POST", "/api/gateway/governance/incidents", map[string]any{
+		"severity":          "medium",
+		"category":          "manual_review",
+		"summary":           "Manual governance review needed",
+		"status":            "open",
+		"remediation_notes": "Initial note",
+	})
+	testHandler.CreateGatewayIncident(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("CreateGatewayIncident: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Summary string `json:"summary"`
+		Status  string `json:"status"`
+	}
+	if err := json.NewDecoder(createW.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateGatewayIncident: decode response: %v", err)
+	}
+	if created.Summary != "Manual governance review needed" || created.Status != "open" {
+		t.Fatalf("CreateGatewayIncident: response = %#v", created)
+	}
+
+	updateW := httptest.NewRecorder()
+	updateReq := withURLParam(newRequest("PATCH", "/api/gateway/governance/incidents/"+created.ID, map[string]any{
+		"status":            "investigating",
+		"remediation_notes": "Owner is reviewing.",
+	}), "id", created.ID)
+	testHandler.UpdateGatewayIncident(updateW, updateReq)
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("UpdateGatewayIncident: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	var updated struct {
+		ID               string `json:"id"`
+		Status           string `json:"status"`
+		RemediationNotes string `json:"remediation_notes"`
+	}
+	if err := json.NewDecoder(updateW.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateGatewayIncident: decode response: %v", err)
+	}
+	if updated.ID != created.ID || updated.Status != "investigating" || updated.RemediationNotes != "Owner is reviewing." {
+		t.Fatalf("UpdateGatewayIncident: response = %#v", updated)
+	}
+
+	deleteW := httptest.NewRecorder()
+	deleteReq := withURLParam(newRequest("DELETE", "/api/gateway/governance/incidents/"+created.ID, nil), "id", created.ID)
+	testHandler.DeleteGatewayIncident(deleteW, deleteReq)
+	if deleteW.Code != http.StatusOK {
+		t.Fatalf("DeleteGatewayIncident: expected 200, got %d: %s", deleteW.Code, deleteW.Body.String())
 	}
 }
 

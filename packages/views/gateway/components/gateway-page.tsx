@@ -20,6 +20,7 @@ import {
   LockKeyhole,
   MessageSquareText,
   Pencil,
+  Plus,
   RefreshCw,
   Route,
   Save,
@@ -35,11 +36,13 @@ import type {
   CreateGatewayBackendRequest,
   CreateGatewayBackendCredentialRequest,
   CreateGatewayGovernancePolicyRequest,
+  CreateGatewayIncidentRequest,
   GatewayAuditLogItem,
   GatewayBackend,
   GatewayBackendCredential,
   GatewayCapturePolicy,
   GatewayControlMappingItem,
+  GatewayDoctorResponse,
   GatewayEvidenceItem,
   GatewayEvidenceBundleParams,
   GatewayEvidenceBundleResponse,
@@ -52,7 +55,9 @@ import type {
   GatewayGovernanceActionItem,
   GatewayGovernanceInsightsResponse,
   GatewayGovernancePolicyItem,
+  GatewaySmokeResponse,
   GatewayStatusResponse,
+  GatewayUserKeyListItem,
   GatewayUserKeyResponse,
   GatewayBackendUsage,
   GatewayOverviewResponse,
@@ -66,6 +71,7 @@ import type {
   GatewaySessionListItem,
   GatewaySpanObservation,
   GatewayProviderRisk,
+  UpsertGatewayControlMappingRequest,
   UpsertGatewayProviderRiskRequest,
   UpdateGatewayBackendRequest,
   UpdateGatewayBackendCredentialRequest,
@@ -73,12 +79,14 @@ import type {
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { api } from "@multica/core/api";
+import { AppLink, useNavigation } from "../../navigation";
 import {
   gatewayKeys,
   gatewayAuditOptions,
   gatewayBackendCredentialsOptions,
   gatewayBackendsOptions,
   gatewayControlMappingsOptions,
+  gatewayDoctorOptions,
   gatewayEvidenceOptions,
   gatewayEvidenceBundleOptions,
   gatewayEvidenceExportOptions,
@@ -97,11 +105,20 @@ import {
   gatewaySessionSpansOptions,
   gatewaySessionsOptions,
   gatewayStatusOptions,
+  gatewayUserKeysOptions,
 } from "@multica/core/gateway/queries";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@multica/ui/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
@@ -128,6 +145,145 @@ const windowOptions: WindowOption[] = [
   { label: "7d", value: "7d" },
   { label: "30d", value: "30d" },
 ];
+
+const gatewayPageNav = [
+  { href: "/gateway", label: "Operations", icon: Eye },
+  { href: "/gateway/governance", label: "Governance", icon: ShieldCheck },
+] as const;
+
+type GatewayGovernanceSection = "overview" | "policies" | "risk-register" | "controls" | "incidents" | "evidence";
+
+const gatewayGovernancePages: Array<{
+  href: string;
+  label: string;
+  description: string;
+  icon: typeof ShieldCheck;
+  section: GatewayGovernanceSection;
+}> = [
+  {
+    href: "/gateway/governance",
+    label: "Overview",
+    description: "Risk posture, action items, and navigation.",
+    icon: ShieldCheck,
+    section: "overview",
+  },
+  {
+    href: "/gateway/governance/policies",
+    label: "Policies",
+    description: "Create, edit, enable, disable, and archive Gateway policies.",
+    icon: FileText,
+    section: "policies",
+  },
+  {
+    href: "/gateway/governance/risk-register",
+    label: "Risk Register",
+    description: "Manage provider and backend risk assessments.",
+    icon: ShieldCheck,
+    section: "risk-register",
+  },
+  {
+    href: "/gateway/governance/controls",
+    label: "Controls",
+    description: "Manage compliance control mappings and evidence queries.",
+    icon: Boxes,
+    section: "controls",
+  },
+  {
+    href: "/gateway/governance/incidents",
+    label: "Incidents",
+    description: "Create, triage, remediate, and archive governance incidents.",
+    icon: AlertTriangle,
+    section: "incidents",
+  },
+  {
+    href: "/gateway/governance/evidence",
+    label: "Evidence",
+    description: "Review decisions, evidence, exports, and audit history.",
+    icon: DatabaseZap,
+    section: "evidence",
+  },
+];
+
+function GatewayPageNav() {
+  const { pathname } = useNavigation();
+
+  return (
+    <nav aria-label="Gateway pages" className="flex rounded-md border bg-background p-0.5">
+      {gatewayPageNav.map((item) => {
+        const isActive =
+          item.href === "/gateway"
+            ? pathname === item.href
+            : pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+        return (
+          <AppLink
+            key={item.href}
+            href={item.href}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors",
+              isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <item.icon className="size-3.5" />
+            <span>{item.label}</span>
+          </AppLink>
+        );
+      })}
+    </nav>
+  );
+}
+
+function GatewayGovernanceNav() {
+  const { pathname } = useNavigation();
+
+  return (
+    <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Gateway governance sections">
+      {gatewayGovernancePages.map((item) => {
+        const isActive = item.href === "/gateway/governance"
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        return (
+          <AppLink
+            key={item.href}
+            href={item.href}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+              isActive ? "border-primary/40 bg-muted text-foreground" : "bg-background text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <item.icon className="size-3.5" />
+            <span>{item.label}</span>
+          </AppLink>
+        );
+      })}
+    </nav>
+  );
+}
+
+function GatewayGovernanceLandingCards() {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {gatewayGovernancePages.filter((item) => item.section !== "overview").map((item) => (
+        <AppLink
+          key={item.href}
+          href={item.href}
+          className="group rounded-lg border bg-background p-4 transition-colors hover:border-primary/40 hover:bg-muted/30"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <item.icon className="size-4 text-muted-foreground" />
+                {item.label}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+            </div>
+            <Route className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+          </div>
+        </AppLink>
+      ))}
+    </div>
+  );
+}
 
 const gatewayProviderPresets = [
   { label: "OpenAI", value: "openai", baseUrl: "https://api.openai.com/v1" },
@@ -159,8 +315,42 @@ function gatewaySubscriptionBundle(token: string) {
 const capturePolicies: GatewayCapturePolicy[] = ["metadata_only", "redacted_content", "full_content"];
 
 const governanceStatuses = ["unknown", "not_started", "in_review", "approved", "rejected", "expired"];
-const gatewayPolicyTypes = ["provider", "model", "tool", "data", "budget", "approval", "routing", "capture"];
+const gatewayPolicyTypes = ["provider", "model", "tool", "data", "prompt", "budget", "approval", "routing", "capture"];
 const gatewayPolicyModes = ["enforce", "monitor"];
+const gatewayMCPResources = [
+  "gateway://status",
+  "gateway://doctor",
+  "gateway://health-report",
+  "gateway://backends",
+  "gateway://overview",
+  "gateway://sessions",
+  "gateway://llm-calls",
+  "gateway://governance/insights",
+  "gateway://governance/policy-decisions",
+  "gateway://governance/evidence",
+  "gateway://governance/incidents",
+  "gateway://governance/policies",
+  "gateway://governance/policy-exceptions",
+  "gateway://governance/provider-risks",
+  "gateway://governance/control-mappings",
+];
+const gatewayMCPTools = [
+  "gateway_status",
+  "gateway_doctor",
+  "gateway_health_report",
+  "gateway_backends",
+  "gateway_overview",
+  "gateway_sessions",
+  "gateway_llm_calls",
+  "gateway_session",
+  "gateway_session_spans",
+  "gateway_session_drilldown",
+  "gateway_governance_insights",
+  "gateway_policy_decisions",
+  "gateway_evidence_bundle",
+  "gateway_incidents",
+  "gateway_provider_risks",
+];
 const defaultGatewayPolicyRule = JSON.stringify(
   {
     rules: [
@@ -892,6 +1082,59 @@ function EvidenceExportHistory({
   );
 }
 
+function GatewayEvidenceExportHistoryPanel({
+  canManage,
+  wsId,
+}: {
+  canManage: boolean;
+  wsId: string;
+}) {
+  const [selectedEvidenceExportID, setSelectedEvidenceExportID] = useState("");
+  const evidenceExportsQuery = useQuery(gatewayEvidenceExportsOptions(wsId, 5, canManage));
+  const evidenceExportQuery = useQuery(gatewayEvidenceExportOptions(
+    wsId,
+    selectedEvidenceExportID,
+    canManage && Boolean(selectedEvidenceExportID),
+  ));
+
+  if (!canManage) {
+    return (
+      <Card size="sm" className="rounded-lg">
+        <CardContent className="flex items-start gap-3">
+          <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Evidence export history requires owner or admin access.</p>
+            <p className="text-xs text-muted-foreground">
+              Workspace admins can open stored evidence bundles and review export digests.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <EvidenceExportHistory
+        rows={evidenceExportsQuery.data ?? []}
+        loading={evidenceExportsQuery.isLoading}
+        error={evidenceExportsQuery.error}
+        pendingExportId={evidenceExportQuery.isLoading ? selectedEvidenceExportID : ""}
+        onOpenExport={setSelectedEvidenceExportID}
+      />
+
+      {selectedEvidenceExportID ? (
+        <EvidenceBundlePanel
+          bundle={evidenceExportQuery.data?.bundle_snapshot}
+          loading={evidenceExportQuery.isLoading}
+          error={evidenceExportQuery.error}
+          onClose={() => setSelectedEvidenceExportID("")}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function TrendStrip({ buckets }: { buckets: GatewayOverviewBucket[] }) {
   const max = Math.max(...buckets.map((b) => b.request_count), 1);
   if (buckets.length === 0) {
@@ -1174,6 +1417,491 @@ function gatewayUserKeyEnv(key: GatewayUserKeyResponse): string {
   ].join("\n");
 }
 
+function gatewayAgentSetupSnippets(status: GatewayStatusResponse | undefined, generatedKey: GatewayUserKeyResponse | null) {
+  const openAIBaseURL = status?.openai_base_url || generatedKey?.openai_base_url || "https://your-multica-host/v1";
+  const anthropicBaseURL = status?.anthropic_base_url || generatedKey?.anthropic_base_url || "https://your-multica-host";
+  const openAIKey = generatedKey?.openai_api_key || "<your Gateway API key>";
+  const anthropicKey = generatedKey?.anthropic_api_key || "<your Gateway API key>";
+  const codexKeyEnv = "MULTICA_GATEWAY_API_KEY";
+
+  return [
+    {
+      title: "Claude Code",
+      body: [
+        `export ANTHROPIC_BASE_URL=${anthropicBaseURL}`,
+        `export ANTHROPIC_API_KEY=${anthropicKey}`,
+        "export ANTHROPIC_MODEL=<gateway model, e.g. openai:gpt-4o-mini or claude-sonnet-4-6>",
+        "export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1",
+        "claude",
+      ].join("\n"),
+    },
+    {
+      title: "Codex",
+      body: [
+        `export ${codexKeyEnv}=${openAIKey}`,
+        "",
+        "codex \\",
+        "  -c 'model_provider=\"multica\"' \\",
+        "  -c 'model_providers.multica.name=\"Multica Gateway\"' \\",
+        `  -c 'model_providers.multica.base_url="${openAIBaseURL}"' \\`,
+        `  -c 'model_providers.multica.env_key="${codexKeyEnv}"' \\`,
+        "  -c 'model_providers.multica.wire_api=\"responses\"' \\",
+        "  -m gpt-4o-mini",
+      ].join("\n"),
+    },
+    {
+      title: "OpenAI SDK",
+      body: [
+        `OPENAI_BASE_URL=${openAIBaseURL}`,
+        `OPENAI_API_KEY=${openAIKey}`,
+      ].join("\n"),
+    },
+    {
+      title: "Anthropic SDK",
+      body: [
+        `ANTHROPIC_BASE_URL=${anthropicBaseURL}`,
+        `ANTHROPIC_API_KEY=${anthropicKey}`,
+      ].join("\n"),
+    },
+  ];
+}
+
+function copyText(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard && text) {
+    void navigator.clipboard.writeText(text);
+  }
+}
+
+function gatewayMCPClientConfig(wsId: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        "multica-gateway": {
+          command: "multica",
+          args: ["gateway", "mcp", "--workspace-id", wsId],
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+function GatewayDoctorPanel({ doctor, loading, error }: {
+  doctor: GatewayDoctorResponse | undefined;
+  loading: boolean;
+  error: unknown;
+}) {
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-3 text-sm">
+          <span className="flex items-center gap-2">
+            <Gauge className="size-4 text-muted-foreground" />
+            Gateway Doctor
+          </span>
+          {doctor ? <Badge variant={doctorStatusVariant(doctor.status)}>{doctor.status}</Badge> : null}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {loading && !doctor ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-12 rounded-md" />)}
+          </div>
+        ) : doctor?.checks.length ? (
+          <Table aria-label="Gateway doctor checks">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Check</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Detail</TableHead>
+                <TableHead>Remediation</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {doctor.checks.map((check) => (
+                <TableRow key={check.id}>
+                  <TableCell className="font-medium">{check.title}</TableCell>
+                  <TableCell>{check.category}</TableCell>
+                  <TableCell>
+                    <Badge variant={doctorStatusVariant(check.status)}>{check.status}</Badge>
+                  </TableCell>
+                  <TableCell className="max-w-72 whitespace-normal text-muted-foreground">{check.detail}</TableCell>
+                  <TableCell className="max-w-72 whitespace-normal text-muted-foreground">{check.remediation || "None"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <div className="flex h-36 flex-col items-center justify-center text-center">
+            <Gauge className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No doctor checks returned</p>
+            <p className="mt-1 text-xs text-muted-foreground">Refresh after Gateway is configured.</p>
+          </div>
+        )}
+        {error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GatewaySmokePanel({
+  smoke,
+  loading,
+  error,
+  onRun,
+}: {
+  smoke: GatewaySmokeResponse | null;
+  loading: boolean;
+  error: unknown;
+  onRun: () => void;
+}) {
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-3 text-sm">
+          <span className="flex items-center gap-2">
+            <Activity className="size-4 text-muted-foreground" />
+            Gateway Smoke Check
+          </span>
+          <div className="flex items-center gap-2">
+            {smoke ? <Badge variant={doctorStatusVariant(smoke.status)}>{smoke.status}</Badge> : null}
+            <Button type="button" size="sm" variant="outline" disabled={loading} onClick={onRun}>
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+              Run Smoke Check
+            </Button>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {smoke?.checks.length ? (
+          <Table aria-label="Gateway smoke checks">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Check</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {smoke.checks.map((check) => (
+                <TableRow key={check.id}>
+                  <TableCell className="font-medium">{check.title}</TableCell>
+                  <TableCell>
+                    <Badge variant={doctorStatusVariant(check.status)}>{check.status}</Badge>
+                  </TableCell>
+                  <TableCell className="max-w-96 whitespace-normal text-muted-foreground">{check.detail}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <div className="flex h-36 flex-col items-center justify-center text-center">
+            <Activity className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">Smoke check not run</p>
+            <p className="mt-1 text-xs text-muted-foreground">Run this before handing Gateway URLs to agent clients.</p>
+          </div>
+        )}
+        {error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GatewayMCPPanel({ wsId }: { wsId: string }) {
+  const config = gatewayMCPClientConfig(wsId);
+
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-2 text-sm">
+          <span className="flex items-center gap-2">
+            <TerminalSquare className="size-4 text-muted-foreground" />
+            MCP Client Config
+          </span>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => copyText(config)}
+            aria-label="Copy MCP client config"
+          >
+            <Copy className="size-3.5" />
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <pre className="overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+          {config}
+        </pre>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Resources</p>
+            <div className="flex flex-wrap gap-1.5">
+              {gatewayMCPResources.map((resource) => (
+                <code key={resource} className="rounded border bg-muted/30 px-1.5 py-0.5 text-xs">
+                  {resource}
+                </code>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Tools</p>
+            <div className="flex flex-wrap gap-1.5">
+              {gatewayMCPTools.map((tool) => (
+                <code key={tool} className="rounded border bg-muted/30 px-1.5 py-0.5 text-xs">
+                  {tool}
+                </code>
+              ))}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GatewayUserKeysPanel({
+  keys,
+  loading,
+  error,
+  pendingRevokeId,
+  onRevoke,
+}: {
+  keys: GatewayUserKeyListItem[];
+  loading: boolean;
+  error: unknown;
+  pendingRevokeId: string;
+  onRevoke: (id: string) => void;
+}) {
+  return (
+    <Card size="sm" className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <History className="size-4 text-muted-foreground" />
+          Gateway Keys
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {loading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-12 rounded-md" />)}
+          </div>
+        ) : keys.length === 0 ? (
+          <div className="flex h-36 flex-col items-center justify-center text-center">
+            <KeyRound className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No Gateway keys</p>
+            <p className="mt-1 text-xs text-muted-foreground">Generate a key before configuring agent clients.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway user keys">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Prefix</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Last Used</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keys.map((key) => {
+                const revoked = Boolean(key.revoked_at);
+                return (
+                  <TableRow key={key.id}>
+                    <TableCell>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{key.key_prefix}</code>
+                    </TableCell>
+                    <TableCell>{formatTime(key.created_at)}</TableCell>
+                    <TableCell>{formatNullableTime(key.last_used_at)}</TableCell>
+                    <TableCell>
+                      <Badge variant={revoked ? "outline" : "secondary"}>{revoked ? "revoked" : "active"}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {!revoked ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={pendingRevokeId === key.id}
+                          onClick={() => onRevoke(key.id)}
+                          aria-label={`Revoke ${key.key_prefix}`}
+                        >
+                          Revoke
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+        {error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{error.message}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GatewayConfigure({
+  wsId,
+}: {
+  wsId: string;
+}) {
+  const qc = useQueryClient();
+  const statusQuery = useQuery(gatewayStatusOptions(wsId));
+  const keysQuery = useQuery(gatewayUserKeysOptions(wsId));
+  const doctorQuery = useQuery(gatewayDoctorOptions(wsId));
+  const [generatedKey, setGeneratedKey] = useState<GatewayUserKeyResponse | null>(null);
+  const [smokeResult, setSmokeResult] = useState<GatewaySmokeResponse | null>(null);
+  const status = statusQuery.data as GatewayStatusResponse | undefined;
+  const generatedEnv = generatedKey ? gatewayUserKeyEnv(generatedKey) : "";
+  const setupSnippets = gatewayAgentSetupSnippets(status, generatedKey);
+
+  const invalidateKeys = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.status(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.userKeys(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.doctor(wsId) });
+  };
+
+  const createUserKeyMutation = useMutation({
+    mutationFn: () => api.createGatewayUserKey(),
+    onSuccess: (key) => {
+      setGeneratedKey(key);
+      invalidateKeys();
+    },
+  });
+
+  const revokeUserKeyMutation = useMutation({
+    mutationFn: (id: string) => api.revokeGatewayUserKey(id),
+    onSuccess: invalidateKeys,
+  });
+
+  const smokeMutation = useMutation({
+    mutationFn: () => api.runGatewaySmoke({ since: "24h", limit: 10 }),
+    onSuccess: (result) => setSmokeResult(result),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <Card size="sm" className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Route className="size-4 text-muted-foreground" />
+              Gateway Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <GatewayValue label="OpenAI-compatible" value={status?.openai_base_url ?? ""} />
+              <GatewayValue label="Anthropic-compatible" value={status?.anthropic_base_url ?? ""} />
+              <GatewayValue label="Capture policy" value={status?.capture_policy ?? "full_content"} />
+              <GatewayValue label="Default backend" value={status?.default_backend?.slug ?? "None"} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={status?.has_active_key ? "secondary" : "outline"}>
+                {status?.has_active_key ? "active key" : "no active key"}
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={createUserKeyMutation.isPending}
+                onClick={() => createUserKeyMutation.mutate()}
+              >
+                <KeyRound className="size-3.5" />
+                Generate Gateway key
+              </Button>
+            </div>
+            {generatedKey ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">Copy this secret now. It will not be shown again.</p>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={() => copyText(generatedEnv)}
+                    aria-label="Copy generated Gateway key"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </div>
+                <pre className="max-h-44 overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+                  {generatedEnv}
+                </pre>
+              </div>
+            ) : null}
+            {createUserKeyMutation.error instanceof Error ? (
+              <p className="text-xs text-destructive">{createUserKeyMutation.error.message}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <GatewayMCPPanel wsId={wsId} />
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        {setupSnippets.map((snippet) => (
+          <Card key={snippet.title} size="sm" className="rounded-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between gap-2 text-sm">
+                <span>{snippet.title}</span>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={() => copyText(snippet.body)}
+                  aria-label={`Copy ${snippet.title} setup`}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <pre className="overflow-auto rounded-md border bg-muted/30 p-3 text-xs leading-relaxed">
+                {snippet.body}
+              </pre>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <GatewayUserKeysPanel
+        keys={keysQuery.data ?? []}
+        loading={keysQuery.isLoading}
+        error={keysQuery.error}
+        pendingRevokeId={revokeUserKeyMutation.isPending ? revokeUserKeyMutation.variables ?? "" : ""}
+        onRevoke={(id) => revokeUserKeyMutation.mutate(id)}
+      />
+      {revokeUserKeyMutation.error instanceof Error ? (
+        <p className="text-xs text-destructive">{revokeUserKeyMutation.error.message}</p>
+      ) : null}
+
+      <GatewaySmokePanel
+        smoke={smokeResult}
+        loading={smokeMutation.isPending}
+        error={smokeMutation.error}
+        onRun={() => smokeMutation.mutate()}
+      />
+
+      <GatewayDoctorPanel
+        doctor={doctorQuery.data as GatewayDoctorResponse | undefined}
+        loading={doctorQuery.isLoading}
+        error={doctorQuery.error}
+      />
+    </div>
+  );
+}
+
 function commaList(value: string): string[] {
   return value
     .split(",")
@@ -1183,6 +1911,25 @@ function commaList(value: string): string[] {
 
 function joinList(values: string[] | undefined): string {
   return (values ?? []).join(", ");
+}
+
+function prettyJSON(value: unknown, fallback = "[]"): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return fallback;
+  }
+}
+
+function parseJSONField(value: string, fallback: unknown, label: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const raw = value.trim();
+  if (!raw) return { ok: true, value: fallback };
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: false, error: `${label} must be valid JSON.` };
+  }
 }
 
 function policyExceptionScopeLabel(scope: unknown): string {
@@ -2729,6 +3476,8 @@ function GatewayGovernanceSetup({
   const riskRows = risksQuery.data;
   const backends = useMemo(() => backendRows ?? [], [backendRows]);
   const risks = useMemo(() => riskRows ?? [], [riskRows]);
+  const [riskDialogOpen, setRiskDialogOpen] = useState(false);
+  const [editingRiskId, setEditingRiskId] = useState("");
   const [providerName, setProviderName] = useState("");
   const [riskScore, setRiskScore] = useState("0");
   const [securityReviewStatus, setSecurityReviewStatus] = useState("unknown");
@@ -2742,18 +3491,43 @@ function GatewayGovernanceSetup({
     }
   }, [backends, providerName]);
 
-  useEffect(() => {
-    if (!providerName) return;
-    const risk = risks.find((item) => item.provider_name === providerName);
-    setRiskScore(String(risk?.risk_score ?? 0));
-    setSecurityReviewStatus(risk?.security_review_status ?? "unknown");
-    setContractStatus(risk?.contract_status ?? "unknown");
-    setApprovedUseCases(joinList(risk?.approved_use_cases));
-    setDataCategories(joinList(risk?.data_categories));
-  }, [providerName, risks]);
+  const resetRiskForm = () => {
+    setEditingRiskId("");
+    setProviderName(backends.find((backend) => !risks.some((risk) => risk.provider_name === backend.slug))?.slug ?? backends[0]?.slug ?? "");
+    setRiskScore("0");
+    setSecurityReviewStatus("unknown");
+    setContractStatus("unknown");
+    setApprovedUseCases("");
+    setDataCategories("");
+  };
+
+  const openCreateRiskDialog = () => {
+    resetRiskForm();
+    setRiskDialogOpen(true);
+  };
+
+  const openEditRiskDialog = (risk: GatewayProviderRisk) => {
+    setEditingRiskId(risk.id);
+    setProviderName(risk.provider_name);
+    setRiskScore(String(risk.risk_score ?? 0));
+    setSecurityReviewStatus(risk.security_review_status ?? "unknown");
+    setContractStatus(risk.contract_status ?? "unknown");
+    setApprovedUseCases(joinList(risk.approved_use_cases));
+    setDataCategories(joinList(risk.data_categories));
+    setRiskDialogOpen(true);
+  };
 
   const upsertRiskMutation = useMutation({
     mutationFn: (input: UpsertGatewayProviderRiskRequest) => api.upsertGatewayProviderRisk(input),
+    onSuccess: () => {
+      setRiskDialogOpen(false);
+      resetRiskForm();
+      void qc.invalidateQueries({ queryKey: gatewayKeys.providerRisks(wsId) });
+      void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+    },
+  });
+  const archiveRiskMutation = useMutation({
+    mutationFn: (id: string) => api.deleteGatewayProviderRisk(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: gatewayKeys.providerRisks(wsId) });
       void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
@@ -2782,13 +3556,123 @@ function GatewayGovernanceSetup({
   return (
     <Card size="sm" className="rounded-lg">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <ShieldCheck className="size-4 text-muted-foreground" />
-          Provider Risk Register
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ShieldCheck className="size-4 text-muted-foreground" />
+            Provider Risk Register
+          </CardTitle>
+          <Button type="button" size="sm" onClick={openCreateRiskDialog} disabled={backends.length === 0}>
+            <Plus className="size-3.5" />
+            Add New
+          </Button>
+        </div>
       </CardHeader>
-      <CardContent>
-        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <CardContent className="p-0">
+        {risksQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-14 rounded-md" />
+            ))}
+          </div>
+        ) : risks.length === 0 ? (
+          <div className="flex h-44 flex-col items-center justify-center border-t text-center">
+            <ShieldCheck className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No provider risks recorded</p>
+            <p className="mt-1 text-xs text-muted-foreground">Assess managed backends before broad enterprise rollout.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway provider risk register">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Provider</TableHead>
+                <TableHead>Reviews</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead className="text-right">Risk</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {risks.map((risk: GatewayProviderRisk) => (
+                <TableRow key={risk.id}>
+                  <TableCell>
+                    <div className="flex max-w-56 flex-col">
+                      <span className="truncate font-medium">{risk.provider_name}</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {risk.capability_class || "general_purpose_llm"}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="outline">{risk.security_review_status}</Badge>
+                      <Badge variant="outline">{risk.contract_status}</Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-72 flex-wrap gap-1">
+                      {risk.data_categories.length === 0 ? (
+                        <Badge variant="outline">unclassified</Badge>
+                      ) : (
+                        risk.data_categories.slice(0, 4).map((category) => (
+                          <Badge key={category} variant="secondary">
+                            {category}
+                          </Badge>
+                        ))
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge variant={risk.risk_score >= 80 ? "destructive" : "outline"}>
+                      Risk {risk.risk_score}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => openEditRiskDialog(risk)}
+                        aria-label={`Edit provider risk ${risk.provider_name}`}
+                        title={`Edit ${risk.provider_name}`}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={archiveRiskMutation.isPending && archiveRiskMutation.variables === risk.id}
+                        onClick={() => archiveRiskMutation.mutate(risk.id)}
+                        aria-label={`Archive provider risk ${risk.provider_name}`}
+                        title={`Archive ${risk.provider_name}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {risksQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{risksQuery.error.message}</p>
+        ) : null}
+        {archiveRiskMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{archiveRiskMutation.error.message}</p>
+        ) : null}
+      </CardContent>
+
+      <Dialog open={riskDialogOpen} onOpenChange={(open) => {
+        setRiskDialogOpen(open);
+        if (!open) resetRiskForm();
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingRiskId ? "Edit provider risk" : "Add provider risk"}</DialogTitle>
+            <DialogDescription>Assess provider availability, security review, contract state, and approved data usage.</DialogDescription>
+          </DialogHeader>
           <form className="space-y-3" onSubmit={submitRisk}>
             <div className="space-y-1.5">
               <Label htmlFor="gateway-governance-provider">Governance provider</Label>
@@ -2872,85 +3756,22 @@ function GatewayGovernanceSetup({
             {upsertRiskMutation.error instanceof Error ? (
               <p className="text-xs text-destructive">{upsertRiskMutation.error.message}</p>
             ) : null}
-            <Button
-              type="submit"
-              size="sm"
-              disabled={backends.length === 0 || !providerName || upsertRiskMutation.isPending}
-            >
-              <ShieldCheck className="size-3.5" />
-              Save provider risk
-            </Button>
+            <DialogFooter>
+              <Button type="button" size="sm" variant="outline" onClick={() => setRiskDialogOpen(false)}>
+                Close
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={backends.length === 0 || !providerName || upsertRiskMutation.isPending}
+              >
+                <ShieldCheck className="size-3.5" />
+                Save provider risk
+              </Button>
+            </DialogFooter>
           </form>
-
-          <div className="min-w-0">
-            {risksQuery.isLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <Skeleton key={index} className="h-14 rounded-md" />
-                ))}
-              </div>
-            ) : risks.length === 0 ? (
-              <div className="flex h-44 flex-col items-center justify-center rounded-md border text-center">
-                <ShieldCheck className="size-8 text-muted-foreground/40" />
-                <p className="mt-3 text-sm font-medium">No provider risks recorded</p>
-                <p className="mt-1 text-xs text-muted-foreground">Assess managed backends before broad enterprise rollout.</p>
-              </div>
-            ) : (
-              <Table aria-label="Gateway provider risk register">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Provider</TableHead>
-                    <TableHead>Reviews</TableHead>
-                    <TableHead>Data</TableHead>
-                    <TableHead className="text-right">Risk</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {risks.map((risk: GatewayProviderRisk) => (
-                    <TableRow key={risk.id}>
-                      <TableCell>
-                        <div className="flex max-w-56 flex-col">
-                          <span className="truncate font-medium">{risk.provider_name}</span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {risk.capability_class || "general_purpose_llm"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          <Badge variant="outline">{risk.security_review_status}</Badge>
-                          <Badge variant="outline">{risk.contract_status}</Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex max-w-72 flex-wrap gap-1">
-                          {risk.data_categories.length === 0 ? (
-                            <Badge variant="outline">unclassified</Badge>
-                          ) : (
-                            risk.data_categories.slice(0, 4).map((category) => (
-                              <Badge key={category} variant="secondary">
-                                {category}
-                              </Badge>
-                            ))
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={risk.risk_score >= 80 ? "destructive" : "outline"}>
-                          Risk {risk.risk_score}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-            {risksQuery.error instanceof Error ? (
-              <p className="mt-3 text-xs text-destructive">{risksQuery.error.message}</p>
-            ) : null}
-          </div>
-        </div>
-      </CardContent>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -3182,6 +4003,7 @@ function GatewayGovernancePolicies({
   const qc = useQueryClient();
   const policiesQuery = useQuery(gatewayGovernancePoliciesOptions(wsId, canManage));
   const policies = policiesQuery.data ?? [];
+  const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
   const [policyName, setPolicyName] = useState("");
   const [policyDescription, setPolicyDescription] = useState("");
   const [policyType, setPolicyType] = useState("model");
@@ -3189,6 +4011,23 @@ function GatewayGovernancePolicies({
   const [policyEnabled, setPolicyEnabled] = useState("true");
   const [ruleDefinition, setRuleDefinition] = useState(defaultGatewayPolicyRule);
   const [ruleError, setRuleError] = useState("");
+  const [editingPolicyId, setEditingPolicyId] = useState("");
+
+  const resetPolicyForm = () => {
+    setEditingPolicyId("");
+    setPolicyName("");
+    setPolicyDescription("");
+    setPolicyType("model");
+    setPolicyMode("enforce");
+    setPolicyEnabled("true");
+    setRuleDefinition(defaultGatewayPolicyRule);
+    setRuleError("");
+  };
+
+  const openCreatePolicyDialog = () => {
+    resetPolicyForm();
+    setPolicyDialogOpen(true);
+  };
 
   const invalidatePolicies = () => {
     void qc.invalidateQueries({ queryKey: gatewayKeys.governancePolicies(wsId) });
@@ -3198,13 +4037,8 @@ function GatewayGovernancePolicies({
   const createPolicyMutation = useMutation({
     mutationFn: (input: CreateGatewayGovernancePolicyRequest) => api.createGatewayGovernancePolicy(input),
     onSuccess: () => {
-      setPolicyName("");
-      setPolicyDescription("");
-      setPolicyType("model");
-      setPolicyMode("enforce");
-      setPolicyEnabled("true");
-      setRuleDefinition(defaultGatewayPolicyRule);
-      setRuleError("");
+      setPolicyDialogOpen(false);
+      resetPolicyForm();
       invalidatePolicies();
     },
   });
@@ -3212,7 +4046,20 @@ function GatewayGovernancePolicies({
   const updatePolicyMutation = useMutation({
     mutationFn: ({ id, input }: { id: string; input: CreateGatewayGovernancePolicyRequest }) =>
       api.updateGatewayGovernancePolicy(id, input),
-    onSuccess: invalidatePolicies,
+    onSuccess: () => {
+      setPolicyDialogOpen(false);
+      resetPolicyForm();
+      invalidatePolicies();
+    },
+  });
+  const archivePolicyMutation = useMutation({
+    mutationFn: (id: string) => api.deleteGatewayGovernancePolicy(id),
+    onSuccess: () => {
+      if (archivePolicyMutation.variables === editingPolicyId) {
+        resetPolicyForm();
+      }
+      invalidatePolicies();
+    },
   });
 
   if (!canManage) return null;
@@ -3227,14 +4074,31 @@ function GatewayGovernancePolicies({
       return;
     }
     setRuleError("");
-    createPolicyMutation.mutate({
+    const input = {
       name: policyName.trim(),
       description: policyDescription.trim(),
       policy_type: policyType,
       enabled: policyEnabled === "true",
       enforcement_mode: policyMode,
       rule_definition: parsed,
-    });
+    };
+    if (editingPolicyId) {
+      updatePolicyMutation.mutate({ id: editingPolicyId, input });
+    } else {
+      createPolicyMutation.mutate(input);
+    }
+  };
+
+  const editPolicy = (policy: GatewayGovernancePolicyItem) => {
+    setEditingPolicyId(policy.id);
+    setPolicyName(policy.name);
+    setPolicyDescription(policy.description);
+    setPolicyType(policy.policy_type);
+    setPolicyMode(policy.enforcement_mode);
+    setPolicyEnabled(policy.enabled ? "true" : "false");
+    setRuleDefinition(prettyJSON(policy.rule_definition, defaultGatewayPolicyRule));
+    setRuleError("");
+    setPolicyDialogOpen(true);
   };
 
   const togglePolicy = (policy: GatewayGovernancePolicyItem) => {
@@ -3254,13 +4118,124 @@ function GatewayGovernancePolicies({
   return (
     <Card size="sm" className="rounded-lg">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <ShieldCheck className="size-4 text-muted-foreground" />
-          Governance Policies
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ShieldCheck className="size-4 text-muted-foreground" />
+            Governance Policies
+          </CardTitle>
+          <Button type="button" size="sm" onClick={openCreatePolicyDialog}>
+            <Plus className="size-3.5" />
+            Add New
+          </Button>
+        </div>
       </CardHeader>
-      <CardContent>
-        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <CardContent className="p-0">
+        {policiesQuery.isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-14 rounded-md" />
+            ))}
+          </div>
+        ) : policies.length === 0 ? (
+          <div className="flex h-44 flex-col items-center justify-center border-t text-center">
+            <ShieldCheck className="size-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No governance policies configured</p>
+            <p className="mt-1 text-xs text-muted-foreground">Create JSON-backed policies to enforce model, tool, data, routing, and capture rules.</p>
+          </div>
+        ) : (
+          <Table aria-label="Gateway governance policies">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Policy</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Mode</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead className="text-right">State</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {policies.map((policy: GatewayGovernancePolicyItem) => (
+                <TableRow key={policy.id}>
+                  <TableCell>
+                    <div className="flex max-w-64 flex-col">
+                      <span className="truncate font-medium">{policy.name}</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {policy.description || "No description"}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{policy.policy_type}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={policy.enforcement_mode === "enforce" ? "secondary" : "outline"}>
+                      {policy.enforcement_mode}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">v{policy.version}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={policy.enabled ? "outline" : "default"}
+                      disabled={updatePolicyMutation.isPending}
+                      onClick={() => togglePolicy(policy)}
+                      aria-label={`${policy.enabled ? "Disable" : "Enable"} policy ${policy.name}`}
+                    >
+                      {policy.enabled ? "enabled" : "disabled"}
+                    </Button>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => editPolicy(policy)}
+                        aria-label={`Edit policy ${policy.name}`}
+                        title={`Edit ${policy.name}`}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={archivePolicyMutation.isPending && archivePolicyMutation.variables === policy.id}
+                        onClick={() => archivePolicyMutation.mutate(policy.id)}
+                        aria-label={`Archive policy ${policy.name}`}
+                        title={`Archive ${policy.name}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {policiesQuery.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{policiesQuery.error.message}</p>
+        ) : null}
+        {updatePolicyMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{updatePolicyMutation.error.message}</p>
+        ) : null}
+        {archivePolicyMutation.error instanceof Error ? (
+          <p className="border-t p-3 text-xs text-destructive">{archivePolicyMutation.error.message}</p>
+        ) : null}
+      </CardContent>
+
+      <Dialog open={policyDialogOpen} onOpenChange={(open) => {
+        setPolicyDialogOpen(open);
+        if (!open) resetPolicyForm();
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{editingPolicyId ? "Edit governance policy" : "Add governance policy"}</DialogTitle>
+            <DialogDescription>Create or update JSON-backed policies that enforce model, tool, data, routing, and capture rules.</DialogDescription>
+          </DialogHeader>
           <form className="space-y-3" onSubmit={submitPolicy}>
             <div className="space-y-1.5">
               <Label htmlFor="gateway-policy-name">Policy name</Label>
@@ -3340,86 +4315,22 @@ function GatewayGovernancePolicies({
             {createPolicyMutation.error instanceof Error ? (
               <p className="text-xs text-destructive">{createPolicyMutation.error.message}</p>
             ) : null}
-            <Button
-              type="submit"
-              size="sm"
-              disabled={!policyName.trim() || createPolicyMutation.isPending}
-            >
-              <Save className="size-3.5" />
-              Create policy
-            </Button>
+            <DialogFooter>
+              <Button type="button" size="sm" variant="outline" onClick={() => setPolicyDialogOpen(false)}>
+                Close
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={!policyName.trim() || createPolicyMutation.isPending || updatePolicyMutation.isPending}
+              >
+                <Save className="size-3.5" />
+                {editingPolicyId ? "Update policy" : "Create policy"}
+              </Button>
+            </DialogFooter>
           </form>
-
-          <div className="min-w-0">
-            {policiesQuery.isLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <Skeleton key={index} className="h-14 rounded-md" />
-                ))}
-              </div>
-            ) : policies.length === 0 ? (
-              <div className="flex h-44 flex-col items-center justify-center rounded-md border text-center">
-                <ShieldCheck className="size-8 text-muted-foreground/40" />
-                <p className="mt-3 text-sm font-medium">No governance policies configured</p>
-                <p className="mt-1 text-xs text-muted-foreground">Create JSON-backed policies to enforce model, tool, data, routing, and capture rules.</p>
-              </div>
-            ) : (
-              <Table aria-label="Gateway governance policies">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Policy</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead>Version</TableHead>
-                    <TableHead className="text-right">State</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {policies.map((policy: GatewayGovernancePolicyItem) => (
-                    <TableRow key={policy.id}>
-                      <TableCell>
-                        <div className="flex max-w-64 flex-col">
-                          <span className="truncate font-medium">{policy.name}</span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {policy.description || "No description"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{policy.policy_type}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={policy.enforcement_mode === "enforce" ? "secondary" : "outline"}>
-                          {policy.enforcement_mode}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">v{policy.version}</TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant={policy.enabled ? "outline" : "default"}
-                          disabled={updatePolicyMutation.isPending}
-                          onClick={() => togglePolicy(policy)}
-                          aria-label={`${policy.enabled ? "Disable" : "Enable"} policy ${policy.name}`}
-                        >
-                          {policy.enabled ? "enabled" : "disabled"}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-            {policiesQuery.error instanceof Error ? (
-              <p className="mt-3 text-xs text-destructive">{policiesQuery.error.message}</p>
-            ) : null}
-            {updatePolicyMutation.error instanceof Error ? (
-              <p className="mt-3 text-xs text-destructive">{updatePolicyMutation.error.message}</p>
-            ) : null}
-          </div>
-        </div>
-      </CardContent>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -3518,28 +4429,116 @@ function GatewayComplianceControls({
   canManage: boolean;
   wsId: string;
 }) {
+  const qc = useQueryClient();
   const controlsQuery = useQuery(gatewayControlMappingsOptions(wsId, canManage));
   const rows = controlsQuery.data ?? [];
+  const [controlDialogOpen, setControlDialogOpen] = useState(false);
+  const [editingControlId, setEditingControlId] = useState("");
+  const [controlFramework, setControlFramework] = useState("internal_gateway_governance");
+  const [controlId, setControlId] = useState("");
+  const [controlTitle, setControlTitle] = useState("");
+  const [controlStatus, setControlStatus] = useState("not_started");
+  const [mappedPolicyIds, setMappedPolicyIds] = useState("[]");
+  const [mappedEvidenceQueries, setMappedEvidenceQueries] = useState("[]");
+  const [controlError, setControlError] = useState("");
+
+  const resetControlForm = () => {
+    setEditingControlId("");
+    setControlFramework("internal_gateway_governance");
+    setControlId("");
+    setControlTitle("");
+    setControlStatus("not_started");
+    setMappedPolicyIds("[]");
+    setMappedEvidenceQueries("[]");
+    setControlError("");
+  };
+
+  const openCreateControlDialog = () => {
+    resetControlForm();
+    setControlDialogOpen(true);
+  };
+
+  const invalidateControls = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.controlMappings(wsId) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+  };
+
+  const upsertControlMutation = useMutation({
+    mutationFn: (input: UpsertGatewayControlMappingRequest) => api.upsertGatewayControlMapping(input),
+    onSuccess: () => {
+      setControlDialogOpen(false);
+      resetControlForm();
+      invalidateControls();
+    },
+  });
+  const archiveControlMutation = useMutation({
+    mutationFn: (id: string) => api.deleteGatewayControlMapping(id),
+    onSuccess: () => {
+      if (archiveControlMutation.variables === editingControlId) {
+        resetControlForm();
+      }
+      invalidateControls();
+    },
+  });
 
   if (!canManage) return null;
+
+  const submitControl = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const policyIDs = parseJSONField(mappedPolicyIds, [], "Mapped policy IDs");
+    if (!policyIDs.ok) {
+      setControlError(policyIDs.error);
+      return;
+    }
+    const evidenceQueries = parseJSONField(mappedEvidenceQueries, [], "Mapped evidence queries");
+    if (!evidenceQueries.ok) {
+      setControlError(evidenceQueries.error);
+      return;
+    }
+    setControlError("");
+    upsertControlMutation.mutate({
+      framework: controlFramework.trim(),
+      control_id: controlId.trim(),
+      control_title: controlTitle.trim(),
+      status: controlStatus,
+      mapped_policy_ids: policyIDs.value,
+      mapped_evidence_queries: evidenceQueries.value,
+    });
+  };
+
+  const editControl = (row: GatewayControlMappingItem) => {
+    setEditingControlId(row.id);
+    setControlFramework(row.framework);
+    setControlId(row.control_id);
+    setControlTitle(row.control_title);
+    setControlStatus(row.status);
+    setMappedPolicyIds(prettyJSON(row.mapped_policy_ids));
+    setMappedEvidenceQueries(prettyJSON(row.mapped_evidence_queries));
+    setControlError("");
+    setControlDialogOpen(true);
+  };
 
   return (
     <Card size="sm" className="rounded-lg">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Boxes className="size-4 text-muted-foreground" />
-          Compliance Controls
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Boxes className="size-4 text-muted-foreground" />
+            Compliance Controls
+          </CardTitle>
+          <Button type="button" size="sm" onClick={openCreateControlDialog}>
+            <Plus className="size-3.5" />
+            Add New
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {controlsQuery.isLoading ? (
           <div className="space-y-2 p-3">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Skeleton key={index} className="h-12 rounded-md" />
-            ))}
+            {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-12 rounded-md" />)}
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+          <div className="flex h-44 flex-col items-center justify-center border-t text-center">
             <Boxes className="size-8 text-muted-foreground/40" />
             <p className="mt-3 text-sm font-medium">No compliance controls mapped</p>
             <p className="mt-1 text-xs text-muted-foreground">Gateway controls will appear after governance mappings are created.</p>
@@ -3553,6 +4552,7 @@ function GatewayComplianceControls({
                 <TableHead>Status</TableHead>
                 <TableHead>Evidence</TableHead>
                 <TableHead className="text-right">Updated</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -3564,25 +4564,83 @@ function GatewayComplianceControls({
                       <span className="truncate text-xs text-muted-foreground">{row.framework}</span>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.control_title}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={row.status === "gap" ? "destructive" : "outline"}>{row.status}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={row.evidence_count > 0 ? "secondary" : "outline"}>Evidence {row.evidence_count}</Badge>
-                  </TableCell>
+                  <TableCell><span className="line-clamp-2 max-w-xl text-sm font-medium">{row.control_title}</span></TableCell>
+                  <TableCell><Badge variant={row.status === "gap" ? "destructive" : "outline"}>{row.status}</Badge></TableCell>
+                  <TableCell><Badge variant={row.evidence_count > 0 ? "secondary" : "outline"}>Evidence {row.evidence_count}</Badge></TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.updated_at)}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <Button type="button" size="icon-xs" variant="ghost" onClick={() => editControl(row)} aria-label={`Edit control ${row.control_id}`} title={`Edit ${row.control_id}`}>
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button type="button" size="icon-xs" variant="ghost" disabled={archiveControlMutation.isPending && archiveControlMutation.variables === row.id} onClick={() => archiveControlMutation.mutate(row.id)} aria-label={`Archive control ${row.control_id}`} title={`Archive ${row.control_id}`}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-        {controlsQuery.error instanceof Error ? (
-          <p className="border-t p-3 text-xs text-destructive">{controlsQuery.error.message}</p>
-        ) : null}
+        {controlsQuery.error instanceof Error ? <p className="border-t p-3 text-xs text-destructive">{controlsQuery.error.message}</p> : null}
+        {archiveControlMutation.error instanceof Error ? <p className="border-t p-3 text-xs text-destructive">{archiveControlMutation.error.message}</p> : null}
       </CardContent>
+
+      <Dialog open={controlDialogOpen} onOpenChange={(open) => {
+        setControlDialogOpen(open);
+        if (!open) resetControlForm();
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingControlId ? "Edit compliance control" : "Add compliance control"}</DialogTitle>
+            <DialogDescription>Map Gateway governance policies and evidence queries to enterprise compliance controls.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={submitControl}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-control-framework">Framework</Label>
+                <Input id="gateway-control-framework" value={controlFramework} onChange={(event) => setControlFramework(event.target.value)} autoComplete="off" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-control-id">Control ID</Label>
+                <Input id="gateway-control-id" value={controlId} onChange={(event) => setControlId(event.target.value)} placeholder="GW-4" autoComplete="off" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-control-title">Title</Label>
+              <Input id="gateway-control-title" value={controlTitle} onChange={(event) => setControlTitle(event.target.value)} placeholder="Prompt keyword controls are enforced" autoComplete="off" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-control-status">Status</Label>
+              <NativeSelect id="gateway-control-status" className="w-full" value={controlStatus} onChange={(event) => setControlStatus(event.target.value)}>
+                {["not_started", "in_progress", "covered", "gap", "accepted_risk"].map((status) => (
+                  <NativeSelectOption key={status} value={status}>{status}</NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-control-policies">Mapped policy IDs</Label>
+              <Textarea id="gateway-control-policies" className="min-h-20 font-mono text-xs" value={mappedPolicyIds} onChange={(event) => setMappedPolicyIds(event.target.value)} spellCheck={false} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-control-evidence">Mapped evidence queries</Label>
+              <Textarea id="gateway-control-evidence" className="min-h-24 font-mono text-xs" value={mappedEvidenceQueries} onChange={(event) => setMappedEvidenceQueries(event.target.value)} spellCheck={false} />
+            </div>
+            {controlError ? <p className="text-xs text-destructive">{controlError}</p> : null}
+            {upsertControlMutation.error instanceof Error ? <p className="text-xs text-destructive">{upsertControlMutation.error.message}</p> : null}
+            <DialogFooter>
+              <Button type="button" size="sm" variant="outline" onClick={() => setControlDialogOpen(false)}>
+                Close
+              </Button>
+              <Button type="submit" size="sm" disabled={!controlFramework.trim() || !controlId.trim() || !controlTitle.trim() || upsertControlMutation.isPending}>
+                <Save className="size-3.5" />
+                {editingControlId ? "Update control" : "Create control"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -3597,37 +4655,112 @@ function GatewayIncidents({
   const qc = useQueryClient();
   const incidentsQuery = useQuery(gatewayIncidentsOptions(wsId, 20, canManage));
   const rows = incidentsQuery.data ?? [];
-  const updateIncidentMutation = useMutation({
-    mutationFn: (id: string) =>
-      api.updateGatewayIncident(id, {
-        status: "remediated",
-        remediation_notes: "Provider review completed.",
-      }),
+  const [incidentDialogOpen, setIncidentDialogOpen] = useState(false);
+  const [editingIncidentId, setEditingIncidentId] = useState("");
+  const [incidentSeverity, setIncidentSeverity] = useState("medium");
+  const [incidentCategory, setIncidentCategory] = useState("");
+  const [incidentSummary, setIncidentSummary] = useState("");
+  const [incidentStatus, setIncidentStatus] = useState("open");
+  const [incidentNotes, setIncidentNotes] = useState("");
+
+  const resetIncidentForm = () => {
+    setEditingIncidentId("");
+    setIncidentSeverity("medium");
+    setIncidentCategory("");
+    setIncidentSummary("");
+    setIncidentStatus("open");
+    setIncidentNotes("");
+  };
+
+  const openCreateIncidentDialog = () => {
+    resetIncidentForm();
+    setIncidentDialogOpen(true);
+  };
+
+  const invalidateIncidents = () => {
+    void qc.invalidateQueries({ queryKey: gatewayKeys.incidents(wsId, 20) });
+    void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+  };
+
+  const createIncidentMutation = useMutation({
+    mutationFn: (input: CreateGatewayIncidentRequest) => api.createGatewayIncident(input),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: gatewayKeys.incidents(wsId, 20) });
-      void qc.invalidateQueries({ queryKey: gatewayKeys.audit(wsId, 20) });
+      setIncidentDialogOpen(false);
+      resetIncidentForm();
+      invalidateIncidents();
+    },
+  });
+  const updateIncidentMutation = useMutation({
+    mutationFn: ({ id, status, remediation_notes }: { id: string; status: string; remediation_notes?: string }) =>
+      api.updateGatewayIncident(id, { status, remediation_notes }),
+    onSuccess: () => {
+      setIncidentDialogOpen(false);
+      resetIncidentForm();
+      invalidateIncidents();
+    },
+  });
+  const archiveIncidentMutation = useMutation({
+    mutationFn: (id: string) => api.deleteGatewayIncident(id),
+    onSuccess: () => {
+      if (archiveIncidentMutation.variables === editingIncidentId) {
+        resetIncidentForm();
+      }
+      invalidateIncidents();
     },
   });
 
   if (!canManage) return null;
 
+  const submitIncident = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (editingIncidentId) {
+      updateIncidentMutation.mutate({
+        id: editingIncidentId,
+        status: incidentStatus,
+        remediation_notes: incidentNotes.trim(),
+      });
+      return;
+    }
+    createIncidentMutation.mutate({
+      severity: incidentSeverity,
+      category: incidentCategory.trim(),
+      summary: incidentSummary.trim(),
+      status: incidentStatus,
+      remediation_notes: incidentNotes.trim(),
+    });
+  };
+
+  const editIncident = (row: GatewayIncidentItem) => {
+    setEditingIncidentId(row.id);
+    setIncidentSeverity(row.severity);
+    setIncidentCategory(row.category);
+    setIncidentSummary(row.summary);
+    setIncidentStatus(row.status);
+    setIncidentNotes(row.remediation_notes);
+    setIncidentDialogOpen(true);
+  };
+
   return (
     <Card size="sm" className="rounded-lg">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <AlertTriangle className="size-4 text-muted-foreground" />
-          Incidents
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <AlertTriangle className="size-4 text-muted-foreground" />
+            Incidents
+          </CardTitle>
+          <Button type="button" size="sm" onClick={openCreateIncidentDialog}>
+            <Plus className="size-3.5" />
+            Add New
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {incidentsQuery.isLoading ? (
           <div className="space-y-2 p-3">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Skeleton key={index} className="h-12 rounded-md" />
-            ))}
+            {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-12 rounded-md" />)}
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center border-t text-center">
+          <div className="flex h-44 flex-col items-center justify-center border-t text-center">
             <AlertTriangle className="size-8 text-muted-foreground/40" />
             <p className="mt-3 text-sm font-medium">No Gateway incidents recorded</p>
             <p className="mt-1 text-xs text-muted-foreground">Provider risk blocks and compliance events will appear here.</p>
@@ -3641,54 +4774,91 @@ function GatewayIncidents({
                 <TableHead>Summary</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Opened</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row: GatewayIncidentItem) => (
                 <TableRow key={row.id}>
-                  <TableCell>
-                    <Badge variant={row.severity === "critical" || row.severity === "high" ? "destructive" : "outline"}>{row.severity}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-medium">{row.category}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="line-clamp-2 max-w-xl text-sm font-medium">{row.summary}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={row.status === "open" ? "secondary" : "outline"}>{row.status}</Badge>
-                  </TableCell>
+                  <TableCell><Badge variant={row.severity === "critical" || row.severity === "high" ? "destructive" : "outline"}>{row.severity}</Badge></TableCell>
+                  <TableCell><span className="font-medium">{row.category}</span></TableCell>
+                  <TableCell><span className="line-clamp-2 max-w-xl text-sm font-medium">{row.summary}</span></TableCell>
+                  <TableCell><Badge variant={row.status === "open" ? "secondary" : "outline"}>{row.status}</Badge></TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">{formatTime(row.opened_at)}</TableCell>
                   <TableCell className="text-right">
-                    {row.status === "closed" || row.status === "remediated" ? (
-                      <Badge variant="outline">Done</Badge>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={updateIncidentMutation.isPending && updateIncidentMutation.variables === row.id}
-                        onClick={() => updateIncidentMutation.mutate(row.id)}
-                        aria-label="Mark incident remediated"
-                      >
-                        <ShieldCheck className="size-3.5" />
-                        Remediate
+                    <div className="inline-flex items-center gap-1">
+                      <Button type="button" size="icon-xs" variant="ghost" onClick={() => editIncident(row)} aria-label={`Edit incident ${row.summary}`} title="Edit incident">
+                        <Pencil className="size-3.5" />
                       </Button>
-                    )}
+                      {row.status === "closed" || row.status === "remediated" ? null : (
+                        <Button type="button" size="icon-xs" variant="ghost" disabled={updateIncidentMutation.isPending && updateIncidentMutation.variables?.id === row.id} onClick={() => updateIncidentMutation.mutate({ id: row.id, status: "remediated", remediation_notes: "Provider review completed." })} aria-label="Mark incident remediated" title="Remediate">
+                          <ShieldCheck className="size-3.5" />
+                        </Button>
+                      )}
+                      <Button type="button" size="icon-xs" variant="ghost" disabled={archiveIncidentMutation.isPending && archiveIncidentMutation.variables === row.id} onClick={() => archiveIncidentMutation.mutate(row.id)} aria-label={`Archive incident ${row.summary}`} title="Archive incident">
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-        {incidentsQuery.error instanceof Error ? (
-          <p className="border-t p-3 text-xs text-destructive">{incidentsQuery.error.message}</p>
-        ) : null}
-        {updateIncidentMutation.error instanceof Error ? (
-          <p className="border-t p-3 text-xs text-destructive">{updateIncidentMutation.error.message}</p>
-        ) : null}
+        {incidentsQuery.error instanceof Error ? <p className="border-t p-3 text-xs text-destructive">{incidentsQuery.error.message}</p> : null}
+        {archiveIncidentMutation.error instanceof Error ? <p className="border-t p-3 text-xs text-destructive">{archiveIncidentMutation.error.message}</p> : null}
       </CardContent>
+
+      <Dialog open={incidentDialogOpen} onOpenChange={(open) => {
+        setIncidentDialogOpen(open);
+        if (!open) resetIncidentForm();
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingIncidentId ? "Edit incident" : "Add incident"}</DialogTitle>
+            <DialogDescription>Create or update governance incidents for provider, policy, and compliance review workflows.</DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={submitIncident}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-incident-severity">Severity</Label>
+                <NativeSelect id="gateway-incident-severity" className="w-full" value={incidentSeverity} onChange={(event) => setIncidentSeverity(event.target.value)} disabled={Boolean(editingIncidentId)}>
+                  {["low", "medium", "high", "critical"].map((severity) => <NativeSelectOption key={severity} value={severity}>{severity}</NativeSelectOption>)}
+                </NativeSelect>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gateway-incident-status">Status</Label>
+                <NativeSelect id="gateway-incident-status" className="w-full" value={incidentStatus} onChange={(event) => setIncidentStatus(event.target.value)}>
+                  {["open", "investigating", "remediated", "closed"].map((status) => <NativeSelectOption key={status} value={status}>{status}</NativeSelectOption>)}
+                </NativeSelect>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-incident-category">Category</Label>
+              <Input id="gateway-incident-category" value={incidentCategory} onChange={(event) => setIncidentCategory(event.target.value)} placeholder="manual_review" autoComplete="off" disabled={Boolean(editingIncidentId)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-incident-summary">Summary</Label>
+              <Input id="gateway-incident-summary" value={incidentSummary} onChange={(event) => setIncidentSummary(event.target.value)} placeholder="Provider review needed" autoComplete="off" disabled={Boolean(editingIncidentId)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="gateway-incident-notes">Remediation notes</Label>
+              <Textarea id="gateway-incident-notes" className="min-h-24" value={incidentNotes} onChange={(event) => setIncidentNotes(event.target.value)} />
+            </div>
+            {createIncidentMutation.error instanceof Error ? <p className="text-xs text-destructive">{createIncidentMutation.error.message}</p> : null}
+            {updateIncidentMutation.error instanceof Error ? <p className="text-xs text-destructive">{updateIncidentMutation.error.message}</p> : null}
+            <DialogFooter>
+              <Button type="button" size="sm" variant="outline" onClick={() => setIncidentDialogOpen(false)}>
+                Close
+              </Button>
+              <Button type="submit" size="sm" disabled={!incidentCategory.trim() || !incidentSummary.trim() || createIncidentMutation.isPending || updateIncidentMutation.isPending}>
+                <Save className="size-3.5" />
+                {editingIncidentId ? "Update incident" : "Create incident"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -4224,6 +5394,104 @@ function SessionDrilldown({
   );
 }
 
+function GatewayGovernancePageView({ section }: { section: GatewayGovernanceSection }) {
+  const wsId = useWorkspaceId();
+  const qc = useQueryClient();
+  const user = useAuthStore((state) => state.user);
+
+  const membersQuery = useQuery(memberListOptions(wsId));
+  const currentMember = membersQuery.data?.find((member) => member.user_id === user?.id);
+  const memberRole = currentMember?.role;
+  const permissionsLoading = membersQuery.isLoading;
+  const canManage = !permissionsLoading && canManageGateway(memberRole);
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: gatewayKeys.all(wsId) });
+  };
+  const currentPage = gatewayGovernancePages.find((item) => item.section === section) ?? gatewayGovernancePages[0]!;
+
+  return (
+    <div className="flex min-h-0 flex-1">
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div className="border-b px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <currentPage.icon className="size-5 text-muted-foreground" />
+                <h1 className="text-lg font-semibold">
+                  {section === "overview" ? "Gateway Governance" : currentPage.label}
+                </h1>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {currentPage.description}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <GatewayPageNav />
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={refresh}
+                title="Refresh Gateway governance"
+                aria-label="Refresh Gateway governance"
+              >
+                <RefreshCw className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <GatewayGovernanceNav />
+          {section === "overview" ? (
+            <>
+              <GatewayGovernanceInsights canManage={canManage} wsId={wsId} />
+              <GatewayGovernanceLandingCards />
+            </>
+          ) : null}
+          {section === "policies" ? <GatewayGovernancePolicies canManage={canManage} wsId={wsId} /> : null}
+          {section === "risk-register" ? <GatewayGovernanceSetup canManage={canManage} wsId={wsId} /> : null}
+          {section === "controls" ? <GatewayComplianceControls canManage={canManage} wsId={wsId} /> : null}
+          {section === "incidents" ? <GatewayIncidents canManage={canManage} wsId={wsId} /> : null}
+          {section === "evidence" ? (
+            <>
+              <GatewayEvidenceExportHistoryPanel canManage={canManage} wsId={wsId} />
+              <GatewayPolicyExceptions canManage={canManage} wsId={wsId} />
+              <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
+              <GatewayEvidence canManage={canManage} wsId={wsId} />
+              <GatewayAuditHistory canManage={canManage} wsId={wsId} />
+            </>
+          ) : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+export function GatewayGovernancePage() {
+  return <GatewayGovernancePageView section="overview" />;
+}
+
+export function GatewayGovernancePoliciesPage() {
+  return <GatewayGovernancePageView section="policies" />;
+}
+
+export function GatewayGovernanceRiskRegisterPage() {
+  return <GatewayGovernancePageView section="risk-register" />;
+}
+
+export function GatewayGovernanceControlsPage() {
+  return <GatewayGovernancePageView section="controls" />;
+}
+
+export function GatewayGovernanceIncidentsPage() {
+  return <GatewayGovernancePageView section="incidents" />;
+}
+
+export function GatewayGovernanceEvidencePage() {
+  return <GatewayGovernancePageView section="evidence" />;
+}
+
 export function GatewayPage() {
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
@@ -4272,7 +5540,8 @@ export function GatewayPage() {
                 Observer Gateway captures model traffic according to workspace policy.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <GatewayPageNav />
               <div className="flex rounded-md border bg-background p-0.5">
                 {windowOptions.map((option) => (
                   <button
@@ -4314,7 +5583,7 @@ export function GatewayPage() {
               <TabsList>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
                 <TabsTrigger value="llm-calls">LLM Calls</TabsTrigger>
-                <TabsTrigger value="governance">Governance</TabsTrigger>
+                <TabsTrigger value="configure">Configure</TabsTrigger>
                 <TabsTrigger value="setup">Setup</TabsTrigger>
               </TabsList>
               <p className="text-xs text-muted-foreground">
@@ -4350,8 +5619,8 @@ export function GatewayPage() {
                 />
               )}
             </TabsContent>
-            <TabsContent value="governance" className="mt-3">
-              <GatewayGovernanceInsights canManage={canManage} wsId={wsId} />
+            <TabsContent value="configure" className="mt-3">
+              <GatewayConfigure wsId={wsId} />
             </TabsContent>
             <TabsContent value="setup" className="mt-3">
               <div className="space-y-4">
@@ -4362,14 +5631,6 @@ export function GatewayPage() {
                   permissionsLoading={permissionsLoading}
                   wsId={wsId}
                 />
-                <GatewayGovernanceSetup canManage={canManage} wsId={wsId} />
-                <GatewayGovernancePolicies canManage={canManage} wsId={wsId} />
-                <GatewayComplianceControls canManage={canManage} wsId={wsId} />
-                <GatewayIncidents canManage={canManage} wsId={wsId} />
-                <GatewayPolicyExceptions canManage={canManage} wsId={wsId} />
-                <GatewayPolicyDecisions canManage={canManage} wsId={wsId} />
-                <GatewayEvidence canManage={canManage} wsId={wsId} />
-                <GatewayAuditHistory canManage={canManage} wsId={wsId} />
                 {canManage ? <IngestKeySetup wsId={wsId} /> : null}
               </div>
             </TabsContent>
