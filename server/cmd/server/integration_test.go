@@ -69,6 +69,11 @@ func TestMain(m *testing.M) {
 
 	bus := events.New()
 	registerListeners(bus, hub)
+	if err := os.Unsetenv("RESEND_API_KEY"); err != nil {
+		fmt.Printf("Failed to unset RESEND_API_KEY for integration tests: %v\n", err)
+		pool.Close()
+		os.Exit(1)
+	}
 	router := NewRouter(pool, hub, bus)
 	testServer = httptest.NewServer(router)
 
