@@ -77,3 +77,17 @@ func RoutingError(status int, message, code string, cause error) GatewayError {
 		Cause:         cause,
 	}
 }
+
+func normalizeRuntimeOrUpstreamError(err error) GatewayError {
+	var gatewayErr GatewayError
+	if errors.As(err, &gatewayErr) {
+		return gatewayErr
+	}
+	return GatewayError{
+		StatusCode:    http.StatusBadGateway,
+		PublicMessage: "upstream request failed",
+		ErrorType:     "api_error",
+		Code:          "gateway_upstream_failed",
+		Cause:         err,
+	}
+}

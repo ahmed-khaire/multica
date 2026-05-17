@@ -131,15 +131,14 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, surface string) 
 	}
 
 	obs := s.Recorder.Start(r.Context(), authCtx, target, summary)
-	result, err := s.Forwarder.Forward(r.Context(), w, r, target, summary)
+	var result ProxyResult
+	if target.Transport == TransportDaemonDispatch {
+		result, err = s.dispatchRuntimeRequest(r.Context(), w, authCtx, target, summary)
+	} else {
+		result, err = s.Forwarder.Forward(r.Context(), w, r, target, summary)
+	}
 	if err != nil && result.StatusCode == 0 {
-		gwErr := GatewayError{
-			StatusCode:    http.StatusBadGateway,
-			PublicMessage: "upstream request failed",
-			ErrorType:     "api_error",
-			Code:          "gateway_upstream_failed",
-			Cause:         err,
-		}
+		gwErr := normalizeRuntimeOrUpstreamError(err)
 		result.StatusCode = gwErr.StatusCode
 		result.Status = StatusGatewayError
 		result.ErrorType = gwErr.ErrorType
