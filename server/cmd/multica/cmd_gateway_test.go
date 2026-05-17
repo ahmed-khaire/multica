@@ -715,6 +715,66 @@ func TestGatewayAddClaudeOAuthAllowsMissingKey(t *testing.T) {
 	}
 }
 
+func TestGatewayAddSubscriptionBuildsCanonicalBundle(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/gateway/backends" {
+			t.Errorf("path = %s, want /api/gateway/backends", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":              "backend-codex",
+			"slug":            "codex-subscription",
+			"display_name":    "Codex Subscription",
+			"backend_type":    "subscription_runtime",
+			"base_url":        "daemon://codex",
+			"credential_hint": "{\"to...\"}",
+			"enabled":         true,
+			"is_default":      false,
+		})
+	}))
+	defer srv.Close()
+
+	root := gatewayTestRoot(t, srv.URL)
+	out, err := executeGatewayTestCommand(
+		root,
+		"gateway", "add", "codex-subscription",
+		"--workspace-id", "workspace-1",
+		"--subscription-token", "codex-token",
+	)
+	if err != nil {
+		t.Fatalf("execute gateway add subscription: %v", err)
+	}
+	if gotBody["provider"] != "codex-subscription" {
+		t.Fatalf("provider = %v, want codex-subscription", gotBody["provider"])
+	}
+	if gotBody["backend_type"] != "subscription_runtime" || gotBody["transport"] != "daemon_dispatch" {
+		t.Fatalf("body = %#v, want subscription runtime daemon dispatch", gotBody)
+	}
+	if gotBody["credential_type"] != "subscription_bundle" || gotBody["subscription_provider"] != "codex" {
+		t.Fatalf("body = %#v, want codex subscription bundle", gotBody)
+	}
+	if gotBody["payload_format"] != "codex_auth_bundle_v1" {
+		t.Fatalf("payload_format = %v, want codex_auth_bundle_v1", gotBody["payload_format"])
+	}
+	var bundle map[string]string
+	if err := json.Unmarshal([]byte(gotBody["key"].(string)), &bundle); err != nil {
+		t.Fatalf("key is not bundle JSON: %v", err)
+	}
+	if bundle["token"] != "codex-token" {
+		t.Fatalf("bundle = %#v, want token", bundle)
+	}
+	if strings.Contains(out, "codex-token") {
+		t.Fatalf("output leaked subscription token: %q", out)
+	}
+}
+
 func TestGatewayBackendsJSONPreservesMetadata(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

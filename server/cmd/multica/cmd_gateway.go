@@ -185,6 +185,8 @@ func newGatewayCommand() *cobra.Command {
 	revokeIngestKeyCmd.Flags().String("output", "table", "Output format: table or json")
 
 	addCmd.Flags().String("key", "", "Upstream provider API key")
+	addCmd.Flags().String("subscription-token", "", "Subscription token for codex-subscription or claude-code-subscription")
+	addCmd.Flags().String("payload-format", "", "Subscription payload format override")
 	addCmd.Flags().String("base-url", "", "Upstream provider base URL")
 	addCmd.Flags().String("name", "", "Backend display name")
 	addCmd.Flags().String("slug", "", "Backend slug")
@@ -857,6 +859,18 @@ func runGatewayAdd(cmd *cobra.Command, args []string) error {
 	provider := strings.ToLower(strings.TrimSpace(args[0]))
 	key, _ := cmd.Flags().GetString("key")
 	key = strings.TrimSpace(key)
+	subscriptionToken, _ := cmd.Flags().GetString("subscription-token")
+	subscriptionToken = strings.TrimSpace(subscriptionToken)
+	if key != "" && subscriptionToken != "" {
+		return fmt.Errorf("use either --key or --subscription-token, not both")
+	}
+	if subscriptionToken != "" {
+		bundle, err := json.Marshal(map[string]string{"token": subscriptionToken})
+		if err != nil {
+			return err
+		}
+		key = string(bundle)
+	}
 	if provider != "claude-oauth" && key == "" {
 		return fmt.Errorf("--key is required for provider %s", provider)
 	}
@@ -868,6 +882,11 @@ func runGatewayAdd(cmd *cobra.Command, args []string) error {
 
 	body := map[string]any{
 		"provider": provider,
+	}
+	if applyGatewaySubscriptionBackendFields(provider, body) {
+		if v, _ := cmd.Flags().GetString("payload-format"); strings.TrimSpace(v) != "" {
+			body["payload_format"] = strings.TrimSpace(v)
+		}
 	}
 	if key != "" {
 		body["key"] = key
@@ -901,6 +920,27 @@ func runGatewayAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Default: yes")
 	}
 	return nil
+}
+
+func applyGatewaySubscriptionBackendFields(provider string, body map[string]any) bool {
+	switch provider {
+	case "codex-subscription":
+		body["backend_type"] = "subscription_runtime"
+		body["transport"] = "daemon_dispatch"
+		body["credential_type"] = "subscription_bundle"
+		body["subscription_provider"] = "codex"
+		body["payload_format"] = "codex_auth_bundle_v1"
+		return true
+	case "claude-code-subscription":
+		body["backend_type"] = "subscription_runtime"
+		body["transport"] = "daemon_dispatch"
+		body["credential_type"] = "subscription_bundle"
+		body["subscription_provider"] = "claude_code"
+		body["payload_format"] = "claude_code_auth_bundle_v1"
+		return true
+	default:
+		return false
+	}
 }
 
 func runGatewayBackends(cmd *cobra.Command, _ []string) error {
