@@ -302,6 +302,17 @@ func encryptedPayloadForCredential(credentialType string, encryptedCredential []
 	return encryptedCredential
 }
 
+func runtimeProviderForSubscriptionProvider(provider string) string {
+	switch provider {
+	case SubscriptionProviderCodex:
+		return "codex"
+	case SubscriptionProviderClaudeCode:
+		return "claude"
+	default:
+		return ""
+	}
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -1852,6 +1863,33 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 		}
 		created = row
 		defaultID = settings.DefaultBackendID
+		if normalized.BackendType == BackendTypeSubscriptionRuntime {
+			credentialRow, err := q.CreateGatewayBackendCredential(ctx, db.CreateGatewayBackendCredentialParams{
+				WorkspaceID:          workspaceUUID,
+				BackendID:            row.ID,
+				Label:                row.DisplayName,
+				EncryptedCredential:  encryptedCredential,
+				CredentialHint:       CredentialHint(credential),
+				Enabled:              normalized.Enabled,
+				Priority:             100,
+				CredentialType:       CredentialTypeSubscriptionBundle,
+				SubscriptionProvider: normalized.SubscriptionProvider,
+				EncryptedPayload:     encryptedCredential,
+				PayloadFormat:        normalized.PayloadFormat,
+				DispatchScope:        normalized.DispatchScope,
+				ValidationStatus:     normalized.ValidationStatus,
+				CreatedBy:            actorUUID,
+			})
+			if err != nil {
+				return err
+			}
+			if err := s.scheduleSubscriptionValidation(ctx, q, row, credentialRow); err != nil {
+				return err
+			}
+			if err := audit(ctx, q, workspaceUUID, actorUUID, "gateway.backend_credential.create", "gateway_backend_credential", uuidString(credentialRow.ID), nil, backendCredentialResponse(credentialRow)); err != nil {
+				return err
+			}
+		}
 
 		if normalized.SetDefault || !settings.DefaultBackendID.Valid {
 			updatedSettings, err := q.UpsertGatewayWorkspaceSettings(ctx, db.UpsertGatewayWorkspaceSettingsParams{
@@ -1874,6 +1912,33 @@ func (s *Service) CreateBackend(ctx context.Context, input CreateBackendInput) (
 	}
 
 	return backendResponse(created, defaultID), nil
+}
+
+func (s *Service) scheduleSubscriptionValidation(ctx context.Context, q *db.Queries, backend db.GatewayBackend, credential db.GatewayBackendCredential) error {
+	runtimeProvider := runtimeProviderForSubscriptionProvider(backend.SubscriptionProvider)
+	if runtimeProvider == "" {
+		return nil
+	}
+	runtimes, err := q.ListAgentRuntimes(ctx, backend.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	for _, rt := range runtimes {
+		if rt.Provider != runtimeProvider || rt.Status != "online" {
+			continue
+		}
+		if _, err := q.CreateGatewaySubscriptionValidation(ctx, db.CreateGatewaySubscriptionValidationParams{
+			WorkspaceID:  backend.WorkspaceID,
+			Provider:     backend.SubscriptionProvider,
+			BackendID:    backend.ID,
+			CredentialID: credential.ID,
+			RuntimeID:    rt.ID,
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
 func (s *Service) UpdateCapturePolicy(ctx context.Context, input CapturePolicyInput) (SettingsResponse, error) {

@@ -134,6 +134,19 @@ func TestProviderPresetForNormalizesInput(t *testing.T) {
 	}
 }
 
+func TestRuntimeProviderForSubscriptionProvider(t *testing.T) {
+	tests := map[string]string{
+		SubscriptionProviderCodex:      "codex",
+		SubscriptionProviderClaudeCode: "claude",
+		"unknown":                      "",
+	}
+	for input, want := range tests {
+		if got := runtimeProviderForSubscriptionProvider(input); got != want {
+			t.Fatalf("runtimeProviderForSubscriptionProvider(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestValidateCapturePolicy(t *testing.T) {
 	valid := []string{
 		CaptureMetadataOnly,
