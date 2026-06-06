@@ -71,7 +71,7 @@ PORT=8080
 DATABASE_URL=postgres://$(url_encode "$POSTGRES_USER"):$(url_encode "$POSTGRES_PASSWORD")@postgres:5432/$(url_encode "$POSTGRES_DB")?sslmode=disable
 FRONTEND_ORIGIN=https://observer.edget.co
 MULTICA_APP_URL=https://observer.edget.co
-MULTICA_SERVER_URL=https://observer.edget.co
+MULTICA_SERVER_URL=wss://observer.edget.co/ws
 MULTICA_GATEWAY_BASE_URL=https://observer.edget.co
 NEXT_PUBLIC_API_URL=https://observer.edget.co
 NEXT_PUBLIC_WS_URL=wss://observer.edget.co/ws
@@ -80,6 +80,8 @@ REMOTE_API_URL=http://api:8080
 ```
 
 Expected: no plaintext env files are committed; the manager copy is shredded after deploy.
+
+- [ ] If the source env has `S3_ENDPOINT` set to a loopback URL such as `http://127.0.0.1:9000`, omit it from the production env so the server does not try to call local MinIO inside the container.
 
 ## Task 3: Build And Push Images
 
@@ -198,7 +200,7 @@ The script checks that the app loads, login screen renders, no browser console/p
 - [ ] Verify the backend image contains the CLI:
 
 ```bash
-docker run --rm "$OBSERVER_API_DIGEST" ./multica version
+docker run --rm --entrypoint ./multica "$OBSERVER_API_DIGEST" version
 ```
 
 Expected: command prints a Multica version string.
