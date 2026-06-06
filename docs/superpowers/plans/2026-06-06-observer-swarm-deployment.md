@@ -68,7 +68,7 @@ scripts/deploy-observer-stack.sh \
 
 ```text
 PORT=8080
-DATABASE_URL=postgres://$(url_encode "$POSTGRES_USER"):$(url_encode "$POSTGRES_PASSWORD")@postgres:5432/$(url_encode "$POSTGRES_DB")?sslmode=disable
+DATABASE_URL=postgres://$(url_encode "$POSTGRES_USER"):$(url_encode "$POSTGRES_PASSWORD")@observer_postgres:5432/$(url_encode "$POSTGRES_DB")?sslmode=disable
 FRONTEND_ORIGIN=https://observer.edget.co
 MULTICA_APP_URL=https://observer.edget.co
 MULTICA_SERVER_URL=wss://observer.edget.co/ws
